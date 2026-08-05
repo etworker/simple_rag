@@ -1,0 +1,120 @@
+"""
+Bedrock Converse API 后端
+"""
+import os
+import json
+import logging
+import urllib.request
+import urllib.error
+from typing import List
+
+from llm_chat.defaults import BEDROCK_DEFAULTS
+
+log = logging.getLogger("llm_chat.bedrock")
+
+
+class BedrockBackend:
+    """
+    AWS Bedrock Converse API 后端
+
+    Args:
+        model: 模型 ID（如 "zai.glm-4.7-flash"）
+        region: AWS 区域
+        api_key_env: 环境变量名（存放 Bearer Token）
+        api_key: 直接传入的 API Key（优先级低于环境变量）
+        max_tokens: 最大生成 token 数
+        timeout: 请求超时（秒）
+    """
+
+    def __init__(
+        self,
+        model: str = "",
+        region: str = "",
+        api_key_env: str = "",
+        api_key: str = "",
+        max_tokens: int = 0,
+        timeout: int = 0,
+        **kwargs,
+    ):
+        self.model = model or BEDROCK_DEFAULTS.get("model", "zai.glm-4.7-flash")
+        self.region = region or BEDROCK_DEFAULTS["region"]
+        self.api_key_env = api_key_env or BEDROCK_DEFAULTS["api_key_env"]
+        self.api_key = api_key
+        self.max_tokens = max_tokens or BEDROCK_DEFAULTS["max_tokens"]
+        self.timeout = timeout or BEDROCK_DEFAULTS["timeout"]
+
+    def chat(self, messages: List[dict], system_prompt: str = "") -> str:
+        """
+        调用 Bedrock Converse API
+
+        Args:
+            messages: [{role: "user"|"assistant", content: str}, ...]
+            system_prompt: 系统提示词
+
+        Returns:
+            LLM 回复文本
+        """
+        key = self._resolve_key()
+        if not key:
+            raise RuntimeError("未配置 API Key（检查环境变量或 api_key 参数）")
+
+        # 构建 Bedrock Converse 格式的 messages
+        api_messages = []
+        for msg in messages:
+            api_messages.append({
+                "role": msg["role"],
+                "content": [{"text": msg["content"]}]
+            })
+
+        # Bedrock Converse API 支持顶层 system 字段
+        payload = {
+            "messages": api_messages,
+            "inferenceConfig": {"maxTokens": self.max_tokens},
+        }
+        if system_prompt:
+            payload["system"] = [{"text": system_prompt}]
+
+        url = f"https://bedrock-runtime.{self.region}.amazonaws.com/model/{self.model}/converse"
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {key}",
+        }
+        payload = json.dumps(payload).encode("utf-8")
+
+        req = urllib.request.Request(url, data=payload, headers=headers)
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                result = json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as e:
+            body = ""
+            try:
+                body = e.read().decode("utf-8")[:300]
+            except Exception:
+                pass
+            if e.code == 401:
+                raise RuntimeError(f"API Key 无效或已过期 (401): {body}") from e
+            elif e.code == 429:
+                raise RuntimeError(f"请求频率超限 (429)，请稍后重试: {body}") from e
+            elif e.code >= 500:
+                raise RuntimeError(f"服务端错误 ({e.code}): {body}") from e
+            else:
+                raise RuntimeError(f"HTTP {e.code}: {body}") from e
+        except urllib.error.URLError as e:
+            raise RuntimeError(f"网络请求失败: {e.reason}") from e
+
+        # 解析响应
+        output = result.get("output", {})
+        if output:
+            message = output.get("message", {})
+            for block in message.get("content", []):
+                if "text" in block:
+                    return block["text"]
+
+        raise RuntimeError("LLM 返回为空")
+
+    def _resolve_key(self) -> str:
+        """分级获取 API Key: 环境变量 > 直传 > 空"""
+        val = os.environ.get(self.api_key_env, "")
+        if val:
+            return val
+        return self.api_key

@@ -1,0 +1,304 @@
+"""
+DiffEngine — 文档差异检测引擎主入口
+
+编排流程:
+    1. 文档解析 (doc_parser)
+    2. 全局向量库构建/增量更新 (vectorstore)
+    3. 跨文档语义检索 (FAISS)
+    4. 字级 Diff (matcher)
+    5. 规则预过滤 (prefilter)
+    6. LLM 矛盾判断 (judge)
+    7. 结果封装 (DiffResult)
+
+公共 API:
+    engine.add(filepath)            # 添加文档到已有库
+    engine.pre_review(filepath)     # 预审核新文档
+    engine.check_conflicts(chunks)  # 问答时冲突检测
+"""
+import os
+import time
+import math
+import logging
+from typing import List, Optional, Callable
+
+import numpy as np
+from sentence_transformers import SentenceTransformer
+
+from version_diff.config import Config
+from version_diff.models import DiffResult, Inconsistency
+from version_diff.vectorstore import VectorStore
+from version_diff.matcher import compute_diff, TextDiffItem
+from version_diff.judge import filter_diffs
+
+log = logging.getLogger('version_diff.engine')
+
+
+class DiffEngine:
+    """
+    文档差异检测引擎
+
+    Example:
+        from version_diff import DiffEngine
+
+        engine = DiffEngine(config={
+            "embedding": {"model": "BAAI/bge-base-zh-v1.5"},
+            "llm": {"provider": "bedrock_converse", "model": "zai.glm-4.7-flash"},
+            "diff": {"similarity_threshold": 0.80},
+        })
+        engine.add("a.pdf")
+        engine.add("b.pdf")
+        result = engine.pre_review("new.pdf", on_progress=my_callback)
+        if not result.is_safe:
+            print(result.report())
+    """
+
+    def __init__(self, config: dict = None):
+        self.config = Config.from_dict(config or {})
+        self._documents = {}        # {filename: Document}
+        self._all_paras = []        # 所有段落（带 source_file）
+        self._all_embeddings = None # 全局 embedding 矩阵
+        self._model = None          # SentenceTransformer (lazy load)
+        cache_dir = self.config.cache.get('vector_cache_dir', '')
+        # 根据配置计算缓存哈希，配置变化时缓存自动失效
+        cfg_hash = VectorStore.compute_config_hash(
+            self.config.embedding.get('parse_config', {}),
+            self.config.embedding,
+        )
+        self._vector_store = VectorStore(cache_dir=cache_dir, config_hash=cfg_hash)
+
+    def _get_model(self):
+        """懒加载 embedding 模型"""
+        if self._model is None:
+            model_name = self.config.embedding.get('model', 'BAAI/bge-base-zh-v1.5')
+            cache_dir = self.config.embedding.get('cache_dir') or None
+            self._model = SentenceTransformer(model_name, cache_folder=cache_dir)
+        return self._model
+
+    def _notify(self, callback, step, percent, message):
+        """发送进度通知"""
+        if callback:
+            try:
+                callback(step, percent, message)
+            except Exception:
+                pass
+
+    def add(self, filepath: str) -> None:
+        """
+        添加文档到已有库
+
+        解析文档 → 计算 embedding → 追加到全局向量库
+        """
+        from doc_parser import parse
+
+        doc = parse(filepath, config=self.config.embedding.get('parse_config'))
+        self._documents[doc.filename] = doc
+
+        # 计算 embedding
+        model = self._get_model()
+        emb, _ = self._vector_store.get_or_compute(doc.filename, doc.paragraphs, model)
+
+        # 追加到全局列表
+        start_idx = len(self._all_paras)
+        self._all_paras.extend(doc.paragraphs)
+
+        if self._all_embeddings is None:
+            self._all_embeddings = emb
+        else:
+            self._all_embeddings = np.vstack([self._all_embeddings, emb])
+
+        log.info(f"已加载到对比引擎: {doc.filename} ({len(doc.paragraphs)} 段落)")
+
+    def pre_review(
+        self,
+        filepath: str,
+        on_progress: Optional[Callable] = None
+    ) -> DiffResult:
+        """
+        预审核：检测新文档与已有文档的矛盾
+
+        Args:
+            filepath: 新文档路径
+            on_progress: 进度回调 fn(step, percent, message)
+                step: "parsing" | "embedding" | "searching" | "diffing" | "judging" | "done"
+                percent: 0.0 ~ 1.0
+                message: 人类可读描述
+
+        Returns:
+            DiffResult 包含不一致列表和统计信息
+        """
+        from doc_parser import parse
+        import faiss
+
+        threshold = self.config.diff.get('similarity_threshold', 0.80)
+        top_k = self.config.diff.get('top_k', 3)
+
+        # Step 1: 解析新文档（始终执行）
+        self._notify(on_progress, "parsing", 0.0, "解析文档...")
+        t0 = time.time()
+        new_doc = parse(filepath, config=self.config.embedding.get('parse_config'))
+        log.info(f"解析完成: {new_doc.filename} ({len(new_doc.paragraphs)} 段落, {time.time()-t0:.1f}s)")
+
+        # Step 2: 计算新文档 embedding（始终执行）
+        self._notify(on_progress, "embedding", 0.2, "计算语义向量...")
+        t1 = time.time()
+        model = self._get_model()
+        new_emb, _ = self._vector_store.get_or_compute(new_doc.filename, new_doc.paragraphs, model)
+        log.info(f"Embedding 完成 ({time.time()-t1:.1f}s)")
+
+        # 如果库中没有已有文档，跳过对比步骤，直接返回安全结果
+        if not self._documents:
+            self._notify(on_progress, "done", 1.0, "完成（库中无已有文档，无需对比）")
+            log.info("库中无已有文档，跳过对比步骤")
+            return DiffResult()
+
+        # Step 3: 在已有全局库中检索相似段落
+        self._notify(on_progress, "searching", 0.4, "跨文档语义检索...")
+        t2 = time.time()
+
+        # 构建已有文档的 FAISS index
+        dim = self._all_embeddings.shape[1]
+        index = faiss.IndexFlatIP(dim)
+        norms_existing = np.linalg.norm(self._all_embeddings, axis=1, keepdims=True)
+        norms_existing[norms_existing == 0] = 1
+        normalized_existing = (self._all_embeddings / norms_existing).astype(np.float32)
+        index.add(normalized_existing)
+
+        # 归一化新文档 embedding
+        norms_new = np.linalg.norm(new_emb, axis=1, keepdims=True)
+        norms_new[norms_new == 0] = 1
+        normalized_new = (new_emb / norms_new).astype(np.float32)
+
+        # 检索
+        actual_k = min(top_k, len(self._all_paras))
+        similarities, indices = index.search(normalized_new, actual_k)
+
+        # 收集候选对
+        candidates = []
+        seen_pairs = set()
+        for i in range(len(new_doc.paragraphs)):
+            for k in range(actual_k):
+                j = int(indices[i][k])
+                sim = float(similarities[i][k])
+                if sim < threshold:
+                    continue
+                pair_key = (i, j)
+                if pair_key in seen_pairs:
+                    continue
+                seen_pairs.add(pair_key)
+                candidates.append((new_doc.paragraphs[i], self._all_paras[j], sim))
+
+        log.info(f"检索完成: {len(candidates)} 个候选对 ({time.time()-t2:.1f}s)")
+
+        # Step 4: 字级 Diff
+        self._notify(on_progress, "diffing", 0.6, "计算文本差异...")
+        t3 = time.time()
+        diff_items = []
+        for para_a, para_b, sim in candidates:
+            if para_a.text.strip() == para_b.text.strip():
+                continue
+            item = compute_diff(para_a, para_b, sim)
+            if item.has_changes:
+                diff_items.append(item)
+        log.info(f"Diff 完成: {len(diff_items)} 处有差异 ({time.time()-t3:.1f}s)")
+
+        # Step 5: LLM 矛盾判断
+        self._notify(on_progress, "judging", 0.7, "LLM 矛盾判断...")
+        t4 = time.time()
+        judge_result = filter_diffs(diff_items, llm_config=self.config.llm, judge_config=self.config.judge)
+        log.info(f"判断完成: {len(judge_result.inconsistent_items)} 处矛盾 ({time.time()-t4:.1f}s)")
+
+        # Step 6: 封装结果（使用结构化字段，不再解析字符串）
+        self._notify(on_progress, "done", 1.0, "完成")
+
+        result = DiffResult(
+            inconsistencies=[
+                Inconsistency(
+                    point=item.llm_point or item.description or "内容差异",
+                    doc_a_file=item.para_a.source_file,
+                    doc_a_location=item.para_a.location,
+                    doc_a_says=item.llm_doc_a_says or item.description or "",
+                    doc_b_file=item.para_b.source_file,
+                    doc_b_location=item.para_b.location,
+                    doc_b_says=item.llm_doc_b_says or item.description or "",
+                    similarity=item.similarity,
+                )
+                for item in judge_result.inconsistent_items
+            ],
+            total_candidates=len(candidates),
+            rule_filtered=judge_result.rule_filtered,
+            llm_judged=judge_result.llm_judged,
+        )
+
+        return result
+
+    def check_conflicts(
+        self,
+        retrieved_passages: List[dict]
+    ) -> List[Inconsistency]:
+        """
+        问答冲突检测：检查 RAG 检索结果中是否存在矛盾
+
+        对来自不同文档的检索结果两两配对，
+        使用 LLM 判断是否存在矛盾描述。
+
+        Args:
+            retrieved_passages: RAG 检索到的段落列表
+                每项: {"text": str, "source_file": str, "location": str}
+
+        Returns:
+            矛盾列表（空列表表示无冲突）
+        """
+        if len(retrieved_passages) < 2:
+            return []
+
+        # 构造跨文档段落对
+        from doc_parser.models import Paragraph
+        diff_items = []
+        for i, chunk_a in enumerate(retrieved_passages):
+            for j, chunk_b in enumerate(retrieved_passages):
+                if i >= j:
+                    continue
+                # 只比较来自不同文档的
+                if chunk_a.get('source_file') == chunk_b.get('source_file'):
+                    continue
+                # 文本完全相同则跳过
+                text_a = chunk_a.get('text', '')
+                text_b = chunk_b.get('text', '')
+                if text_a.strip() == text_b.strip():
+                    continue
+                # 构造 Paragraph 和 TextDiffItem
+                para_a = Paragraph(
+                    text=text_a,
+                    source_file=chunk_a.get('source_file', ''),
+                )
+                para_b = Paragraph(
+                    text=text_b,
+                    source_file=chunk_b.get('source_file', ''),
+                )
+                item = compute_diff(para_a, para_b, similarity=0.8)
+                if item.has_changes:
+                    diff_items.append(item)
+
+        if not diff_items:
+            return []
+
+        # 复用 judge.py 的 LLM 判断逻辑
+        judge_result = filter_diffs(
+            diff_items,
+            llm_config=self.config.llm,
+            judge_config=self.config.judge,
+        )
+
+        return [
+            Inconsistency(
+                point=item.llm_point or item.description or "内容差异",
+                doc_a_file=item.para_a.source_file,
+                doc_a_location=item.para_a.location,
+                doc_a_says=item.llm_doc_a_says or "",
+                doc_b_file=item.para_b.source_file,
+                doc_b_location=item.para_b.location,
+                doc_b_says=item.llm_doc_b_says or "",
+                similarity=item.similarity,
+            )
+            for item in judge_result.inconsistent_items
+        ]

@@ -1,0 +1,5 @@
+__pycache__/
+*.pyc
+.vector_cache/
+src/.vector_cache/
+.env

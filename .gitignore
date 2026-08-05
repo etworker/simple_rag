@@ -1,0 +1,43 @@
+# ===== 敏感文件（绝不上传）=====
+.env
+.env.*
+*.key
+*.pem
+
+# ===== Python =====
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# ===== 虚拟环境 =====
+.venv/
+venv/
+env/
+
+# ===== 运行时数据 =====
+data/page_cache/
+data/parse_cache/
+data/review_results/
+data/doc_store/
+data/chat_history/
+data/app.log
+data/review_tasks.json
+uploads/
+
+# ===== 缓存 =====
+.pytest_cache/
+.vector_cache/
+*.npy
+
+# ===== IDE =====
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# ===== OS =====
+.DS_Store
+Thumbs.db
