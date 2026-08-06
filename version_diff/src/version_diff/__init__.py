@@ -13,7 +13,7 @@ versiondiff — 文档差异检测引擎
 
 from version_diff.config import Config
 from version_diff.engine import DiffEngine
-from version_diff.models import DiffResult, Inconsistency
 from version_diff.judge import JudgeResult
+from version_diff.models import DiffResult, Inconsistency
 
-__all__ = ["DiffEngine", "Config", "DiffResult", "Inconsistency", "JudgeResult"]
+__all__ = ["Config", "DiffEngine", "DiffResult", "Inconsistency", "JudgeResult"]

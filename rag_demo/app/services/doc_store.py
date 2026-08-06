@@ -7,19 +7,21 @@
   - 提供语义检索接口（给问答引擎调用）
   - 集成 version_diff 进行预审核
 """
-import os
-import time
+
+import hashlib
 import json
 import logging
-from typing import List, Optional, Callable
-from dataclasses import dataclass, field, asdict
+import os
+import time
+from dataclasses import asdict, dataclass
 
-import numpy as np
 import faiss
+import numpy as np
 from sentence_transformers import SentenceTransformer
+from version_diff.vectorstore import VectorStore
 
-from doc_parser import Document, Paragraph
 from app.services.parse_cache import cached_parse as parse
+from doc_parser import Paragraph
 
 log = logging.getLogger("rag_demo.doc_store")
 
@@ -27,19 +29,23 @@ log = logging.getLogger("rag_demo.doc_store")
 @dataclass
 class DocMeta:
     """文档元数据"""
-    filename: str
+
+    filename: str  # 原始文件名（显示用）
     filepath: str
-    paragraph_count: int
-    table_count: int
-    added_at: str           # ISO 时间
+    doc_id: str = ""  # 内部唯一 key: filename#sha256[-8:].upper()
+    paragraph_count: int = 0
+    table_count: int = 0
+    added_at: str = ""  # 入库时间 ISO
     status: str = "active"  # active / rejected / deleted
     page_count: int = 0
     char_count: int = 0
+    file_hash: str = ""  # 文件 SHA-256
 
 
 @dataclass
 class RetrievedChunk:
     """检索到的段落"""
+
     text: str
     source_file: str
     location: str
@@ -64,47 +70,84 @@ class DocStore:
             config: 包含 embedding/retrieval/pre_review 配置段的字典
         """
         self._config = config
-        self._model: Optional[SentenceTransformer] = None
-        self._documents: dict = {}          # {filename: DocMeta}
-        self._paragraphs: List[Paragraph] = []
-        self._embeddings: Optional[np.ndarray] = None
-        self._index: Optional[faiss.Index] = None
+        self._model: SentenceTransformer | None = None
+        self._documents: dict = {}  # {filename: DocMeta}
+        self._paragraphs: list[Paragraph] = []
+        self._embeddings: np.ndarray | None = None
+        self._index: faiss.Index | None = None
 
-        # 持久化目录
-        self._persist_dir = config.get("persist_dir", "./data/doc_store")
+        # 持久化目录（默认 ~/.simple_rag/doc_store/）
+        self._persist_dir = config.get("persist_dir") or os.path.join(
+            os.path.expanduser("~"), ".simple_rag", "doc_store"
+        )
         os.makedirs(self._persist_dir, exist_ok=True)
         self._load_from_disk()
 
-        # 解析缓存目录
-        self._parse_cache_dir = config.get("parse_cache_dir", "./data/parse_cache")
+        # 解析缓存目录（默认 ~/.simple_rag/parse_cache/）
+        self._parse_cache_dir = config.get("parse_cache_dir") or os.path.join(
+            os.path.expanduser("~"), ".simple_rag", "parse_cache"
+        )
         os.makedirs(self._parse_cache_dir, exist_ok=True)
+
+        # 向量缓存（复用 version_diff 的 VectorStore，避免重复计算 embedding）
+        vector_cache_dir = config.get("vector_cache_dir", "")
+        cfg_hash = VectorStore.compute_config_hash(
+            config.get("embedding", {}).get("parse_config", {}),
+            config.get("embedding", {}),
+        )
+        self._vector_store = VectorStore(
+            cache_dir=vector_cache_dir, config_hash=cfg_hash
+        )
+
+    @staticmethod
+    def _compute_file_hash(filepath: str) -> str:
+        """计算文件 SHA-256"""
+        h = hashlib.sha256()
+        with open(filepath, "rb") as f:
+            for chunk in iter(lambda: f.read(8192), b""):
+                h.update(chunk)
+        return h.hexdigest()
 
     def _get_model(self) -> SentenceTransformer:
         """懒加载 embedding 模型"""
         if self._model is None:
             emb_config = self._config.get("embedding", {})
-            model_name = emb_config.get("model", "BAAI/bge-base-zh-v1.5")
+            model_name = emb_config.get("model", "")
             cache_dir = emb_config.get("cache_dir") or None
             log.info(f"加载 embedding 模型: {model_name}")
             self._model = SentenceTransformer(model_name, cache_folder=cache_dir)
         return self._model
 
-    def add_document(self, filepath: str) -> DocMeta:
+    def add_document(self, filepath: str, original_filename: str = "") -> DocMeta:
         """
         入库文档（解析 + embedding + 加入索引）
+
+        Args:
+            filepath: 文件路径（可能是安全文件名，如 SHA256.pdf）
+            original_filename: 原始文件名（用于显示，如 用户上传时的文件名）
 
         Returns:
             DocMeta 文档元数据
         """
         # 解析（带缓存）
         doc = parse(filepath)
-        log.info(f"解析完成: {doc.filename} ({len(doc.paragraphs)} 段, {len(doc.tables)} 表)")
+        # 用原始文件名覆盖（parse 返回的是磁盘文件名，可能是 SHA-256 安全名）
+        if original_filename:
+            doc.filename = original_filename
+        log.info(
+            f"解析完成: {doc.filename} ({len(doc.paragraphs)} 段, {len(doc.tables)} 表)"
+        )
 
-        # 计算 embedding
+        # 计算 embedding（优先复用 VectorStore 缓存，避免重复计算）
         model = self._get_model()
-        texts = [p.text for p in doc.paragraphs]
-        embeddings = model.encode(texts, normalize_embeddings=True, show_progress_bar=False)
+        embeddings, from_cache = self._vector_store.get_or_compute(
+            doc.filename, doc.paragraphs, model
+        )
         embeddings = np.array(embeddings).astype(np.float32)
+        if from_cache:
+            log.info(f"✅ 复用向量缓存: {doc.filename} ({len(doc.paragraphs)} 段)")
+        else:
+            log.info(f"🆕 新算向量: {doc.filename} ({len(doc.paragraphs)} 段)")
 
         # 追加到全局
         self._paragraphs.extend(doc.paragraphs)
@@ -118,9 +161,10 @@ class DocStore:
 
         # 计算页数
         page_count = 0
-        if filepath.lower().endswith('.pdf'):
+        if filepath.lower().endswith(".pdf"):
             try:
                 import fitz
+
                 with fitz.open(filepath) as pdf_doc:
                     page_count = pdf_doc.page_count
             except Exception:
@@ -129,37 +173,46 @@ class DocStore:
         # 计算字数
         char_count = sum(len(p.text) for p in doc.paragraphs)
 
+        # 计算文件 SHA-256
+        file_hash = self._compute_file_hash(filepath)
+        doc_id = f"{doc.filename}#{file_hash[-8:].upper()}"
+
+        # 更新段落的 source_file 为 doc_id（保证唯一性）
+        for p in doc.paragraphs:
+            p.source_file = doc_id
+
         # 记录元数据
         meta = DocMeta(
             filename=doc.filename,
             filepath=filepath,
+            doc_id=doc_id,
             paragraph_count=len(doc.paragraphs),
             table_count=len(doc.tables),
             added_at=time.strftime("%Y-%m-%d %H:%M:%S"),
             page_count=page_count,
             char_count=char_count,
+            file_hash=file_hash,
         )
-        self._documents[doc.filename] = meta
+        self._documents[doc_id] = meta
         log.info(f"已入库: {doc.filename}")
         self._save_to_disk()
         return meta
 
-    def remove_document(self, filename: str) -> bool:
-        """
-        从库中移除文档
-
-        注意：需要重建索引（删除对应段落的 embedding）
-        """
-        if filename not in self._documents:
-            return False
+    def remove_document(self, doc_id: str) -> bool:
+        """从库中移除文档（按 doc_id）"""
+        if doc_id not in self._documents:
+            # 兼容：尝试用 filename 匹配
+            matches = [k for k, v in self._documents.items() if v.filename == doc_id]
+            if not matches:
+                return False
+            doc_id = matches[0]
 
         # 找到该文档段落的范围
         indices_to_remove = [
-            i for i, p in enumerate(self._paragraphs)
-            if p.source_file == filename
+            i for i, p in enumerate(self._paragraphs) if p.source_file == doc_id
         ]
         if not indices_to_remove:
-            del self._documents[filename]
+            del self._documents[doc_id]
             return True
 
         # 移除段落和 embedding
@@ -171,8 +224,8 @@ class DocStore:
             self._embeddings = self._embeddings[keep_mask]
 
         self._rebuild_index()
-        self._documents[filename].status = "deleted"
-        log.info(f"已移除: {filename}")
+        self._documents[doc_id].status = "deleted"
+        log.info(f"已移除: {doc_id}")
         self._save_to_disk()
         return True
 
@@ -182,7 +235,6 @@ class DocStore:
 
         用于重置整个知识库。
         """
-        import shutil
         count = len(self._documents)
         self._documents = {}
         self._paragraphs = []
@@ -196,7 +248,7 @@ class DocStore:
         log.info(f"🗑️ 知识库已清空: 移除 {count} 篇文档")
         return count
 
-    def search(self, query: str, top_k: int = None) -> List[RetrievedChunk]:
+    def search(self, query: str, top_k: int = None) -> list[RetrievedChunk]:
         """
         语义检索
 
@@ -230,23 +282,33 @@ class DocStore:
             if score < threshold:
                 continue
             para = self._paragraphs[idx]
-            results.append(RetrievedChunk(
-                text=para.text,
-                source_file=para.source_file,
-                location=para.location,
-                score=score,
-                paragraph_index=idx,
-            ))
+            results.append(
+                RetrievedChunk(
+                    text=para.text,
+                    source_file=para.source_file,
+                    location=para.location,
+                    score=score,
+                    paragraph_index=idx,
+                )
+            )
 
         return results
 
-    def list_documents(self) -> List[DocMeta]:
-        """列出所有已入库文档"""
-        return [m for m in self._documents.values() if m.status == "active"]
+    def list_documents(self) -> list[DocMeta]:
+        """列出所有已入库文档（按入库时间排序）"""
+        docs = [m for m in self._documents.values() if m.status == "active"]
+        docs.sort(key=lambda d: d.added_at)
+        return docs
 
-    def get_document(self, filename: str) -> Optional[DocMeta]:
-        """获取文档元数据"""
-        return self._documents.get(filename)
+    def get_document(self, doc_id: str) -> DocMeta | None:
+        """获取文档元数据（按 doc_id 或 filename）"""
+        if doc_id in self._documents:
+            return self._documents[doc_id]
+        # 兼容：尝试用 filename 匹配
+        for k, v in self._documents.items():
+            if v.filename == doc_id:
+                return v
+        return None
 
     @property
     def total_paragraphs(self) -> int:
@@ -300,7 +362,9 @@ class DocStore:
                 emb_path = os.path.join(self._persist_dir, "embeddings.npy")
                 np.save(emb_path, self._embeddings)
 
-            log.info(f"持久化完成: {len(self._documents)} 文档, {len(self._paragraphs)} 段落")
+            log.info(
+                f"持久化完成: {len(self._documents)} 文档, {len(self._paragraphs)} 段落"
+            )
         except Exception as e:
             log.error(f"持久化失败: {e}", exc_info=True)
 
@@ -324,11 +388,15 @@ class DocStore:
                 with open(paras_path, "r", encoding="utf-8") as f:
                     paras_data = json.load(f)
                 self._paragraphs = [
-                    Paragraph(text=p["text"], source_file=p["source_file"],
-                              page=p.get("page", 0), page_end=p.get("page_end", 0),
-                              chapter=p.get("chapter", ""),
-                              chapter_title=p.get("chapter_title", ""),
-                              index=p.get("index", 0))
+                    Paragraph(
+                        text=p["text"],
+                        source_file=p["source_file"],
+                        page=p.get("page", 0),
+                        page_end=p.get("page_end", 0),
+                        chapter=p.get("chapter", ""),
+                        chapter_title=p.get("chapter_title", ""),
+                        index=p.get("index", 0),
+                    )
                     for p in paras_data
                 ]
 
@@ -340,23 +408,32 @@ class DocStore:
             # 回填缺失的 page_count / char_count（所有数据加载完毕后）
             need_save = False
             for fname, meta in self._documents.items():
-                if meta.page_count == 0 and meta.filepath and meta.filepath.lower().endswith('.pdf'):
+                if (
+                    meta.page_count == 0
+                    and meta.filepath
+                    and meta.filepath.lower().endswith(".pdf")
+                ):
                     try:
                         import fitz
+
                         with fitz.open(meta.filepath) as pdf_doc:
                             meta.page_count = pdf_doc.page_count
                             need_save = True
                     except Exception:
                         pass
                 if meta.char_count == 0:
-                    chars = sum(len(p.text) for p in self._paragraphs if p.source_file == fname)
+                    chars = sum(
+                        len(p.text) for p in self._paragraphs if p.source_file == fname
+                    )
                     if chars > 0:
                         meta.char_count = chars
                         need_save = True
             if need_save:
                 self._save_to_disk()
 
-            log.info(f"从磁盘恢复: {len(self._documents)} 文档, {len(self._paragraphs)} 段落")
+            log.info(
+                f"从磁盘恢复: {len(self._documents)} 文档, {len(self._paragraphs)} 段落"
+            )
         except Exception as e:
             log.error(f"从磁盘恢复失败: {e}", exc_info=True)
 
@@ -364,11 +441,22 @@ class DocStore:
     # 段落查询公共接口
     # ============================================================
 
-    def get_paragraphs_by_file(self, filename: str) -> list:
-        """获取指定文档的所有段落"""
-        return [p for p in self._paragraphs if p.source_file == filename]
+    def get_paragraphs_by_file(self, doc_id: str) -> list:
+        """获取指定文档的所有段落（按 doc_id 或 filename）"""
+        # 先尝试直接匹配 doc_id
+        result = [p for p in self._paragraphs if p.source_file == doc_id]
+        if result:
+            return result
+        # 兼容：尝试用 filename 匹配
+        return [
+            p
+            for p in self._paragraphs
+            if p.source_file.startswith(doc_id + "#") or p.source_file == doc_id
+        ]
 
-    def get_paragraph_context(self, filename: str, index: int = 0, radius: int = 3) -> list:
+    def get_paragraph_context(
+        self, doc_id: str, index: int = 0, radius: int = 3
+    ) -> list:
         """
         获取指定文档中某段落及其前后上下文
 
@@ -380,18 +468,23 @@ class DocStore:
         Returns:
             [{text, location, index, is_target}, ...]
         """
-        doc_paras = self.get_paragraphs_by_file(filename)
+        doc_paras = self.get_paragraphs_by_file(doc_id)
         if not doc_paras:
             return []
         target = min(index, len(doc_paras) - 1)
         start = max(0, target - radius)
         end = min(len(doc_paras), target + radius + 1)
         return [
-            {"text": p.text, "location": p.location, "index": i, "is_target": i == target}
+            {
+                "text": p.text,
+                "location": p.location,
+                "index": i,
+                "is_target": i == target,
+            }
             for i, p in enumerate(doc_paras[start:end], start=start)
         ]
 
-    def find_paragraphs(self, filename: str, location: str = "", limit: int = 5) -> list:
+    def find_paragraphs(self, doc_id: str, location: str = "", limit: int = 5) -> list:
         """
         搜索匹配的段落
 
@@ -405,10 +498,16 @@ class DocStore:
         """
         matches = []
         for p in self._paragraphs:
-            if p.source_file != filename:
+            if (
+                p.source_file != doc_id
+                and not p.source_file.startswith(doc_id + "#")
+                and p.source_file != doc_id
+            ):
                 continue
             if not location or p.location == location:
-                matches.append({"text": p.text, "location": p.location, "chapter": p.chapter})
+                matches.append(
+                    {"text": p.text, "location": p.location, "chapter": p.chapter}
+                )
                 if len(matches) >= limit:
                     break
         return matches

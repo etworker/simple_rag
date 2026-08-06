@@ -1,14 +1,15 @@
 """
 Bedrock Converse API 后端
 """
-import os
+
 import json
 import logging
-import urllib.request
+import os
 import urllib.error
-from typing import List
+import urllib.request
 
 from llm_chat.defaults import BEDROCK_DEFAULTS
+from llm_chat.retry import retry_http
 
 log = logging.getLogger("llm_chat.bedrock")
 
@@ -24,6 +25,8 @@ class BedrockBackend:
         api_key: 直接传入的 API Key（优先级低于环境变量）
         max_tokens: 最大生成 token 数
         timeout: 请求超时（秒）
+        max_retries: 最大重试次数（429/5xx 自动重试）
+        retry_backoff: 重试退避基数（指数退避）
     """
 
     def __init__(
@@ -34,6 +37,8 @@ class BedrockBackend:
         api_key: str = "",
         max_tokens: int = 0,
         timeout: int = 0,
+        max_retries: int = 0,
+        retry_backoff: float = 0,
         **kwargs,
     ):
         self.model = model or BEDROCK_DEFAULTS.get("model", "zai.glm-4.7-flash")
@@ -42,8 +47,10 @@ class BedrockBackend:
         self.api_key = api_key
         self.max_tokens = max_tokens or BEDROCK_DEFAULTS["max_tokens"]
         self.timeout = timeout or BEDROCK_DEFAULTS["timeout"]
+        self.max_retries = max_retries or BEDROCK_DEFAULTS.get("max_retries", 3)
+        self.retry_backoff = retry_backoff or BEDROCK_DEFAULTS.get("retry_backoff", 2.0)
 
-    def chat(self, messages: List[dict], system_prompt: str = "") -> str:
+    def chat(self, messages: list[dict], system_prompt: str = "") -> str:
         """
         调用 Bedrock Converse API
 
@@ -61,10 +68,9 @@ class BedrockBackend:
         # 构建 Bedrock Converse 格式的 messages
         api_messages = []
         for msg in messages:
-            api_messages.append({
-                "role": msg["role"],
-                "content": [{"text": msg["content"]}]
-            })
+            api_messages.append(
+                {"role": msg["role"], "content": [{"text": msg["content"]}]}
+            )
 
         # Bedrock Converse API 支持顶层 system 字段
         payload = {
@@ -79,9 +85,17 @@ class BedrockBackend:
             "Content-Type": "application/json",
             "Authorization": f"Bearer {key}",
         }
-        payload = json.dumps(payload).encode("utf-8")
+        data = json.dumps(payload).encode("utf-8")
+        req = urllib.request.Request(url, data=data, headers=headers)
 
-        req = urllib.request.Request(url, data=payload, headers=headers)
+        return retry_http(
+            lambda: self._do_request(req),
+            max_retries=self.max_retries,
+            backoff=self.retry_backoff,
+        )
+
+    def _do_request(self, req) -> str:
+        """执行单个 HTTP 请求（不含重试逻辑）"""
         try:
             with urllib.request.urlopen(req, timeout=self.timeout) as resp:
                 result = json.loads(resp.read().decode("utf-8"))

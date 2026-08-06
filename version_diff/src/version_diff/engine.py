@@ -15,22 +15,21 @@ DiffEngine — 文档差异检测引擎主入口
     engine.pre_review(filepath)     # 预审核新文档
     engine.check_conflicts(chunks)  # 问答时冲突检测
 """
-import os
-import time
-import math
+
 import logging
-from typing import List, Optional, Callable
+import time
+from collections.abc import Callable
 
 import numpy as np
 from sentence_transformers import SentenceTransformer
 
 from version_diff.config import Config
+from version_diff.judge import filter_diffs
+from version_diff.matcher import compute_diff
 from version_diff.models import DiffResult, Inconsistency
 from version_diff.vectorstore import VectorStore
-from version_diff.matcher import compute_diff, TextDiffItem
-from version_diff.judge import filter_diffs
 
-log = logging.getLogger('version_diff.engine')
+log = logging.getLogger("version_diff.engine")
 
 
 class DiffEngine:
@@ -54,14 +53,14 @@ class DiffEngine:
 
     def __init__(self, config: dict = None):
         self.config = Config.from_dict(config or {})
-        self._documents = {}        # {filename: Document}
-        self._all_paras = []        # 所有段落（带 source_file）
-        self._all_embeddings = None # 全局 embedding 矩阵
-        self._model = None          # SentenceTransformer (lazy load)
-        cache_dir = self.config.cache.get('vector_cache_dir', '')
+        self._documents = {}  # {filename: Document}
+        self._all_paras = []  # 所有段落（带 source_file）
+        self._all_embeddings = None  # 全局 embedding 矩阵
+        self._model = None  # SentenceTransformer (lazy load)
+        cache_dir = self.config.cache.get("vector_cache_dir", "")
         # 根据配置计算缓存哈希，配置变化时缓存自动失效
         cfg_hash = VectorStore.compute_config_hash(
-            self.config.embedding.get('parse_config', {}),
+            self.config.embedding.get("parse_config", {}),
             self.config.embedding,
         )
         self._vector_store = VectorStore(cache_dir=cache_dir, config_hash=cfg_hash)
@@ -69,8 +68,8 @@ class DiffEngine:
     def _get_model(self):
         """懒加载 embedding 模型"""
         if self._model is None:
-            model_name = self.config.embedding.get('model', 'BAAI/bge-base-zh-v1.5')
-            cache_dir = self.config.embedding.get('cache_dir') or None
+            model_name = self.config.embedding.get("model", "")
+            cache_dir = self.config.embedding.get("cache_dir") or None
             self._model = SentenceTransformer(model_name, cache_folder=cache_dir)
         return self._model
 
@@ -90,7 +89,7 @@ class DiffEngine:
         """
         from doc_parser import parse
 
-        doc = parse(filepath, config=self.config.embedding.get('parse_config'))
+        doc = parse(filepath, config=self.config.embedding.get("parse_config"))
         self._documents[doc.filename] = doc
 
         # 计算 embedding
@@ -109,9 +108,7 @@ class DiffEngine:
         log.info(f"已加载到对比引擎: {doc.filename} ({len(doc.paragraphs)} 段落)")
 
     def pre_review(
-        self,
-        filepath: str,
-        on_progress: Optional[Callable] = None
+        self, filepath: str, on_progress: Callable | None = None
     ) -> DiffResult:
         """
         预审核：检测新文档与已有文档的矛盾
@@ -126,24 +123,29 @@ class DiffEngine:
         Returns:
             DiffResult 包含不一致列表和统计信息
         """
-        from doc_parser import parse
         import faiss
 
-        threshold = self.config.diff.get('similarity_threshold', 0.80)
-        top_k = self.config.diff.get('top_k', 3)
+        from doc_parser import parse
+
+        threshold = self.config.diff.get("similarity_threshold", 0.80)
+        top_k = self.config.diff.get("top_k", 3)
 
         # Step 1: 解析新文档（始终执行）
         self._notify(on_progress, "parsing", 0.0, "解析文档...")
         t0 = time.time()
-        new_doc = parse(filepath, config=self.config.embedding.get('parse_config'))
-        log.info(f"解析完成: {new_doc.filename} ({len(new_doc.paragraphs)} 段落, {time.time()-t0:.1f}s)")
+        new_doc = parse(filepath, config=self.config.embedding.get("parse_config"))
+        log.info(
+            f"解析完成: {new_doc.filename} ({len(new_doc.paragraphs)} 段落, {time.time() - t0:.1f}s)"
+        )
 
         # Step 2: 计算新文档 embedding（始终执行）
         self._notify(on_progress, "embedding", 0.2, "计算语义向量...")
         t1 = time.time()
         model = self._get_model()
-        new_emb, _ = self._vector_store.get_or_compute(new_doc.filename, new_doc.paragraphs, model)
-        log.info(f"Embedding 完成 ({time.time()-t1:.1f}s)")
+        new_emb, _ = self._vector_store.get_or_compute(
+            new_doc.filename, new_doc.paragraphs, model
+        )
+        log.info(f"Embedding 完成 ({time.time() - t1:.1f}s)")
 
         # 如果库中没有已有文档，跳过对比步骤，直接返回安全结果
         if not self._documents:
@@ -187,7 +189,7 @@ class DiffEngine:
                 seen_pairs.add(pair_key)
                 candidates.append((new_doc.paragraphs[i], self._all_paras[j], sim))
 
-        log.info(f"检索完成: {len(candidates)} 个候选对 ({time.time()-t2:.1f}s)")
+        log.info(f"检索完成: {len(candidates)} 个候选对 ({time.time() - t2:.1f}s)")
 
         # Step 4: 字级 Diff
         self._notify(on_progress, "diffing", 0.6, "计算文本差异...")
@@ -199,13 +201,17 @@ class DiffEngine:
             item = compute_diff(para_a, para_b, sim)
             if item.has_changes:
                 diff_items.append(item)
-        log.info(f"Diff 完成: {len(diff_items)} 处有差异 ({time.time()-t3:.1f}s)")
+        log.info(f"Diff 完成: {len(diff_items)} 处有差异 ({time.time() - t3:.1f}s)")
 
         # Step 5: LLM 矛盾判断
         self._notify(on_progress, "judging", 0.7, "LLM 矛盾判断...")
         t4 = time.time()
-        judge_result = filter_diffs(diff_items, llm_config=self.config.llm, judge_config=self.config.judge)
-        log.info(f"判断完成: {len(judge_result.inconsistent_items)} 处矛盾 ({time.time()-t4:.1f}s)")
+        judge_result = filter_diffs(
+            diff_items, llm_config=self.config.llm, judge_config=self.config.judge
+        )
+        log.info(
+            f"判断完成: {len(judge_result.inconsistent_items)} 处矛盾 ({time.time() - t4:.1f}s)"
+        )
 
         # Step 6: 封装结果（使用结构化字段，不再解析字符串）
         self._notify(on_progress, "done", 1.0, "完成")
@@ -231,10 +237,7 @@ class DiffEngine:
 
         return result
 
-    def check_conflicts(
-        self,
-        retrieved_passages: List[dict]
-    ) -> List[Inconsistency]:
+    def check_conflicts(self, retrieved_passages: list[dict]) -> list[Inconsistency]:
         """
         问答冲突检测：检查 RAG 检索结果中是否存在矛盾
 
@@ -253,27 +256,28 @@ class DiffEngine:
 
         # 构造跨文档段落对
         from doc_parser.models import Paragraph
+
         diff_items = []
         for i, chunk_a in enumerate(retrieved_passages):
             for j, chunk_b in enumerate(retrieved_passages):
                 if i >= j:
                     continue
                 # 只比较来自不同文档的
-                if chunk_a.get('source_file') == chunk_b.get('source_file'):
+                if chunk_a.get("source_file") == chunk_b.get("source_file"):
                     continue
                 # 文本完全相同则跳过
-                text_a = chunk_a.get('text', '')
-                text_b = chunk_b.get('text', '')
+                text_a = chunk_a.get("text", "")
+                text_b = chunk_b.get("text", "")
                 if text_a.strip() == text_b.strip():
                     continue
                 # 构造 Paragraph 和 TextDiffItem
                 para_a = Paragraph(
                     text=text_a,
-                    source_file=chunk_a.get('source_file', ''),
+                    source_file=chunk_a.get("source_file", ""),
                 )
                 para_b = Paragraph(
                     text=text_b,
-                    source_file=chunk_b.get('source_file', ''),
+                    source_file=chunk_b.get("source_file", ""),
                 )
                 item = compute_diff(para_a, para_b, similarity=0.8)
                 if item.has_changes:

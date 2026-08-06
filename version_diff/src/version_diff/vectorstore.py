@@ -8,23 +8,19 @@
 缓存策略：按文档内容哈希作为 key，同一文件内容只计算一次。
 """
 
-import os
-import json
 import hashlib
-import pickle
-from pathlib import Path
-from typing import Optional
-
-import numpy as np
-import faiss
-
-
+import json
 import logging
-log = logging.getLogger('version_diff.vectorstore')
+import os
+
+import faiss
+import numpy as np
+
+log = logging.getLogger("version_diff.vectorstore")
 
 
-# 默认缓存目录（包安装路径下的 .vector_cache）
-DEFAULT_CACHE_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), '.vector_cache')
+# 默认缓存目录（~/.simple_rag/vector_cache/）
+DEFAULT_CACHE_DIR = os.path.join(os.path.expanduser("~"), ".simple_rag", "vector_cache")
 
 
 class VectorStore:
@@ -64,12 +60,14 @@ class VectorStore:
 
         if cached is not None:
             log.info(f"  💾 命中缓存 ({cache_key[:8]}...)，跳过 embedding 计算")
-            return cached['embeddings'], cached['index']
+            return cached["embeddings"], cached["index"]
 
         # 缓存未命中，计算 embedding
         texts = [p.text for p in paragraphs]
         log.info(f"  ⏳ 计算 {len(texts)} 段嵌入...")
-        embeddings = model.encode(texts, normalize_embeddings=True, show_progress_bar=False)
+        embeddings = model.encode(
+            texts, normalize_embeddings=True, show_progress_bar=False
+        )
         embeddings = np.array(embeddings, dtype=np.float32)
 
         # 构建 FAISS index（内积，因为向量已归一化所以等价于余弦相似度）
@@ -83,7 +81,9 @@ class VectorStore:
 
         return embeddings, index
 
-    def search_similar(self, query_embeddings: np.ndarray, index: faiss.Index, top_k: int = 5):
+    def search_similar(
+        self, query_embeddings: np.ndarray, index: faiss.Index, top_k: int = 5
+    ):
         """
         在 FAISS index 中搜索最相似的 top-K
 
@@ -102,6 +102,7 @@ class VectorStore:
     def clear_cache(self):
         """清除所有缓存"""
         import shutil
+
         if os.path.exists(self.cache_dir):
             shutil.rmtree(self.cache_dir)
             os.makedirs(self.cache_dir)
@@ -110,7 +111,7 @@ class VectorStore:
     def cache_stats(self):
         """返回缓存统计信息"""
         if not os.path.exists(self.cache_dir):
-            return {'count': 0, 'size_mb': 0}
+            return {"count": 0, "size_mb": 0}
 
         count = 0
         total_size = 0
@@ -121,7 +122,7 @@ class VectorStore:
                 for f in os.listdir(entry_path):
                     total_size += os.path.getsize(os.path.join(entry_path, f))
 
-        return {'count': count, 'size_mb': round(total_size / 1024 / 1024, 2)}
+        return {"count": count, "size_mb": round(total_size / 1024 / 1024, 2)}
 
     # ================================================================
     # 内部方法
@@ -137,15 +138,15 @@ class VectorStore:
         - embedding 模型变了（config.yaml 的 embedding 段变化）
         """
         # 文档内容哈希
-        content_str = '\n'.join(p.text for p in paragraphs)
-        content_hash = hashlib.sha256(content_str.encode('utf-8')).hexdigest()[:12]
+        content_str = "\n".join(p.text for p in paragraphs)
+        content_hash = hashlib.sha256(content_str.encode("utf-8")).hexdigest()[:12]
 
         return f"{content_hash}_{len(paragraphs)}_{self._config_hash}"
 
     @staticmethod
     def _default_config_hash() -> str:
         """默认配置哈希（向后兼容：空配置的固定哈希）"""
-        return hashlib.md5(b'').hexdigest()[:8]
+        return hashlib.sha256(b"").hexdigest()[:8]
 
     @staticmethod
     def compute_config_hash(extract_config: dict, embedding_config: dict) -> str:
@@ -156,20 +157,20 @@ class VectorStore:
         应由 DiffEngine 调用并传入 VectorStore 构造函数。
         """
         config_sig = json.dumps(
-            {'extract': extract_config, 'embedding': embedding_config},
+            {"extract": extract_config, "embedding": embedding_config},
             sort_keys=True,
         )
-        return hashlib.md5(config_sig.encode('utf-8')).hexdigest()[:8]
+        return hashlib.sha256(config_sig.encode("utf-8")).hexdigest()[:8]
 
     def _cache_path(self, cache_key: str) -> str:
         """缓存目录路径"""
         return os.path.join(self.cache_dir, cache_key)
 
-    def _load_cache(self, cache_key: str) -> Optional[dict]:
+    def _load_cache(self, cache_key: str) -> dict | None:
         """从磁盘加载缓存"""
         cache_path = self._cache_path(cache_key)
-        index_file = os.path.join(cache_path, 'index.faiss')
-        emb_file = os.path.join(cache_path, 'embeddings.npy')
+        index_file = os.path.join(cache_path, "index.faiss")
+        emb_file = os.path.join(cache_path, "embeddings.npy")
 
         if not os.path.exists(index_file) or not os.path.exists(emb_file):
             return None
@@ -177,27 +178,29 @@ class VectorStore:
         try:
             index = faiss.read_index(index_file)
             embeddings = np.load(emb_file)
-            return {'index': index, 'embeddings': embeddings}
+            return {"index": index, "embeddings": embeddings}
         except Exception as e:
             log.warning(f"  ⚠️ 缓存加载失败: {e}")
             return None
 
-    def _save_cache(self, cache_key: str, embeddings: np.ndarray, index, paragraphs: list):
+    def _save_cache(
+        self, cache_key: str, embeddings: np.ndarray, index, paragraphs: list
+    ):
         """持久化到磁盘"""
         cache_path = self._cache_path(cache_key)
         os.makedirs(cache_path, exist_ok=True)
 
         # 保存 FAISS index
-        faiss.write_index(index, os.path.join(cache_path, 'index.faiss'))
+        faiss.write_index(index, os.path.join(cache_path, "index.faiss"))
 
         # 保存 embeddings（用于后续取出做矩阵运算）
-        np.save(os.path.join(cache_path, 'embeddings.npy'), embeddings)
+        np.save(os.path.join(cache_path, "embeddings.npy"), embeddings)
 
         # 保存元数据
         meta = {
-            'num_paragraphs': len(paragraphs),
-            'dim': embeddings.shape[1],
-            'cache_key': cache_key,
+            "num_paragraphs": len(paragraphs),
+            "dim": embeddings.shape[1],
+            "cache_key": cache_key,
         }
-        with open(os.path.join(cache_path, 'meta.json'), 'w', encoding='utf-8') as f:
+        with open(os.path.join(cache_path, "meta.json"), "w", encoding="utf-8") as f:
             json.dump(meta, f, ensure_ascii=False, indent=2)

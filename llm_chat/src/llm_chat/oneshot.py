@@ -3,6 +3,7 @@
 
 适用于：分类、判断、摘要生成等一次性任务
 """
+
 from llm_chat.backends import get_backend
 from llm_chat.defaults import DEFAULT_BACKEND, DEFAULT_MODELS
 

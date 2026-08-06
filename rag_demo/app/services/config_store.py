@@ -8,21 +8,23 @@
   - Prompt 模板
   - 预审核参数
 """
-import os
+
 import json
 import logging
+import os
 from copy import deepcopy
 from typing import Any
 
 log = logging.getLogger("rag_demo.config")
 
 # 默认缓存根目录
-_DEFAULT_CACHE_DIR = os.path.join(os.path.expanduser("~"), ".cache", "simple_rag")
+_DEFAULT_CACHE_DIR = os.path.join(os.path.expanduser("~"), ".simple_rag")
 
 # 默认配置
 DEFAULT_CONFIG = {
     "cache": {
         "base_dir": _DEFAULT_CACHE_DIR,
+        "upload_dir": "",  # 空=默认 ~/.simple_rag/uploads/
     },
     "embedding": {
         "model": "BAAI/bge-base-zh-v1.5",
@@ -35,6 +37,8 @@ DEFAULT_CONFIG = {
         "api_key_env": "AWS_BEARER_TOKEN_BEDROCK",
         "max_tokens": 2048,
         "timeout": 120,
+        "max_retries": 3,
+        "retry_backoff": 2.0,
     },
     "retrieval": {
         "top_k": 5,
@@ -43,6 +47,11 @@ DEFAULT_CONFIG = {
     "pre_review": {
         "similarity_threshold": 0.80,
         "batch_size": 5,
+    },
+    "conflict_detection": {
+        "min_score": 0.7,
+        "min_similarity": 0.5,
+        "max_similarity": 0.95,
     },
     "prompts": {
         "system": (

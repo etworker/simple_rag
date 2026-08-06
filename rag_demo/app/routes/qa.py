@@ -1,8 +1,8 @@
 """
 问答路由 — 多轮对话 + 溯源 + 冲突标记
 """
+
 import logging
-from typing import Optional
 from urllib.parse import unquote
 
 from fastapi import APIRouter, HTTPException
@@ -14,7 +14,7 @@ log = logging.getLogger("rag_demo.routes.qa")
 
 router = APIRouter()
 
-_qa_engine: Optional[QAEngine] = None
+_qa_engine: QAEngine | None = None
 
 
 def init(qa_engine: QAEngine):
@@ -44,7 +44,10 @@ async def ask(req: AskRequest):
 
     try:
         import asyncio
-        response = await asyncio.to_thread(_qa_engine.ask, req.question, session_id=req.session_id)
+
+        response = await asyncio.to_thread(
+            _qa_engine.ask, req.question, session_id=req.session_id
+        )
     except RuntimeError as e:
         # API Key 未配置等运行时错误
         if "API Key" in str(e) or "未配置" in str(e):
@@ -113,4 +116,9 @@ async def get_context_paragraphs(file: str, index: int = 0, radius: int = 3):
     paras = doc_store.get_paragraph_context(file, index=index, radius=radius)
     doc_paras = doc_store.get_paragraphs_by_file(file)
     target = min(index, len(doc_paras) - 1) if doc_paras else 0
-    return {"file": file, "paragraphs": paras, "target_index": target, "total": len(doc_paras)}
+    return {
+        "file": file,
+        "paragraphs": paras,
+        "target_index": target,
+        "total": len(doc_paras),
+    }

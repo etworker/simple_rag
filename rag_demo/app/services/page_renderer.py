@@ -5,9 +5,10 @@ PDF 页面渲染缓存服务
 缓存结构：data/page_cache/{file_hash}/page_{N:03d}.png
 高亮版本：data/page_cache/{file_hash}/page_{N:03d}_hl_{text_hash}.png
 """
-import os
+
 import hashlib
 import logging
+import os
 
 log = logging.getLogger("rag_demo.page_renderer")
 
@@ -24,7 +25,12 @@ class PageRenderer:
         png_path = renderer.get_page("doc.pdf", page=3, highlight="备份频率")
     """
 
-    def __init__(self, cache_dir: str = "./data/page_cache", dpi: int = 150):
+    def __init__(self, cache_dir: str = "", dpi: int = 150):
+        # 默认缓存目录（~/.simple_rag/page_cache/）
+        if not cache_dir:
+            cache_dir = os.path.join(
+                os.path.expanduser("~"), ".simple_rag", "page_cache"
+            )
         self._cache_dir = cache_dir
         self._dpi = dpi
         os.makedirs(cache_dir, exist_ok=True)
@@ -47,7 +53,7 @@ class PageRenderer:
 
         # 有高亮时用不同的缓存文件名
         if highlight:
-            hl_hash = hashlib.md5(highlight.encode()).hexdigest()[:8]
+            hl_hash = hashlib.sha256(highlight.encode()).hexdigest()[-8:].upper()
             png_path = os.path.join(cache_subdir, f"page_{page:03d}_hl_{hl_hash}.png")
         else:
             png_path = os.path.join(cache_subdir, f"page_{page:03d}.png")
@@ -62,12 +68,15 @@ class PageRenderer:
     def get_page_count(self, pdf_path: str) -> int:
         """获取 PDF 总页数"""
         import fitz
+
         doc = fitz.open(pdf_path)
         count = len(doc)
         doc.close()
         return count
 
-    def _render_page(self, pdf_path: str, page: int, output_path: str, highlight: str = ""):
+    def _render_page(
+        self, pdf_path: str, page: int, output_path: str, highlight: str = ""
+    ):
         """渲染单页为 PNG，可选高亮文字"""
         import fitz
 
@@ -78,7 +87,7 @@ class PageRenderer:
 
         pg = doc[page - 1]  # fitz 从 0 开始
 
-                # 高亮文字
+        # 高亮文字
         if highlight:
             # 不再尝试在 PDF 上标注（search_for 对复杂排版匹配率低）
             # 而是记录高亮信息，由前端在图片上叠加文本框
@@ -98,4 +107,4 @@ class PageRenderer:
         """文件路径 + 大小 + 修改时间 的 hash（避免读全文件）"""
         stat = os.stat(filepath)
         key = f"{filepath}|{stat.st_size}|{stat.st_mtime}"
-        return hashlib.md5(key.encode()).hexdigest()[:10]
+        return hashlib.sha256(key.encode()).hexdigest()[-10:].upper()

@@ -11,29 +11,32 @@ LLM 一致性判断模块（单次推理版）
   3. 输出：仅保留 LLM 确认为 inconsistent 的项（附带矛盾点说明）
 """
 
+import json
+import logging
+import math
 import os
 import re
-import json
-import math
-import logging
 from dataclasses import dataclass, field
-from typing import List
 
-from version_diff.prefilter import batch_pre_classify, format_annotated_diff
+from version_diff.prefilter import batch_pre_classify
 
-log = logging.getLogger('version_diff.judge')
+log = logging.getLogger("version_diff.judge")
 
 
 # ============================================================
 # 判断结果
 # ============================================================
 
+
 @dataclass
 class JudgeResult:
     """LLM 判断结果"""
-    inconsistent_items: list = field(default_factory=list)  # 确认为不一致的 TextDiffItem
-    rule_filtered: int = 0      # 规则预过滤排除的数量
-    llm_judged: int = 0         # 实际送 LLM 判断的数量
+
+    inconsistent_items: list = field(
+        default_factory=list
+    )  # 确认为不一致的 TextDiffItem
+    rule_filtered: int = 0  # 规则预过滤排除的数量
+    llm_judged: int = 0  # 实际送 LLM 判断的数量
 
 
 # ============================================================
@@ -93,9 +96,9 @@ CONSISTENCY_JUDGE_PROMPT = """你是企业文档一致性审核专家。我会�
 # ============================================================
 
 _GENERIC_PATTERNS = [
-    re.compile(r'^数值变更\s*[\(（]'),
-    re.compile(r'^大幅内容变更$'),
-    re.compile(r'^部分内容修改$'),
+    re.compile(r"^数值变更\s*[\(（]"),
+    re.compile(r"^大幅内容变更$"),
+    re.compile(r"^部分内容修改$"),
 ]
 
 
@@ -108,6 +111,7 @@ def _is_generic_summary(summary: str) -> bool:
 def _generate_specific_summary(item) -> str:
     """从标注片段自动生成变更描述（兜底）"""
     from version_diff.prefilter import annotate_fragments
+
     annotated = annotate_fragments(item)
     if not annotated:
         return item.description or "内容有差异"
@@ -115,16 +119,16 @@ def _generate_specific_summary(item) -> str:
     for a in annotated[:3]:
         old = a.old_text.strip()
         new = a.new_text.strip()
-        if a.annotation == 'section_ref' and a.ftype == 'replace':
+        if a.annotation == "section_ref" and a.ftype == "replace":
             parts.append(f"引用号§{old}→§{new}")
-        elif a.annotation == 'numeric_value' and a.ftype == 'replace':
+        elif a.annotation == "numeric_value" and a.ftype == "replace":
             parts.append(f"「{old}」→「{new}」")
-        elif a.annotation == 'text_content':
-            if a.ftype == 'replace':
+        elif a.annotation == "text_content":
+            if a.ftype == "replace":
                 parts.append(f"「{old[:15]}...」→「{new[:15]}...」")
-            elif a.ftype == 'insert':
+            elif a.ftype == "insert":
                 parts.append(f"新增「{new[:20]}...」")
-            elif a.ftype == 'delete':
+            elif a.ftype == "delete":
                 parts.append(f"删除「{old[:20]}...」")
     return "；".join(parts) if parts else (item.description or "内容有差异")
 
@@ -132,6 +136,7 @@ def _generate_specific_summary(item) -> str:
 # ============================================================
 # LLM 调用
 # ============================================================
+
 
 def _call_llm(prompt: str, llm_config: dict) -> str:
     """
@@ -144,24 +149,25 @@ def _call_llm(prompt: str, llm_config: dict) -> str:
     try:
         from llm_chat import ask_once
 
-        backend = llm_config.get('provider', 'bedrock')
-        if backend == 'bedrock_converse':
-            backend = 'bedrock'
+        backend = llm_config.get("provider", "bedrock")
+        if backend == "bedrock_converse":
+            backend = "bedrock"
 
         return ask_once(
             prompt,
             backend=backend,
-            model=llm_config.get('model', 'zai.glm-4.7-flash'),
-            region=llm_config.get('region', 'us-east-1'),
-            api_key_env=llm_config.get('api_key_env', 'AWS_BEARER_TOKEN_BEDROCK'),
-            api_key=llm_config.get('api_key', ''),
-            max_tokens=llm_config.get('max_tokens', 2048),
-            timeout=llm_config.get('timeout', 120),
+            model=llm_config.get("model", ""),
+            region=llm_config.get("region", ""),
+            api_key_env=llm_config.get("api_key_env", ""),
+            api_key=llm_config.get("api_key", ""),
+            max_tokens=llm_config.get("max_tokens", 0),
+            timeout=llm_config.get("timeout", 0),
+            max_retries=llm_config.get("max_retries", 0),
+            retry_backoff=llm_config.get("retry_backoff", 0),
         )
     except Exception as e:
         log.warning(f"LLM 调用失败: {e}")
         return None
-
 
 
 def _parse_json_response(response):
@@ -169,7 +175,7 @@ def _parse_json_response(response):
     if not response:
         return None
     try:
-        json_match = re.search(r'\[[\s\S]*\]', response)
+        json_match = re.search(r"\[[\s\S]*\]", response)
         if json_match:
             return json.loads(json_match.group())
     except (json.JSONDecodeError, AttributeError) as e:
@@ -181,12 +187,13 @@ def _parse_json_response(response):
 # 格式化 + 批量判断
 # ============================================================
 
+
 def _format_judge_items(items):
     """将候选段落对格式化为判断 prompt"""
     parts = []
     for i, item in enumerate(items, 1):
-        text_a = item.para_a.text[:300].replace('\n', ' ')
-        text_b = item.para_b.text[:300].replace('\n', ' ')
+        text_a = item.para_a.text[:300].replace("\n", " ")
+        text_b = item.para_b.text[:300].replace("\n", " ")
         src_a = item.para_a.source_file
         src_b = item.para_b.source_file
         loc_a = item.para_a.location
@@ -238,6 +245,7 @@ def _judge_batch(items, llm_config: dict, prompt_template: str = ""):
 # 主入口
 # ============================================================
 
+
 def filter_diffs(diff_items, llm_config: dict = None, judge_config: dict = None):
     """
     一致性判断流水线
@@ -259,7 +267,7 @@ def filter_diffs(diff_items, llm_config: dict = None, judge_config: dict = None)
     if llm_config is None:
         llm_config = {}
 
-    batch_size = llm_config.get('batch_size', 5)
+    batch_size = llm_config.get("batch_size", 5)
 
     if judge_config is None:
         judge_config = {}
@@ -283,45 +291,51 @@ def filter_diffs(diff_items, llm_config: dict = None, judge_config: dict = None)
 
     if uncertain:
         num_batches = math.ceil(len(uncertain) / batch_size)
-        log.info(f"  阶段2: LLM 判断（{len(uncertain)} pairs, {num_batches} batches, batch_size={batch_size}）...")
+        log.info(
+            f"  阶段2: LLM 判断（{len(uncertain)} pairs, {num_batches} batches, batch_size={batch_size}）..."
+        )
 
         for batch_idx in range(num_batches):
             start = batch_idx * batch_size
             end = min(start + batch_size, len(uncertain))
             batch = uncertain[start:end]
 
-            log.info(f"    batch {batch_idx+1}/{num_batches} ({len(batch)} pairs)...")
+            log.info(f"    batch {batch_idx + 1}/{num_batches} ({len(batch)} pairs)...")
             results = _judge_batch(batch, llm_config, prompt_template)
 
             if results:
                 for r in results:
                     try:
-                        idx = int(r.get('index', 0)) - 1
+                        idx = int(r.get("index", 0)) - 1
                     except (ValueError, TypeError):
                         continue
-                    if 0 <= idx < len(batch) and r.get('inconsistent', False):
+                    if 0 <= idx < len(batch) and r.get("inconsistent", False):
                         item = batch[idx]
-                        point = r.get('point', '')
-                        doc_a_says = r.get('doc_a_says', '')
-                        doc_b_says = r.get('doc_b_says', '')
+                        point = r.get("point", "")
+                        doc_a_says = r.get("doc_a_says", "")
+                        doc_b_says = r.get("doc_b_says", "")
                         # 直接填充结构化字段
                         item.llm_point = point
                         item.llm_doc_a_says = doc_a_says
                         item.llm_doc_b_says = doc_b_says
                         # 兼容性：同时填充 llm_reason
                         if point and doc_a_says and doc_b_says:
-                            item.llm_reason = f"{point}：A称「{doc_a_says}」，B称「{doc_b_says}」"
+                            item.llm_reason = (
+                                f"{point}：A称「{doc_a_says}」，B称「{doc_b_says}」"
+                            )
                         elif point:
                             item.llm_reason = point
                         else:
                             item.llm_reason = _generate_specific_summary(item)
                             item.llm_point = item.llm_reason
-                        item.__dict__['category'] = 'inconsistency'
-                        item.__dict__['category_label'] = '文档间不一致'
+                        item.__dict__["category"] = "inconsistency"
+                        item.__dict__["category_label"] = "文档间不一致"
                         inconsistent_items.append(item)
 
     log.info(f"  ✅ 确认不一致: {len(inconsistent_items)} 处")
-    log.info(f"  📊 总计: {len(diff_items)} 候选 → 规则排除 {len(pre_classified)} → LLM判断 {len(uncertain)} → 确认矛盾 {len(inconsistent_items)}")
+    log.info(
+        f"  📊 总计: {len(diff_items)} 候选 → 规则排除 {len(pre_classified)} → LLM判断 {len(uncertain)} → 确认矛盾 {len(inconsistent_items)}"
+    )
 
     return JudgeResult(
         inconsistent_items=inconsistent_items,

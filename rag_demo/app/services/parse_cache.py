@@ -1,23 +1,24 @@
 """
 文档解析缓存
 
-以文件 MD5 为 key，缓存 doc_parser 的解析结果（段落+表格）。
-MD5 不变则直接读缓存，跳过耗时的 PDF 解析。
+以文件 SHA-256 为 key，缓存 doc_parser 的解析结果（段落+表格）。
+SHA-256 不变则直接读缓存，跳过耗时的 PDF 解析。
 
-缓存结构：data/parse_cache/{md5}.json
+缓存结构：~/.simple_rag/parse_cache/{sha256}.json
 """
-import os
-import json
-import hashlib
-import logging
-from typing import Optional
 
-from doc_parser import parse as _raw_parse, Document, Paragraph, Table
+import hashlib
+import json
+import logging
+import os
+
+from doc_parser import Document, Paragraph, Table
+from doc_parser import parse as _raw_parse
 
 log = logging.getLogger("rag_demo.parse_cache")
 
-_BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-_CACHE_DIR = os.path.join(_BASE_DIR, "data", "parse_cache")
+# 默认缓存目录（~/.simple_rag/parse_cache/）
+_CACHE_DIR = os.path.join(os.path.expanduser("~"), ".simple_rag", "parse_cache")
 
 
 def cached_parse(filepath: str, config: dict = None) -> Document:
@@ -33,32 +34,36 @@ def cached_parse(filepath: str, config: dict = None) -> Document:
     """
     os.makedirs(_CACHE_DIR, exist_ok=True)
 
-    md5 = _file_md5(filepath)
-    cache_path = os.path.join(_CACHE_DIR, f"{md5}.json")
+    file_hash = _file_sha256(filepath)
+    cache_path = os.path.join(_CACHE_DIR, f"{file_hash}.json")
 
     # 命中缓存
     if os.path.exists(cache_path):
         try:
             doc = _load_cache(cache_path)
-            log.info(f"📦 命中解析缓存: {doc.filename} ({len(doc.paragraphs)} 段, MD5={md5[:8]})")
+            log.info(
+                f"📦 命中解析缓存: {doc.filename} ({len(doc.paragraphs)} 段, SHA256={file_hash[-8:].upper()})"
+            )
             return doc
         except Exception as e:
             log.warning(f"缓存加载失败，重新解析: {e}")
 
     # 执行解析
     doc = _raw_parse(filepath, config=config)
-    log.info(f"✅ 解析完成: {doc.filename} ({len(doc.paragraphs)} 段, {len(doc.tables)} 表)")
+    log.info(
+        f"✅ 解析完成: {doc.filename} ({len(doc.paragraphs)} 段, {len(doc.tables)} 表)"
+    )
 
     # 写入缓存
     _save_cache(cache_path, doc)
-    log.info(f"💾 已缓存解析结果: MD5={md5[:8]}")
+    log.info(f"💾 已缓存解析结果: SHA256={file_hash[-8:].upper()}")
 
     return doc
 
 
-def _file_md5(filepath: str) -> str:
-    """计算文件 MD5"""
-    h = hashlib.md5()
+def _file_sha256(filepath: str) -> str:
+    """计算文件 SHA-256"""
+    h = hashlib.sha256()
     with open(filepath, "rb") as f:
         for chunk in iter(lambda: f.read(8192), b""):
             h.update(chunk)

@@ -17,14 +17,19 @@ build/
 venv/
 env/
 
-# ===== 运行时数据 =====
-data/page_cache/
-data/parse_cache/
-data/review_results/
-data/doc_store/
-data/chat_history/
-data/app.log
-data/review_tasks.json
+# ===== 运行时数据（全部在 ~/.cache/simple_rag/ 下）=====
+# 以下目录由运行时自动创建，不需要手动管理
+# logs/
+# doc_store/
+# parse_cache/
+# vector_cache/
+# page_cache/
+# chat_history/
+# review_results/
+# uploads/
+
+# 保留模块目录下的旧数据目录（如果有残留）
+data/
 uploads/
 
 # ===== 缓存 =====

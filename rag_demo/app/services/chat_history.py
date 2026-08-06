@@ -18,12 +18,11 @@
 
 注意: session_id 以 "test_" 开头的不会持久化（排除单元测试产生的问答）。
 """
-import os
+
 import json
-import time
-import uuid
 import logging
-from typing import List, Optional
+import os
+import time
 
 log = logging.getLogger("rag_demo.chat_history")
 
@@ -33,8 +32,11 @@ class ChatHistoryStore:
 
     def __init__(self, history_dir: str = ""):
         self._dir = history_dir or os.path.join(
-            os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-            "data", "chat_history"
+            os.path.dirname(
+                os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            ),
+            "data",
+            "chat_history",
         )
         os.makedirs(self._dir, exist_ok=True)
 
@@ -96,7 +98,7 @@ class ChatHistoryStore:
         self._save_file(filepath, data)
         return self._summarize(data)
 
-    def list_sessions(self, limit: int = 50) -> List[dict]:
+    def list_sessions(self, limit: int = 50) -> list[dict]:
         """列出所有会话摘要"""
         sessions = []
         if not os.path.exists(self._dir):
@@ -114,7 +116,7 @@ class ChatHistoryStore:
         sessions.sort(key=lambda s: s.get("updated_at", ""), reverse=True)
         return sessions[:limit]
 
-    def get_session(self, session_id: str) -> Optional[dict]:
+    def get_session(self, session_id: str) -> dict | None:
         """获取完整会话"""
         filepath = os.path.join(self._dir, f"{session_id}.json")
         return self._load_file(filepath)
@@ -138,7 +140,7 @@ class ChatHistoryStore:
         }
 
     @staticmethod
-    def _load_file(filepath: str) -> Optional[dict]:
+    def _load_file(filepath: str) -> dict | None:
         try:
             with open(filepath, "r", encoding="utf-8") as f:
                 return json.load(f)

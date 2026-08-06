@@ -6,9 +6,9 @@ ChatSession — 多轮对话管理（后端无关）
   - 自动截断历史（防止 token 溢出）
   - 将请求分发到具体后端（Bedrock / OpenAI）
 """
+
 import logging
-from typing import List, Optional
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from llm_chat.backends import get_backend
 from llm_chat.defaults import DEFAULT_BACKEND, DEFAULT_MODELS, SESSION_DEFAULTS
@@ -19,7 +19,8 @@ log = logging.getLogger("llm_chat")
 @dataclass
 class Message:
     """一条对话消息"""
-    role: str       # "user" | "assistant"
+
+    role: str  # "user" | "assistant"
     content: str
 
 
@@ -53,7 +54,7 @@ class ChatSession:
         self.system_prompt = system_prompt
         self.model = model
         self.max_history = max_history or SESSION_DEFAULTS["max_history"]
-        self.messages: List[Message] = []
+        self.messages: list[Message] = []
         self._backend = get_backend(backend, model=model, **kwargs)
 
     def ask(self, question: str, context: str = "") -> str:
@@ -99,11 +100,11 @@ class ChatSession:
         """清空对话历史"""
         self.messages = []
 
-    def get_history(self) -> List[dict]:
+    def get_history(self) -> list[dict]:
         """获取对话历史"""
         return [{"role": m.role, "content": m.content} for m in self.messages]
 
-    def _build_conversation(self) -> List[dict]:
+    def _build_conversation(self) -> list[dict]:
         """构建发送给后端的对话列表 [{role, content}, ...]"""
         return [{"role": m.role, "content": m.content} for m in self.messages]
 
