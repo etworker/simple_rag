@@ -1,6 +1,7 @@
 """预审核路由 — 上传/预审核/确认/拒绝/重跑"""
 
 import asyncio
+import copy
 import json
 import logging
 import os
@@ -358,8 +359,10 @@ async def _run_pre_review(task_id: str):
                 task["status"] = "done"
                 task["progress"] = 100
                 task["current_step"] = "预审核完成（使用缓存）"
-                task["result"] = cached.get("result")
-                task["parsed_paragraphs"] = cached.get("parsed_paragraphs", [])
+                task["result"] = copy.deepcopy(cached.get("result"))
+                task["parsed_paragraphs"] = copy.deepcopy(
+                    cached.get("parsed_paragraphs", [])
+                )
                 task["all_steps"] = [
                     {"id": "cache", "label": "读取预审核缓存"},
                     {"id": "done", "label": "完成"},

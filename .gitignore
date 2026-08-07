@@ -5,6 +5,7 @@
 *secrets*
 *.key
 *.pem
+temp/
 
 # ===== Python =====
 __pycache__/

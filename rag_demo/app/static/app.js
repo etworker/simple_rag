@@ -233,6 +233,7 @@ function setupLazyRender(containerId, pdfDoc){
     },{root:container, rootMargin:'200px'});
     container.querySelectorAll('.page-slot').forEach(s=>observer.observe(s));
     // 滚动时追踪当前页码
+    if(container._observer) container._observer.disconnect();
     container._observer=observer;
     container.onscroll=()=>{
         const slots=container.querySelectorAll('.page-slot');
