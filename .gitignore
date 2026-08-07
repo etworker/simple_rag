@@ -1,6 +1,8 @@
 # ===== 敏感文件（绝不上传）=====
 .env
 .env.*
+.secrets.env
+*secrets*
 *.key
 *.pem
 
@@ -17,7 +19,7 @@ build/
 venv/
 env/
 
-# ===== 运行时数据（全部在 ~/.cache/simple_rag/ 下）=====
+# ===== 运行时数据（全部在 ~/.simple_rag/ 下）=====
 # 以下目录由运行时自动创建，不需要手动管理
 # logs/
 # doc_store/

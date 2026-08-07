@@ -138,16 +138,12 @@ class DocStore:
             f"解析完成: {doc.filename} ({len(doc.paragraphs)} 段, {len(doc.tables)} 表)"
         )
 
-        # 计算 embedding（优先复用 VectorStore 缓存，避免重复计算）
+        # 计算 embedding（VectorStore 内部有缓存，自动复用）
         model = self._get_model()
-        embeddings, from_cache = self._vector_store.get_or_compute(
+        embeddings, _index = self._vector_store.get_or_compute(
             doc.filename, doc.paragraphs, model
         )
         embeddings = np.array(embeddings).astype(np.float32)
-        if from_cache:
-            log.info(f"✅ 复用向量缓存: {doc.filename} ({len(doc.paragraphs)} 段)")
-        else:
-            log.info(f"🆕 新算向量: {doc.filename} ({len(doc.paragraphs)} 段)")
 
         # 追加到全局
         self._paragraphs.extend(doc.paragraphs)

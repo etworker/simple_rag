@@ -1,8 +1,8 @@
 """
-docparser — 通用文档解析库
+doc_parser — 通用文档解析库
 
 用法:
-    from docparser import parse, Document, Paragraph, Table
+    from doc_parser import parse, Document, Paragraph, Table
 
     doc = parse("path/to/file.pdf", config={...})
     for para in doc.paragraphs:

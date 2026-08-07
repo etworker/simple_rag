@@ -1,8 +1,8 @@
 """
-versiondiff — 文档差异检测引擎
+version_diff — 文档差异检测引擎
 
 用法:
-    from versiondiff import DiffEngine, Config, DiffResult
+    from version_diff import DiffEngine, Config, DiffResult
 
     engine = DiffEngine(config={...})
     engine.add("a.pdf")

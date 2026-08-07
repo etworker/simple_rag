@@ -25,10 +25,10 @@ if [ -f ".env" ]; then
     set -a
     source .env
     set +a
-elif [ -f "../.secrets.env" ]; then
-    echo "[2/3] 加载 .secrets.env 环境变量..."
+elif [ -f "../.env" ]; then
+    echo "[2/3] 加载上级目录 .env 环境变量..."
     set -a
-    source ../.secrets.env
+    source ../.env
     set +a
 else
     echo "[2/3] 未找到 .env 文件，跳过（请确保环境变量已配置）"

@@ -174,13 +174,15 @@ class QAEngine:
         # 如果有冲突，追加醒目提示
         if conflicts:
             conflict_template = self._config.get("prompts.conflict_warning", "")
-            conflict_desc = "\n".join(
-                [
-                    f"  - {c['point']}：{c['doc_a_file']}称「{c['doc_a_says']}」，"
-                    f"{c['doc_b_file']}称「{c['doc_b_says']}」"
-                    for c in conflicts
-                ]
-            )
+            lines = []
+            for c in conflicts:
+                others_desc = "；".join(
+                    f"{o['file']}称「{o['says']}」" for o in c["doc_others"]
+                )
+                lines.append(
+                    f"  - {c['point']}：{c['doc_a_file']}称「{c['doc_a_says']}」，{others_desc}"
+                )
+            conflict_desc = "\n".join(lines)
             if conflict_template:
                 context += conflict_template.format(conflicts=conflict_desc)
 

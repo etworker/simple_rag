@@ -173,9 +173,9 @@ async def index():
 class WebSocketLogHandler(logging.Handler):
     """将日志推送到所有已连接的 WebSocket 客户端"""
 
-    clients: list = []
+    clients: list = []  # noqa: RUF012
     # 保留最近 200 条日志，新连接时回放
-    history: list = []
+    history: list = []  # noqa: RUF012
 
     def emit(self, record):
         msg = self.format(record)
