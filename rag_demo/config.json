@@ -1,29 +1,46 @@
 {
-    "cache": {"base_dir": "C:\\Users\\0937\\.simple_rag", "upload_dir": ""},
-    "embedding": {"model": "BAAI/bge-base-zh-v1.5", "cache_dir": ""},
-    "llm": {
-        "provider": "bedrock_converse",
-        "model": "zai.glm-4.7-flash",
-        "region": "us-east-1",
-        "api_key_env": "AWS_BEARER_TOKEN_BEDROCK",
-        "max_tokens": 2048,
-        "timeout": 120,
-        "max_retries": 3,
-        "retry_backoff": 2.0,
-        "context_window": 8192,
-        "concurrency": 1
-    },
-    "retrieval": {"top_k": 15, "similarity_threshold": 0.5},
-    "pre_review": {"similarity_threshold": 0.8, "batch_size": 0},
-    "conflict_detection": {
-        "min_score": 0.7,
-        "min_similarity": 0.5,
-        "max_similarity": 0.95
-    },
-    "prompts": {
-        "system": "你是一个企业文档问答助手。根据提供的参考资料回答用户问题。\n要求：\n1. 仅基于参考资料回答，不要编造信息\n2. 回答末尾标注来源（完整文档文件名+位置），文档文件名必须完整保留，不得省略任何前缀或后缀\n3. 如果参考资料中有矛盾描述，必须醒目指出\n4. 如果参考资料不足以回答，明确告知用户\n5. 对于关于知识库本身的元数据问题（如共几篇文档），根据参考资料的来源信息如实回答",
-        "context_template": "[来源: {source} {location}]\n{text}\n",
-        "conflict_warning": "\n⚠️ 注意：以下文档对此问题的描述存在矛盾：\n{conflicts}\n请以最新版本或上级文档为准。"
-    },
-    "chat": {"max_history": 20}
+  "cache": {
+    "base_dir": "C:\\Users\\0937\\.simple_rag",
+    "upload_dir": ""
+  },
+  "embedding": {
+    "model": "BAAI/bge-base-zh-v1.5",
+    "cache_dir": ""
+  },
+  "llm": {
+    "provider": "openai",
+    "model": "/home/ec2-user/models/GLM-4.7-Flash-Q4_K_M.gguf",
+    "region": "us-east-1",
+    "api_key_env": "AWS_BEARER_TOKEN_BEDROCK",
+    "max_tokens": 2048,
+    "timeout": 120,
+    "max_retries": 3,
+    "retry_backoff": 2.0,
+    "base_url": "http://a10bj.etworker.tech:8731/v1",
+    "api_key": "dummy",
+    "endpoint": "chat",
+    "context_window": 80000,
+    "concurrency": 2
+  },
+  "retrieval": {
+    "top_k": 15,
+    "similarity_threshold": 0.5
+  },
+  "pre_review": {
+    "similarity_threshold": 0.8,
+    "batch_size": 0
+  },
+  "conflict_detection": {
+    "min_score": 0.7,
+    "min_similarity": 0.5,
+    "max_similarity": 0.95
+  },
+  "prompts": {
+    "system": "你是一个企业文档问答助手。根据提供的参考资料回答用户问题。\n要求：\n1. 仅基于参考资料回答，不要编造信息\n2. 回答末尾标注来源（完整文档文件名+位置），文档文件名必须完整保留，不得省略任何前缀或后缀\n3. 如果参考资料中有矛盾描述，必须醒目指出\n4. 如果参考资料不足以回答，明确告知用户\n5. 对于关于知识库本身的元数据问题（如共几篇文档），根据参考资料的来源信息如实回答",
+    "context_template": "[来源: {source} {location}]\n{text}\n",
+    "conflict_warning": "\n⚠️ 注意：以下文档对此问题的描述存在矛盾：\n{conflicts}\n请以最新版本或上级文档为准。"
+  },
+  "chat": {
+    "max_history": 20
+  }
 }

@@ -160,6 +160,8 @@ def _call_llm(prompt: str, llm_config: dict) -> str:
             region=llm_config.get("region", ""),
             api_key_env=llm_config.get("api_key_env", ""),
             api_key=llm_config.get("api_key", ""),
+            base_url=llm_config.get("base_url", ""),
+            endpoint=llm_config.get("endpoint", "chat"),
             max_tokens=llm_config.get("max_tokens", 0),
             timeout=llm_config.get("timeout", 0),
             max_retries=llm_config.get("max_retries", 0),

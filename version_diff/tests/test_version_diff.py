@@ -78,9 +78,9 @@ class TestConfigHash:
         assert len(h) == 8  # md5[:8]
 
     def test_default_config_hash_matches_old_behavior(self):
-        """空配置的哈希应等于 md5(b'')[:8] = d41d8cd9"""
+        """空配置的哈希应等于 sha256(b'')[:8] = e3b0c442"""
         vs = VectorStore()
-        assert vs._config_hash == "d41d8cd9"
+        assert vs._config_hash == "e3b0c442"
 
 
 class TestTextDiffItemStructuredFields:
