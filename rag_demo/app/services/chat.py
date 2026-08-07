@@ -32,25 +32,9 @@ class ChatSession:
     def __post_init__(self):
         # 从 llm_config 构造 llm_chat 的参数
         backend = self.llm_config.get("provider", "bedrock")
-        if backend == "bedrock_converse":
-            backend = "bedrock"
 
-        kwargs = {
-            "model": self.llm_config.get("model", "zai.glm-4.7-flash"),
-            "region": self.llm_config.get("region", "us-east-1"),
-            "api_key_env": self.llm_config.get(
-                "api_key_env", "AWS_BEARER_TOKEN_BEDROCK"
-            ),
-            "api_key": self.llm_config.get("api_key", ""),
-            "max_tokens": self.llm_config.get("max_tokens", 2048),
-            "timeout": self.llm_config.get("timeout", 120),
-        }
-        # OpenAI 特有参数
-        if backend == "openai":
-            kwargs["base_url"] = self.llm_config.get(
-                "base_url", "https://api.openai.com/v1"
-            )
-            kwargs["endpoint"] = self.llm_config.get("endpoint", "chat")
+        # 透传所有 llm_config 参数给 llm_chat，由其内部 defaults 统一管理默认值
+        kwargs = {k: v for k, v in self.llm_config.items() if k not in ("provider",)}
 
         self._session = _ChatSession(
             system_prompt=self.system_prompt,

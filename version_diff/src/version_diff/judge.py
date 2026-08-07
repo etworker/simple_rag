@@ -151,8 +151,7 @@ def _call_llm(prompt: str, llm_config: dict) -> str:
         from llm_chat import ask_once
 
         backend = llm_config.get("provider", "bedrock")
-        if backend == "bedrock_converse":
-            backend = "bedrock"
+        # 别名（如 bedrock_converse → bedrock）由 llm_chat backends 层统一处理
 
         return ask_once(
             prompt,
@@ -418,39 +417,39 @@ def filter_diffs(diff_items, llm_config: dict = None, judge_config: dict = None)
         for batch_idx, batch, results in batch_results:
             if not results:
                 continue
-                for r in results:
-                    # LLM 偶发返回非结构化条目（如裸 true/false 或字符串）；
-                    # 只处理 dict 类型，静默跳过其它形态。
-                    if not isinstance(r, dict):
-                        log.warning(f"    ↪ 跳过非结构化 judge 输出项: {r!r}")
-                        continue
-                    try:
-                        idx = int(r.get("index", 0)) - 1
-                    except (ValueError, TypeError):
-                        log.warning(f"    ↪ 非法 index 字段: {r.get('index')!r}")
-                        continue
-                    if 0 <= idx < len(batch) and r.get("inconsistent", False):
-                        item = batch[idx]
-                        point = r.get("point", "")
-                        doc_a_says = r.get("doc_a_says", "")
-                        doc_b_says = r.get("doc_b_says", "")
-                        # 直接填充结构化字段
-                        item.llm_point = point
-                        item.llm_doc_a_says = doc_a_says
-                        item.llm_doc_b_says = doc_b_says
-                        # 兼容性：同时填充 llm_reason
-                        if point and doc_a_says and doc_b_says:
-                            item.llm_reason = (
-                                f"{point}：A称「{doc_a_says}」，B称「{doc_b_says}」"
-                            )
-                        elif point:
-                            item.llm_reason = point
-                        else:
-                            item.llm_reason = _generate_specific_summary(item)
-                            item.llm_point = item.llm_reason
-                        item.__dict__["category"] = "inconsistency"
-                        item.__dict__["category_label"] = "文档间不一致"
-                        inconsistent_items.append(item)
+            for r in results:
+                # LLM 偶发返回非结构化条目（如裸 true/false 或字符串）；
+                # 只处理 dict 类型，静默跳过其它形态。
+                if not isinstance(r, dict):
+                    log.warning(f"    ↪ 跳过非结构化 judge 输出项: {r!r}")
+                    continue
+                try:
+                    idx = int(r.get("index", 0)) - 1
+                except (ValueError, TypeError):
+                    log.warning(f"    ↪ 非法 index 字段: {r.get('index')!r}")
+                    continue
+                if 0 <= idx < len(batch) and r.get("inconsistent", False):
+                    item = batch[idx]
+                    point = r.get("point", "")
+                    doc_a_says = r.get("doc_a_says", "")
+                    doc_b_says = r.get("doc_b_says", "")
+                    # 直接填充结构化字段
+                    item.llm_point = point
+                    item.llm_doc_a_says = doc_a_says
+                    item.llm_doc_b_says = doc_b_says
+                    # 兼容性：同时填充 llm_reason
+                    if point and doc_a_says and doc_b_says:
+                        item.llm_reason = (
+                            f"{point}：A称「{doc_a_says}」，B称「{doc_b_says}」"
+                        )
+                    elif point:
+                        item.llm_reason = point
+                    else:
+                        item.llm_reason = _generate_specific_summary(item)
+                        item.llm_point = item.llm_reason
+                    item.__dict__["category"] = "inconsistency"
+                    item.__dict__["category_label"] = "文档间不一致"
+                    inconsistent_items.append(item)
 
     log.info(f"  ✅ 确认不一致: {len(inconsistent_items)} 处")
     log.info(

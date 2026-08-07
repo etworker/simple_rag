@@ -57,36 +57,7 @@ def _load_review_cache():
             pass
 
 
-_load_review_cache()
 _confirmed_or_rejected: set = set()
-
-
-def _cleanup_stale_uploads():
-    """清理孤儿上传文件（无对应活跃任务的）"""
-    import shutil
-
-    if not _upload_dir or not os.path.exists(_upload_dir):
-        return
-    active_paths = {
-        t.get("filepath", "")
-        for t in _review_tasks.values()
-        if t.get("status") in ("pending", "running")
-    }
-    removed = 0
-    for sub_dir_name in os.listdir(_upload_dir):
-        sub_path = os.path.join(_upload_dir, sub_dir_name)
-        if not os.path.isdir(sub_path):
-            continue
-        has_active = False
-        for f in os.listdir(sub_path):
-            if os.path.join(sub_path, f) in active_paths:
-                has_active = True
-                break
-        if not has_active:
-            shutil.rmtree(sub_path, ignore_errors=True)
-            removed += 1
-    if removed:
-        log.info(f"清理孤儿上传目录: {removed} 个")
 
 
 def init(
@@ -99,9 +70,13 @@ def init(
     _upload_dir = upload_dir
     _cache_dir = cache_dir or os.path.join(os.path.expanduser("~"), ".simple_rag")
     os.makedirs(upload_dir, exist_ok=True)
-    _cleanup_stale_uploads()
+
+    # ★ Fix: 完整 SHA256 命名方案下，相同内容 → 相同路径，不会产生
+    #    "孤儿文件"，因此不再需要 cleanup 函数。已入库文件路径记录在
+    #    doc_store.documents.json 中，与 uploads 目录彻底解耦。
 
     global _REVIEW_CACHE_PATH, _REVIEW_RESULT_CACHE
     _REVIEW_CACHE_PATH = os.path.join(_cache_dir, "review_tasks.json")
     _REVIEW_RESULT_CACHE = os.path.join(_cache_dir, "review_results")
     os.makedirs(_REVIEW_RESULT_CACHE, exist_ok=True)
+    _load_review_cache()  # 在路径更新后加载，确保用正确路径

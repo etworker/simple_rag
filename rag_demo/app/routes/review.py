@@ -101,13 +101,18 @@ async def upload_document(file: UploadFile = File(...), choice: str = Form("")):
             _state._doc_store.remove_document(existing.doc_id)
             log.info(f"用户选择覆盖: 已删除旧文档 {existing.doc_id}")
 
+    # ★ Fix: 用完整 SHA256 作为文件名，相同内容 → 相同路径 → 天然去重。
+    #    记录原始文件名与 hash 的映射：doc_store.DocMeta.filename ↔ file_hash。
+    #    无需 uuid8 子目录，原子写入避免孤儿文件。
     file_ext = os.path.splitext(filename)[1] or ".bin"
-    safe_filename = f"{new_sha[:16]}{file_ext}"
-    sub_dir = os.path.join(_state._upload_dir, uuid.uuid4().hex[:8])
-    os.makedirs(sub_dir, exist_ok=True)
-    filepath = os.path.join(sub_dir, safe_filename)
-    with open(filepath, "wb") as f:
+    safe_filename = f"{new_sha}{file_ext}"
+    filepath = os.path.join(_state._upload_dir, safe_filename)
+
+    # 原子写入：先写临时文件再 rename，防止并发同名文件写冲突
+    tmp_filepath = filepath + ".tmp"
+    with open(tmp_filepath, "wb") as f:
         f.write(content)
+    os.replace(tmp_filepath, filepath)
     log.info(f"上传保存: {filename} -> {safe_filename} ({len(content)} bytes)")
 
     task_id = uuid.uuid4().hex[:12]
@@ -203,6 +208,8 @@ async def confirm_review(task_id: str):
             status_code=409, detail=f"文档 '{filename}' 已入库（相同内容）"
         )
 
+    # ★ Fix: uploads 目录已经是 SHA256 命名（不可变、去重），
+    #    直接复用即可。无需 adata 二次复制——相同内容任何时刻路径一致。
     try:
         meta = await asyncio.to_thread(
             _state._doc_store.add_document, filepath, task["filename"]
@@ -213,7 +220,7 @@ async def confirm_review(task_id: str):
 
     task["status"] = "confirmed"
     _state._confirmed_or_rejected.add(task_id)
-    log.info(f"入库成功: {meta.filename} ({meta.paragraph_count} paras)")
+    log.info(f"入库成功: {meta.filename} ({meta.paragraph_count} paras) @ {filepath}")
     return {
         "message": "文档已入库",
         "filename": meta.filename,
@@ -323,8 +330,15 @@ async def get_review_page(task_id: str, page: int = 1, highlight: str = ""):
 
 def _load_existing_docs(engine):
     """同步加载已有文档到引擎（在线程中执行）"""
+    # ★ Fix: 文件缺失或损坏时跳过，不中断整个预审核流程
     for doc_meta in _state._doc_store.list_documents():
-        engine.add(doc_meta.filepath)
+        if not doc_meta.filepath or not os.path.exists(doc_meta.filepath):
+            log.warning(f"跳过加载已有文档（文件不存在）: {doc_meta.filename} -> {doc_meta.filepath}")
+            continue
+        try:
+            engine.add(doc_meta.filepath)
+        except Exception as e:
+            log.error(f"加载已有文档失败（跳过）: {doc_meta.filename}: {e}")
 
 
 async def _run_pre_review(task_id: str):

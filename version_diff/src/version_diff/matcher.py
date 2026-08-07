@@ -58,7 +58,7 @@ def get_vector_store(cache_dir: str = "") -> VectorStore:
 
 
 def pair_paragraphs(
-    paras_a, paras_b, model, threshold=0.75, file_a="", file_b="", vector_store=None
+    paras_a, paras_b, model, threshold=0.80, file_a="", file_b="", vector_store=None
 ):
     """
     用 FAISS 找到两篇文档中"说同一件事"的段落对
@@ -184,7 +184,7 @@ def _describe_change(fragments, text_a, text_b):
 
 
 def diff_texts(
-    paras_a, paras_b, model, threshold=0.75, file_a="", file_b="", vector_store=None
+    paras_a, paras_b, model, threshold=0.80, file_a="", file_b="", vector_store=None
 ):
     """
     比较两篇文档的正文段落
