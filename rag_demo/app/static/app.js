@@ -681,8 +681,11 @@ async function sendQuestion(){
         if(data.detail){if(last)last.innerHTML='<span style="color:var(--danger);">'+esc(data.detail)+'</span>';return;}
         // 后处理：将答案中的括号注释转为 blockquote
         let answerHtml=renderMd(data.answer||'');
-        // 将 （（资料中还...来源：...）） 模式转为 blockquote（非贪婪+长度限制防吞字）
-        answerHtml=answerHtml.replace(/(（（资料中还[^）]{0,80}?来源[:：][^）]{0,80}?））/g,(m,p1)=>`<blockquote>${p1}</blockquote>`);
+        // 将 （（...来源：...）） 模式转为 blockquote（非贪婪+长度限制防吞字）
+        answerHtml=answerHtml.replace(
+            /（（资料中还[^\uff09]{0,80}?来源[:：][^\uff09]{0,80}?））/g,
+            (m) => `<blockquote>${esc(m)}</blockquote>`
+        );
         let html=answerHtml;
         let allSources=[];  // 提到外层作用域，供点击事件访问
         if(data.sources&&data.sources.length){

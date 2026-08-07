@@ -16,6 +16,7 @@ import logging
 import math
 import os
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 
 from version_diff.prefilter import batch_pre_classify
@@ -246,6 +247,104 @@ def _judge_batch(items, llm_config: dict, prompt_template: str = ""):
 # ============================================================
 
 
+def _calculate_batch_size(llm_config: dict, sample_items: list) -> int:
+    """
+    根据 context_window 动态计算 batch_size
+
+    如果配置了 batch_size > 0，直接使用。
+    否则根据 context_window、max_tokens、prompt 模板开销、平均每对大小估算。
+    """
+    # 如果显式配置了 batch_size > 0，直接使用
+    explicit_bs = llm_config.get("batch_size", 0) or 0
+    if explicit_bs > 0:
+        return explicit_bs
+
+    context_window = llm_config.get("context_window", 8192)
+    max_tokens = llm_config.get("max_tokens", 2048)
+
+    # prompt 模板开销（估算）
+    prompt_overhead = len(CONSISTENCY_JUDGE_PROMPT)  # ~2000 chars
+
+    # 采样估算每对的大小
+    if sample_items:
+        sample_text = _format_judge_items(sample_items[:3])
+        avg_pair_size = len(sample_text) / max(len(sample_items[:3]), 1)
+    else:
+        avg_pair_size = 700  # 默认：~300字×2 + 格式
+
+    # 可用空间 = 上下文窗口 - prompt模板 - 响应预留
+    usable = context_window - prompt_overhead - max_tokens
+    if usable <= 0:
+        return 5  # 安全默认
+
+    calculated = int(usable / avg_pair_size)
+    return max(1, min(calculated, 50))  # clamp [1, 50]
+
+
+def _run_batches_sequential(batches, llm_config, prompt_template, num_batches):
+    """串行执行所有批次"""
+    results = []
+    for batch_idx, batch in enumerate(batches):
+        log.info(f"    batch {batch_idx + 1}/{num_batches} ({len(batch)} pairs)...")
+        batch_results = _judge_batch(batch, llm_config, prompt_template)
+        results.append((batch_idx, batch, batch_results))
+    return results
+
+
+def _run_batches_concurrent(
+    batches, llm_config, prompt_template, num_batches, concurrency
+):
+    """
+    并发执行批次，遇到 429 自动降级
+
+    策略：
+    - 初始并发度 = 配置值
+    - 如果连续失败，降级到串行
+    """
+    results = []
+    effective_concurrency = concurrency
+    sequential_fallback = []
+
+    with ThreadPoolExecutor(max_workers=effective_concurrency) as executor:
+        future_to_batch = {}
+        for batch_idx, batch in enumerate(batches):
+            log.info(
+                f"    batch {batch_idx + 1}/{num_batches} ({len(batch)} pairs) submitted"
+            )
+            future = executor.submit(_judge_batch, batch, llm_config, prompt_template)
+            future_to_batch[future] = (batch_idx, batch)
+
+        for future in as_completed(future_to_batch):
+            batch_idx, batch = future_to_batch[future]
+            try:
+                batch_results = future.result()
+                if batch_results is None:
+                    # LLM 调用失败，加入串行重试队列
+                    sequential_fallback.append((batch_idx, batch))
+                    log.warning(f"    batch {batch_idx + 1} 失败，加入串行重试队列")
+                else:
+                    results.append((batch_idx, batch, batch_results))
+                    log.info(f"    batch {batch_idx + 1}/{num_batches} 完成")
+            except Exception as e:
+                sequential_fallback.append((batch_idx, batch))
+                log.warning(f"    batch {batch_idx + 1} 异常: {e}，加入串行重试队列")
+
+    # 对失败的批次进行串行重试
+    if sequential_fallback:
+        log.info(f"    串行重试 {len(sequential_fallback)} 个失败批次...")
+        for batch_idx, batch in sequential_fallback:
+            log.info(f"    重试 batch {batch_idx + 1}/{num_batches}...")
+            batch_results = _judge_batch(batch, llm_config, prompt_template)
+            if batch_results is not None:
+                results.append((batch_idx, batch, batch_results))
+            else:
+                results.append((batch_idx, batch, None))
+
+    # 按批次顺序排序
+    results.sort(key=lambda x: x[0])
+    return results
+
+
 def filter_diffs(diff_items, llm_config: dict = None, judge_config: dict = None):
     """
     一致性判断流水线
@@ -266,8 +365,6 @@ def filter_diffs(diff_items, llm_config: dict = None, judge_config: dict = None)
 
     if llm_config is None:
         llm_config = {}
-
-    batch_size = llm_config.get("batch_size", 5)
 
     if judge_config is None:
         judge_config = {}
@@ -290,24 +387,47 @@ def filter_diffs(diff_items, llm_config: dict = None, judge_config: dict = None)
     inconsistent_items = []
 
     if uncertain:
-        num_batches = math.ceil(len(uncertain) / batch_size)
-        log.info(
-            f"  阶段2: LLM 判断（{len(uncertain)} pairs, {num_batches} batches, batch_size={batch_size}）..."
-        )
+        # 动态计算 batch_size（根据 context_window 或使用显式配置）
+        batch_size = _calculate_batch_size(llm_config, uncertain)
+        concurrency = llm_config.get("concurrency", 1) or 1
 
+        # 构建批次列表
+        num_batches = math.ceil(len(uncertain) / batch_size)
+        batches = []
         for batch_idx in range(num_batches):
             start = batch_idx * batch_size
             end = min(start + batch_size, len(uncertain))
-            batch = uncertain[start:end]
+            batches.append(uncertain[start:end])
 
-            log.info(f"    batch {batch_idx + 1}/{num_batches} ({len(batch)} pairs)...")
-            results = _judge_batch(batch, llm_config, prompt_template)
+        log.info(
+            f"  阶段2: LLM 判断（{len(uncertain)} pairs, {num_batches} batches, "
+            f"batch_size={batch_size}, concurrency={concurrency}）..."
+        )
 
-            if results:
+        # 选择执行策略
+        if concurrency > 1:
+            batch_results = _run_batches_concurrent(
+                batches, llm_config, prompt_template, num_batches, concurrency
+            )
+        else:
+            batch_results = _run_batches_sequential(
+                batches, llm_config, prompt_template, num_batches
+            )
+
+        # 处理结果
+        for batch_idx, batch, results in batch_results:
+            if not results:
+                continue
                 for r in results:
+                    # LLM 偶发返回非结构化条目（如裸 true/false 或字符串）；
+                    # 只处理 dict 类型，静默跳过其它形态。
+                    if not isinstance(r, dict):
+                        log.warning(f"    ↪ 跳过非结构化 judge 输出项: {r!r}")
+                        continue
                     try:
                         idx = int(r.get("index", 0)) - 1
                     except (ValueError, TypeError):
+                        log.warning(f"    ↪ 非法 index 字段: {r.get('index')!r}")
                         continue
                     if 0 <= idx < len(batch) and r.get("inconsistent", False):
                         item = batch[idx]

@@ -25,6 +25,8 @@ BEDROCK_DEFAULTS = {
     "timeout": 120,
     "max_retries": 3,
     "retry_backoff": 2.0,
+    "context_window": 8192,
+    "concurrency": 1,
 }
 
 # OpenAI 后端默认配置

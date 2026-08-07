@@ -55,6 +55,10 @@ class VectorStore:
         Returns:
             (embeddings: np.ndarray, faiss_index: faiss.Index)
         """
+        if not paragraphs:
+            log.info(f"  ⏭️ {filepath} 无段落，跳过嵌入计算")
+            return np.empty((0, 0), dtype=np.float32), None
+
         cache_key = self._compute_cache_key(filepath, paragraphs)
         cached = self._load_cache(cache_key)
 
@@ -69,6 +73,10 @@ class VectorStore:
             texts, normalize_embeddings=True, show_progress_bar=False
         )
         embeddings = np.array(embeddings, dtype=np.float32)
+
+        # 单句 encode 时 model 返回 (dim,) 而非 (1, dim)，统一升维避免下游 shape[1] 报错
+        if embeddings.ndim == 1:
+            embeddings = embeddings[np.newaxis, :]
 
         # 构建 FAISS index（内积，因为向量已归一化所以等价于余弦相似度）
         dim = embeddings.shape[1]
