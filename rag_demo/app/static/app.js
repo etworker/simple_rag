@@ -681,8 +681,8 @@ async function sendQuestion(){
         if(data.detail){if(last)last.innerHTML='<span style="color:var(--danger);">'+esc(data.detail)+'</span>';return;}
         // 后处理：将答案中的括号注释转为 blockquote
         let answerHtml=renderMd(data.answer||'');
-        // 将 （...来源：...） 模式转为 blockquote
-        answerHtml=answerHtml.replace(/(（（资料中还[^）]*来源[^）]*））/g,'<blockquote>$1</blockquote>');
+        // 将 （（资料中还...来源：...）） 模式转为 blockquote（非贪婪+长度限制防吞字）
+        answerHtml=answerHtml.replace(/(（（资料中还[^）]{0,80}?来源[:：][^）]{0,80}?））/g,(m,p1)=>`<blockquote>${p1}</blockquote>`);
         let html=answerHtml;
         let allSources=[];  // 提到外层作用域，供点击事件访问
         if(data.sources&&data.sources.length){
@@ -764,13 +764,13 @@ async function openQaPreview(file, location, highlightText){
         }
 
         // 渲染页面图
-        await renderQaPage(container, page);
+        await renderQaPage(container, page, qaHighlightText);
     }catch(e){
         container.innerHTML='<div style="color:var(--danger);padding:20px;text-align:center;">文档加载失败：'+esc(e.message||String(e))+'</div>';
     }
 }
 
-async function renderQaPage(container, page){
+async function renderQaPage(container, page, highlight){
     // 构建导航栏
     let navHtml=`<div class="qa-preview-nav">`;
     navHtml+=`<button onclick="qaGoPrev()" ${page<=1?'disabled':''}>← 上一页</button>`;
@@ -778,8 +778,9 @@ async function renderQaPage(container, page){
     navHtml+=`<button onclick="qaGoNext()" ${page>=qaTotalPages?'disabled':''}>下一页 →</button>`;
     navHtml+=`</div>`;
 
-    // 服务端渲染的页面图（无高亮标注）
-    const imgUrl=`/api/documents/page?name=${encodeURIComponent(qaCurrentFile)}&page=${page}`;
+    // 服务端渲染的页面图（带高亮）
+    let imgUrl=`/api/documents/page?name=${encodeURIComponent(qaCurrentFile)}&page=${page}`;
+    if(highlight) imgUrl+=`&highlight=${encodeURIComponent(highlight.slice(0,50))}`;
 
     container.innerHTML=navHtml;
     const img=document.createElement('img');

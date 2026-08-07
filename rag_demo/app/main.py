@@ -186,6 +186,13 @@ class WebSocketLogHandler(logging.Handler):
         for ws_queue in self.clients[:]:
             try:
                 ws_queue.put_nowait(msg)
+            except asyncio.QueueFull:
+                # 慢客户端：丢弃最老一条再推新的
+                try:
+                    ws_queue.get_nowait()
+                    ws_queue.put_nowait(msg)
+                except Exception:
+                    pass
             except Exception:
                 pass
 
@@ -225,7 +232,7 @@ async def tail_logs(lines: int = 100):
 @app.websocket("/ws/logs")
 async def ws_logs(websocket: WebSocket):
     await websocket.accept()
-    queue = asyncio.Queue()
+    queue = asyncio.Queue(maxsize=200)  # 有界队列，防慢客户端内存无限增长
     # 先发送历史日志
     for msg in WebSocketLogHandler.history:
         await websocket.send_text(msg)
