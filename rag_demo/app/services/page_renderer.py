@@ -89,9 +89,9 @@ class PageRenderer:
 
         # 高亮文字
         if highlight:
-            # 不再尝试在 PDF 上标注（search_for 对复杂排版匹配率低）
-            # 而是记录高亮信息，由前端在图片上叠加文本框
-            pass  # 高亮信息通过 URL 参数传回，前端负责展示
+            rects = pg.search_for(highlight)
+            for r in rects:
+                pg.add_highlight_annot(r)
 
         # 渲染
         zoom = self._dpi / 72

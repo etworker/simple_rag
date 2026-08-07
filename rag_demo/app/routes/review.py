@@ -240,6 +240,14 @@ async def rerun_review(task_id: str):
     if task_id not in _state._review_tasks:
         raise HTTPException(status_code=404, detail="任务不存在")
     task = _state._review_tasks[task_id]
+
+    # 已确认/拒绝的任务不允许重跑（防止并发踩踏丢失确认状态）
+    if task["status"] in ("confirmed", "rejected"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"任务已{task['status']}，无法重跑",
+        )
+
     filepath = task.get("filepath", "")
     if not filepath or not os.path.exists(filepath):
         raise HTTPException(status_code=400, detail="上传文件已不存在，请重新上传")

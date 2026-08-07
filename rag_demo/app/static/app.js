@@ -682,7 +682,7 @@ async function sendQuestion(){
         // 后处理：将答案中的括号注释转为 blockquote
         let answerHtml=renderMd(data.answer||'');
         // 将 （...来源：...） 模式转为 blockquote
-        answerHtml=answerHtml.replace(/（（资料中还[^）]*来源[^）]*））/g,'<blockquote>$1</blockquote>');
+        answerHtml=answerHtml.replace(/(（（资料中还[^）]*来源[^）]*））/g,'<blockquote>$1</blockquote>');
         let html=answerHtml;
         let allSources=[];  // 提到外层作用域，供点击事件访问
         if(data.sources&&data.sources.length){
