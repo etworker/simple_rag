@@ -36,22 +36,8 @@ DEFAULT_CONFIG = {
         # GPU device id (多 GPU 场景)
         "gpu_id": 0,
     },
-    "llm": {
-        "provider": "openai",
-        "model": "",
-        "base_url": "",
-        "api_key": "",
-        "api_key_env": "",
-        "endpoint": "chat",
-        "max_tokens": 2048,
-        "timeout": 120,
-        "max_retries": 3,
-        "retry_backoff": 2.0,
-        "context_window": 8192,
-        "concurrency": 1,
-    },
-    "llm_profiles": {},  # 多 LLM 配置（优先于 llm 段）
-    "llm_routing": {     # 各用途使用哪个 profile
+    "llm_profiles": {},
+    "llm_routing": {
         "qa": "default",
         "pre_review": "default",
         "conflict_detection": "default",
@@ -133,41 +119,33 @@ class ConfigStore:
         """
         获取指定用途的 LLM 配置
 
-        先从 llm_routing 查找用途对应的 profile 名，
-        再从 llm_profiles 中取出完整配置。
-
-        兼容旧格式：如果没有 llm_profiles，退回到 llm 段。
-
         Args:
-            use_case: 用途标识 ("qa" | "pre_review" | "conflict_detection" | 或自定义)
+            use_case: 用途标识 ("qa" | "pre_review" | "conflict_detection")
 
         Returns:
             完整的 LLM 配置字典
 
         Example:
-            config.get_llm_profile("qa")        → fast profile
-            config.get_llm_profile("pre_review") → precise profile
+            config.get_llm_profile("qa")         → self_hosted_glm 的配置
+            config.get_llm_profile("pre_review") → bedrock_kimi_thinking 的配置
+
+        Raises:
+            KeyError: 如果 routing 指向的 profile 不存在
         """
         profiles = self._config.get("llm_profiles", {})
         routing = self._config.get("llm_routing", {})
 
-        # 查找 profile 名
         profile_name = routing.get(use_case, "default")
 
-        # 从 profiles 中获取
-        if profiles and profile_name in profiles:
+        if profile_name in profiles:
             return deepcopy(profiles[profile_name])
 
-        # fallback: 如果 profiles 中有 "default"
-        if profiles and "default" in profiles:
-            return deepcopy(profiles["default"])
+        # fallback: 第一个 profile
+        if profiles:
+            first_key = next(iter(profiles))
+            return deepcopy(profiles[first_key])
 
-        # 兼容旧格式：退回到 "llm" 段
-        llm_section = self._config.get("llm", {})
-        if llm_section:
-            return deepcopy(llm_section)
-
-        return {}
+        raise KeyError(f"未配置 LLM profile（llm_profiles 为空，use_case='{use_case}'）")
 
     def list_llm_profiles(self) -> list[str]:
         """列出所有可用的 LLM profile 名称"""

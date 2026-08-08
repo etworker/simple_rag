@@ -21,8 +21,8 @@ class TestConfigStore:
     def test_get_dot_notation(self):
         from app.services.config_store import ConfigStore
         config = ConfigStore()
-        assert config.get("llm.model") == ""  # 默认空，由 config.json 填充
         assert config.get("retrieval.top_k") == 5
+        assert config.get("llm_routing.qa") == "default"
 
     def test_get_default(self):
         from app.services.config_store import ConfigStore
@@ -38,19 +38,25 @@ class TestConfigStore:
     def test_deep_merge(self):
         from app.services.config_store import ConfigStore
         config = ConfigStore()
-        config.update({"llm": {"model": "new-model"}})
-        assert config.get("llm.model") == "new-model"
-        # provider should not be overwritten
-        assert config.get("llm.provider") == "openai"
+        config.update({"llm_profiles": {"test_model": {"provider": "openai", "model": "test"}}})
+        assert config.get_llm_profile("qa")["model"] == "test"
+        # routing should not be overwritten
+        assert config.get("llm_routing.qa") == "default"
 
-    def test_get_section(self):
+    def test_get_llm_profile(self):
         from app.services.config_store import ConfigStore
         config = ConfigStore()
-        llm = config.get_section("llm")
-        assert llm["model"] == ""  # 默认空
-        # Modifying the returned dict should not affect original
-        llm["model"] = "changed"
-        assert config.get("llm.model") == ""
+        config.update({"llm_profiles": {
+            "fast": {"provider": "openai", "model": "gpt-fast"},
+            "precise": {"provider": "bedrock", "model": "kimi"},
+        }, "llm_routing": {"qa": "fast", "pre_review": "precise"}})
+        qa_cfg = config.get_llm_profile("qa")
+        assert qa_cfg["model"] == "gpt-fast"
+        pr_cfg = config.get_llm_profile("pre_review")
+        assert pr_cfg["model"] == "kimi"
+        # Modifying returned dict should not affect original
+        qa_cfg["model"] = "changed"
+        assert config.get_llm_profile("qa")["model"] == "gpt-fast"
 
 
 class TestChatHistoryStore:

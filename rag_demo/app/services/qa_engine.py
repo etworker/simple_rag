@@ -108,26 +108,27 @@ class QAEngine:
         # 5. LLM 生成答案
         answer = session.ask(question, context=context)
 
-        # 6. 封装结果
-        sources = [
+        # 6. 封装结果 —— sources 带编号
+        source_list = [
             {
+                "idx": i,
                 "text": c.text[:200],
                 "source_file": c.source_file,
                 "location": c.location,
                 "score": round(c.score, 3),
             }
-            for c in chunks
+            for i, c in enumerate(chunks, start=1)
         ]
 
         # 7. 持久化问答历史
         self._history.save_message(session_id, "user", question)
         self._history.save_message(
-            session_id, "assistant", answer, sources=sources, title=question[:30]
+            session_id, "assistant", answer, sources=source_list, title=question[:30]
         )
 
         return QAResponse(
             answer=answer,
-            sources=sources,
+            sources=source_list,
             conflicts=conflicts,
             has_conflicts=len(conflicts) > 0,
         )
@@ -154,15 +155,20 @@ class QAEngine:
     def _build_context(
         self, chunks: list[RetrievedChunk], conflicts: list[dict]
     ) -> str:
-        """构建发送给 LLM 的上下文文本"""
+        """构建发送给 LLM 的上下文文本
+
+        格式带编号 [1] [2] ...，便于 LLM 输出时用简短编号引用而非长文件名。
+        """
+        # 给每个 chunk 编号
         template = self._config.get(
-            "prompts.context_template", "[来源: {source} {location}]\n{text}\n"
+            "prompts.context_template", "[{idx}] {source} | {location}\n{text}\n"
         )
 
         parts = []
-        for chunk in chunks:
+        for i, chunk in enumerate(chunks, start=1):
             parts.append(
                 template.format(
+                    idx=i,
                     source=chunk.source_file,
                     location=chunk.location,
                     text=chunk.text,
@@ -170,6 +176,16 @@ class QAEngine:
             )
 
         context = "\n".join(parts)
+
+        # 编号引用指南
+        ref_guide = (
+            "## 引用指南\n"
+            "回答中提及时请使用 [1]、[2] 这种简短编号指明出处（扩在括号内的数字），"
+            "不要书写文件名或路径。示例：\n"
+            "  ✅「备份频率为每天 [1]，保留 30 天 [3]」\n"
+            "  ❌「备份频率为每天 [来源: xxx.pdf 第 6 页]」\n\n"
+        )
+        context = ref_guide + context
 
         # 如果有冲突，追加醒目提示
         if conflicts:
