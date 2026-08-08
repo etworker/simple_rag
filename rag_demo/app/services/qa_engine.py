@@ -192,12 +192,13 @@ class QAEngine:
         """
         检索检索结果中的矛盾
 
-        策略：按 X 文档（被审核文档）的段落聚合，
-        同一段落与多个其他文档的差异合并为一条矛盾记录。
-
-        TODO: 接入 version_diff.check_conflicts() 做更精准的 LLM 判断
+        策略：
+        1. 相似度预过滤 — Jaccard 2-gram 找出"可能矛盾"的段落对
+        2. LLM 确认 — 对候选对调用 version_diff.judge 做精准判断
+        3. LLM 失败时回退到原启发式逻辑（标记 point="可能存在描述差异"）
         """
         import hashlib
+        from types import SimpleNamespace
 
         # 1. 两两比较，收集所有原始冲突对
         raw_pairs = []
@@ -237,9 +238,93 @@ class QAEngine:
         if not raw_pairs:
             return []
 
-        # 2. 按 X 文档（固定侧）段落聚合
-        #    - 以 X 文档名 + X 文本前50字 为 key 聚合
-        #    - 每个 group 包含: point(主题), a(X侧), others(B1/B2/...各侧对比)
+        # 2. LLM 确认 — 复用 version_diff.judge._judge_batch
+        llm_confirmed = self._llm_confirm_conflicts(raw_pairs)
+
+        # 3. 如果 LLM 成功返回，用 LLM 结果；否则回退到原启发式
+        if llm_confirmed is not None:
+            return llm_confirmed
+
+        # 回退：原启发式聚合逻辑
+        return self._heuristic_conflicts(raw_pairs)
+
+    def _llm_confirm_conflicts(self, raw_pairs: list[dict]) -> list[dict] | None:
+        """
+        用 LLM 判断候选对是否真正矛盾
+
+        Returns:
+            list[dict] — LLM 确认的冲突列表（可能为空）
+            None — LLM 不可用或调用失败，应回退到启发式
+        """
+        from types import SimpleNamespace
+
+        try:
+            from version_diff.judge import _judge_batch, _parse_json_response, CONSISTENCY_JUDGE_PROMPT
+        except ImportError:
+            return None
+
+        llm_config = self._config.get_section("llm")
+        if not llm_config.get("model") and not llm_config.get("provider"):
+            return None
+
+        # 构造 judge 兼容的 item 列表
+        items = []
+        for pair in raw_pairs:
+            items.append(
+                SimpleNamespace(
+                    para_a=SimpleNamespace(
+                        text=pair["a"]["text"],
+                        source_file=pair["a"]["file"],
+                        location=pair["a"]["loc"],
+                    ),
+                    para_b=SimpleNamespace(
+                        text=pair["b"]["text"],
+                        source_file=pair["b"]["file"],
+                        location=pair["b"]["loc"],
+                    ),
+                )
+            )
+
+        log.info(f"🔍 LLM 冲突确认: {len(items)} 候选对")
+        results = _judge_batch(items, llm_config, CONSISTENCY_JUDGE_PROMPT)
+        if results is None:
+            log.warning("LLM 冲突确认失败，回退到启发式")
+            return None
+
+        # 解析 LLM 结果
+        confirmed = []
+        for r in results:
+            if not isinstance(r, dict):
+                continue
+            try:
+                idx = int(r.get("index", 0)) - 1
+            except (ValueError, TypeError):
+                continue
+            if 0 <= idx < len(raw_pairs) and r.get("inconsistent", False):
+                pair = raw_pairs[idx]
+                confirmed.append(
+                    {
+                        "point": r.get("point", "可能存在描述差异"),
+                        "doc_a_file": pair["a"]["file"],
+                        "doc_a_location": pair["a"]["loc"],
+                        "doc_a_says": r.get("doc_a_says", pair["a"]["text"]),
+                        "doc_others": [
+                            {
+                                "file": pair["b"]["file"],
+                                "location": pair["b"]["loc"],
+                                "says": r.get("doc_b_says", pair["b"]["text"]),
+                            }
+                        ],
+                    }
+                )
+
+        log.info(f"✅ LLM 确认矛盾: {len(confirmed)} 处")
+        return confirmed
+
+    def _heuristic_conflicts(self, raw_pairs: list[dict]) -> list[dict]:
+        """启发式冲突聚合（LLM 不可用时的回退逻辑）"""
+        import hashlib
+
         groups = {}
         for pair in raw_pairs:
             sig = (
@@ -250,14 +335,9 @@ class QAEngine:
                 .upper()
             )
             if sig not in groups:
-                groups[sig] = {
-                    "point": "可能存在描述差异",
-                    "a": pair["a"],
-                    "others": [],
-                }
+                groups[sig] = {"point": "可能存在描述差异", "a": pair["a"], "others": []}
             groups[sig]["others"].append(pair["b"])
 
-        # 3. 构建最终冲突列表（每条含一个 X + 多个 B 的对比）
         conflicts = []
         for g in groups.values():
             conflicts.append(
@@ -272,7 +352,6 @@ class QAEngine:
                     ],
                 }
             )
-
         return conflicts
 
     @staticmethod
