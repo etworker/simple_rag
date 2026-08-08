@@ -184,10 +184,20 @@ let kbPdfDoc=null, kbPdfUrl=null;
 
 async function loadKbPreview(){
     if(!currentDoc)return;
+    // 非 PDF 文件显示文本预览
+    const basename = currentDoc.split('#')[0];  // 去掉 #hash 后缀
+    const ext = basename.split('.').pop().toLowerCase();
+    if(ext !== 'pdf'){
+        loadTextPreview(basename);
+        return;
+    }
     document.getElementById('previewEmpty').style.display='none';
     document.getElementById('previewContent').style.display='flex';
     document.getElementById('previewTitle').textContent=(docMap[currentDoc]||'')+' '+currentDoc;
-    const url=`/api/documents/pdf?name=${encodeURIComponent(currentDoc)}`;
+    // 确保翻页控件可见（从文本预览切回 PDF 时）
+    const pager=document.getElementById('kbPager');
+    if(pager)pager.style.display='';
+    const url=`/api/documents/pdf?name=${encodeURIComponent(basename)}`;
     // 如果换了文档才重新加载 PDF（否则只渲染页面）
     if(kbPdfUrl!==url){
         kbPdfUrl=url;
@@ -202,6 +212,35 @@ async function loadKbPreview(){
     document.getElementById('kbTotalPages').textContent=totalPages;
     // 滚动到记忆的页码
     scrollToPage('kbPdfContainer', currentPage);
+}
+
+// 非 PDF 文件（如 docx）的文本段落预览
+async function loadTextPreview(filename){
+    document.getElementById('previewEmpty').style.display='none';
+    document.getElementById('previewContent').style.display='flex';
+    document.getElementById('previewTitle').textContent=(docMap[filename]||'')+' '+filename;
+    const container=document.getElementById('kbPdfContainer');
+    container.innerHTML='<div style="padding:16px;color:var(--text3);">加载中...</div>';
+    // 隐藏翻页控件（文本预览不需要）
+    const pager=document.getElementById('kbPager');
+    if(pager)pager.style.display='none';
+    try{
+        const resp=await fetch(`/api/documents/paragraphs?name=${encodeURIComponent(filename)}`);
+        const data=await resp.json();
+        if(!data.paragraphs||!data.paragraphs.length){
+            container.innerHTML='<div style="padding:16px;color:var(--text3);">该文档无段落内容</div>';
+            return;
+        }
+        let html='<div style="padding:16px;max-width:800px;">';
+        data.paragraphs.forEach((p,i)=>{
+            const loc=p.location?`<span style="color:var(--text3);font-size:11px;margin-left:8px;">${esc(p.location)}</span>`:'';
+            html+=`<div style="margin-bottom:12px;padding:8px 12px;background:var(--bg2);border-radius:6px;font-size:13px;line-height:1.6;"><span style="color:var(--primary);font-size:11px;margin-right:6px;">¶${i+1}</span>${esc(p.text)}${loc}</div>`;
+        });
+        html+='</div>';
+        container.innerHTML=html;
+    }catch(e){
+        container.innerHTML=`<div style="padding:16px;color:var(--danger);">预览加载失败: ${esc(e.message)}</div>`;
+    }
 }
 
 // 创建所有页面的占位 div（用于懒加载）

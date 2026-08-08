@@ -55,6 +55,24 @@ async def get_pending_paragraphs(file: str):
     return {"file": file, "paragraphs": []}
 
 
+@router.get("/paragraphs")
+async def get_document_paragraphs(name: str):
+    """获取已入库文档的段落列表（用于非 PDF 文档的文本预览）"""
+    from urllib.parse import unquote
+
+    s = _state.app
+    filename = unquote(name)
+    paras = s.doc_store.get_paragraphs_by_file(filename)
+    return {
+        "file": filename,
+        "paragraphs": [
+            {"text": p.text, "page": p.page, "chapter": p.chapter,
+             "chapter_title": p.chapter_title, "location": p.location}
+            for p in paras
+        ],
+    }
+
+
 @router.get("/pdf")
 async def get_document_pdf(name: str):
     """返回原始 PDF 文件"""
