@@ -10,6 +10,7 @@ function esc(s){return s?s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>
 function escA(s){return s?s.replace(/"/g,'&quot;'):'';}
 function renderMd(s){return (typeof marked!=='undefined')?marked.parse(s||''):esc(s||'');}
 function fmtDocName(name,hash){const h=hash?hash.slice(-8).toUpperCase():'';return h?`${name} [${h}]`:name;}
+function scrollToRef(n){const el=document.getElementById('ref-'+n);if(el){el.scrollIntoView({behavior:'smooth',block:'start'});el.classList.add('ref-flash');setTimeout(()=>el.classList.remove('ref-flash'),1500);}else{console.warn('[scrollToRef] ref-'+n+' not found');}}
 
 // ============================================================
 // 页面切换
@@ -616,6 +617,10 @@ async function loadQaSession(sessionId){
                 appendMsg('user',esc(msg.content));
             }else{
                 let html=renderMd(msg.content||'');
+                html=html.replace(
+                    /\[(\d+)\](?![\w\s]*<\/a>)/g,
+                    (m, p1) => `<a href="#ref-${p1}" class="ref-link" data-ref="${p1}" onclick="event.preventDefault();scrollToRef(${p1});return false;">[${p1}]</a>`
+                );
                 if(msg.sources&&msg.sources.length){
                     // 去重
                     const seen=new Map();
@@ -627,9 +632,11 @@ async function loadQaSession(sessionId){
                     const fileIds={};let fileIdx=1;
                     let srcHtml=`<div class="sources"><div class="src-title">📎 来源（${uniqueSources.length} 条）</div>`;
                     for(const s of uniqueSources){
-                        if(!fileIds[s.source_file]) fileIds[s.source_file]='B'+(fileIdx++);
-                        srcHtml+=`<div class="src-item" data-file="${escA(s.source_file||'')}" data-loc="${escA(s.location||'')}">`;
-                        srcHtml+=`<div><span class="src-id">${fileIds[s.source_file]}</span><span class="src-file">${esc(s.source_file||'')}</span></div>`;
+                        const id=s.idx?('B'+s.idx):'B'+(fileIdx++);
+                        if(!s.idx&&!fileIds[s.source_file]) fileIds[s.source_file]=id;
+                        const displayId=s.idx?('B'+s.idx):fileIds[s.source_file];
+                        srcHtml+=`<div class="src-item" id="ref-${displayId.replace('B','')}" data-file="${escA(s.source_file||'')}" data-loc="${escA(s.location||'')}">`;
+                        srcHtml+=`<div><span class="src-id">${displayId}</span><span class="src-file">${esc(s.source_file||'')}</span></div>`;
                         srcHtml+=`<div class="src-loc">${esc(s.location||'')}</div>`;
                         srcHtml+=`<div class="src-text">${esc((s.text||'').slice(0,120))}</div></div>`;
                     }
@@ -679,12 +686,17 @@ async function sendQuestion(){
         const data=await res.json();
         const last=document.querySelector('.qa-messages .msg.bot:last-child');
         if(data.detail){if(last)last.innerHTML='<span style="color:var(--danger);">'+esc(data.detail)+'</span>';return;}
-        // 后处理：将答案中的括号注释转为 blockquote
+        // 后处理：将答案中 LLM 输出的 [1] [2] 编号转为可点击链接
         let answerHtml=renderMd(data.answer||'');
-        // 将 （（...来源：...）） 模式转为 blockquote（非贪婪+长度限制防吞字）
+        // 若 LLM 按引用指南使用了 [1] [2] 编号，转成可跳转到底部来源的链接
+        answerHtml=answerHtml.replace(
+            /\[(\d+)\](?![\w\s]*<\/a>)/g,
+            (m, p1) => `<a href="#ref-${p1}" class="ref-link" data-ref="${p1}" onclick="event.preventDefault();scrollToRef(${p1});return false;">[${p1}]</a>`
+        );
+        // 旧格式兼容: （（...来源：...））
         answerHtml=answerHtml.replace(
             /（（资料中还[^\uff09]{0,80}?来源[:：][^\uff09]{0,80}?））/g,
-            (m) => `<blockquote>${esc(m)}</blockquote>`
+            (m) => `<blockquote class="answer-note">${esc(m)}</blockquote>`
         );
         let html=answerHtml;
         let allSources=[];  // 提到外层作用域，供点击事件访问
@@ -698,18 +710,18 @@ async function sendQuestion(){
                 }
             }
             allSources=[...seen.values()].slice(0,8);
-            // 构建"文档编号"映射（B1, B2...）
             const fileIds={};
             let fileIdx=1;
             let srcHtml=`<div class="sources"><div class="src-title">📎 来源（${allSources.length} 条）</div>`;
             for(const s of allSources){
-                if(!fileIds[s.source_file]) fileIds[s.source_file]='B'+(fileIdx++);
-                const id=fileIds[s.source_file];
+                const id=s.idx?('B'+s.idx):'B'+(fileIdx++);
+                if(!s.idx&&!fileIds[s.source_file]) fileIds[s.source_file]=id;
+                const displayId=s.idx?('B'+s.idx):fileIds[s.source_file];
                 const loc=esc(s.location||'');
                 const file=esc(s.source_file||'');
                 const text=esc((s.text||'').slice(0,120));
-                srcHtml+=`<div class="src-item" data-file="${escA(s.source_file||'')}" data-loc="${escA(s.location||'')}">`;
-                srcHtml+=`<div><span class="src-id">${id}</span><span class="src-file">${file}</span></div>`;
+                srcHtml+=`<div class="src-item" id="ref-${displayId.replace('B','')}" data-file="${escA(s.source_file||'')}" data-loc="${escA(s.location||'')}">`;
+                srcHtml+=`<div><span class="src-id">${displayId}</span><span class="src-file">${file}</span></div>`;
                 srcHtml+=`<div class="src-loc">${loc}</div>`;
                 srcHtml+=`<div class="src-text">${text}${(s.text||'').length>120?'…':''}</div>`;
                 srcHtml+=`</div>`;
