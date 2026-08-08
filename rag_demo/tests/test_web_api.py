@@ -220,7 +220,7 @@ class TestReviewAPI:
         from app.routes import _state
 
         task_id = "test-confirmed"
-        _state._review_tasks[task_id] = {
+        _state.app.review_tasks[task_id] = {
             "status": "confirmed",
             "filename": "test.pdf",
             "filepath": "/nonexistent/test.pdf",
@@ -230,19 +230,19 @@ class TestReviewAPI:
             "steps": [],
             "result": None,
         }
-        _state._confirmed_or_rejected.add(task_id)
+        _state.app.confirmed_or_rejected.add(task_id)
         resp = await client.post(f"/api/documents/review/{task_id}/rerun")
         assert resp.status_code == 400
         # 清理
-        _state._review_tasks.pop(task_id, None)
-        _state._confirmed_or_rejected.discard(task_id)
+        _state.app.review_tasks.pop(task_id, None)
+        _state.app.confirmed_or_rejected.discard(task_id)
 
     async def test_rerun_rejected_returns_400(self, client):
         """已拒绝任务再强制重跑应返回 400（v4 回归保护）"""
         from app.routes import _state
 
         task_id = "test-rejected"
-        _state._review_tasks[task_id] = {
+        _state.app.review_tasks[task_id] = {
             "status": "rejected",
             "filename": "test.pdf",
             "filepath": "/nonexistent/test.pdf",
@@ -252,12 +252,12 @@ class TestReviewAPI:
             "steps": [],
             "result": None,
         }
-        _state._confirmed_or_rejected.add(task_id)
+        _state.app.confirmed_or_rejected.add(task_id)
         resp = await client.post(f"/api/documents/review/{task_id}/rerun")
         assert resp.status_code == 400
         # 清理
-        _state._review_tasks.pop(task_id, None)
-        _state._confirmed_or_rejected.discard(task_id)
+        _state.app.review_tasks.pop(task_id, None)
+        _state.app.confirmed_or_rejected.discard(task_id)
 
 
 class TestStaticFiles:

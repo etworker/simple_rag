@@ -44,7 +44,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.websockets import WebSocket, WebSocketDisconnect
 
-from app.routes import documents, qa, review
+from app.routes import _state, documents, qa, review
 from app.services.chat_history import ChatHistoryStore
 from app.services.config_store import ConfigStore
 from app.services.doc_store import DocStore
@@ -109,7 +109,7 @@ qa_engine = QAEngine(doc_store, config_store, history_store)
 
 # 初始化路由
 documents.init(doc_store, config_store, UPLOAD_DIR, CACHE_DIR)
-qa.init(qa_engine)
+_state.init_qa(qa_engine)
 
 # FastAPI app
 app = FastAPI(title="RAG 文档问答系统", version="0.1.0")

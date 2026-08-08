@@ -110,13 +110,13 @@ def test_upload_confirm_survives_restart(client: TestClient):
     from app.routes import _state, review, documents
 
     # 备份当前的 doc_store（模拟进程退出前内存状态）
-    old_doc_count = len(_state._doc_store._documents)
+    old_doc_count = len(_state.app.doc_store._documents)
 
     # 重新加载路由状态（相当于 FastAPI 启动时的 init() 流程）
-    _state._load_review_cache()  # 复位内存任务
-    _state._confirmed_or_rejected.clear()
+    _state.app._load_review_cache()  # 复位内存任务
+    _state.app.confirmed_or_rejected.clear()
     # doc_store 本身保留（磁盘持久化模拟：_documents 从磁盘重新加载）
-    _state._doc_store._load_from_disk()
+    _state.app.doc_store._load_from_disk()
 
     # === 阶段 3: 验证持久性 ===
     # (a) 文档列表仍包含该文档

@@ -18,7 +18,8 @@ router = APIRouter()
 @router.get("/list")
 async def list_documents():
     """列出所有已入库文档"""
-    docs = _state._doc_store.list_documents()
+    s = _state.app
+    docs = s.doc_store.list_documents()
     return {
         "documents": [
             {
@@ -35,7 +36,7 @@ async def list_documents():
             for d in docs
         ],
         "total": len(docs),
-        "total_paragraphs": _state._doc_store.total_paragraphs,
+        "total_paragraphs": s.doc_store.total_paragraphs,
     }
 
 
@@ -44,8 +45,9 @@ async def get_pending_paragraphs(file: str):
     """获取正在预审核的新文档段落（尚未入库）"""
     from urllib.parse import unquote
 
+    s = _state.app
     file = unquote(file)
-    for task in _state._review_tasks.values():
+    for task in s.review_tasks.values():
         paras = task.get("parsed_paragraphs", [])
         for p in paras:
             if p["source_file"] == file:
@@ -58,8 +60,9 @@ async def get_document_pdf(name: str):
     """返回原始 PDF 文件"""
     from urllib.parse import unquote
 
+    s = _state.app
     filename = unquote(name)
-    meta = _state._doc_store.get_document(filename)
+    meta = s.doc_store.get_document(filename)
     if not meta or meta.status != "active":
         raise HTTPException(status_code=404, detail="文档不存在")
     if not os.path.exists(meta.filepath):
@@ -74,13 +77,14 @@ async def get_document_info(name: str):
 
     from app.services.page_renderer import PageRenderer
 
+    s = _state.app
     filename = unquote(name)
-    meta = _state._doc_store.get_document(filename)
+    meta = s.doc_store.get_document(filename)
     if not meta or meta.status != "active":
         raise HTTPException(status_code=404, detail="文档不存在")
     if not os.path.exists(meta.filepath):
         raise HTTPException(status_code=404, detail="文件不存在")
-    renderer = PageRenderer(cache_dir=os.path.join(_state._cache_dir, "page_cache"))
+    renderer = PageRenderer(cache_dir=os.path.join(s.cache_dir, "page_cache"))
     page_count = await asyncio.to_thread(renderer.get_page_count, meta.filepath)
     return {"filename": filename, "page_count": page_count}
 
@@ -92,13 +96,14 @@ async def get_document_page(name: str, page: int = 1, highlight: str = ""):
 
     from app.services.page_renderer import PageRenderer
 
+    s = _state.app
     filename = unquote(name)
-    meta = _state._doc_store.get_document(filename)
+    meta = s.doc_store.get_document(filename)
     if not meta or meta.status != "active":
         raise HTTPException(status_code=404, detail="文档不存在")
     if not os.path.exists(meta.filepath):
         raise HTTPException(status_code=404, detail="文件不存在")
-    renderer = PageRenderer(cache_dir=os.path.join(_state._cache_dir, "page_cache"))
+    renderer = PageRenderer(cache_dir=os.path.join(s.cache_dir, "page_cache"))
     png_path = await asyncio.to_thread(
         renderer.get_page, meta.filepath, page, unquote(highlight)
     )
@@ -108,7 +113,8 @@ async def get_document_page(name: str, page: int = 1, highlight: str = ""):
 @router.delete("/remove/{filename}")
 async def delete_document(filename: str):
     """删除已入库文档"""
-    success = _state._doc_store.remove_document(filename)
+    s = _state.app
+    success = s.doc_store.remove_document(filename)
     if not success:
         raise HTTPException(status_code=404, detail="文档不存在")
     return {"message": f"已删除: {filename}"}
@@ -119,14 +125,15 @@ async def clear_all_documents():
     """清空知识库（删除所有文档、缓存、向量，完全从0开始）"""
     from app.services.utils import clear_cache_dir
 
-    count = await asyncio.to_thread(_state._doc_store.clear_all)
-    _state._review_tasks.clear()
-    clear_cache_dir(_state._REVIEW_CACHE_PATH)
-    clear_cache_dir(_state._REVIEW_RESULT_CACHE)
-    _state._confirmed_or_rejected.clear()
+    s = _state.app
+    count = await asyncio.to_thread(s.doc_store.clear_all)
+    s.review_tasks.clear()
+    clear_cache_dir(s.review_cache_path)
+    clear_cache_dir(s.review_result_cache)
+    s.confirmed_or_rejected.clear()
 
     for sub in ("parse_cache", "page_cache", "vector_cache"):
-        clear_cache_dir(os.path.join(_state._cache_dir, sub))
+        clear_cache_dir(os.path.join(s.cache_dir, sub))
 
     log.info(f"🗑️ 知识库完全重置: 清空 {count} 篇文档 + 全部缓存")
     return {"message": f"知识库已完全重置，共移除 {count} 篇文档，所有缓存已清除"}

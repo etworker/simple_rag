@@ -20,7 +20,7 @@ router = APIRouter()
 @router.get("/review/active")
 async def get_active_review():
     """获取当前活跃的预审核任务（如果有）"""
-    for task_id, task in _state._review_tasks.items():
+    for task_id, task in _state.app.review_tasks.items():
         if task["status"] in ("pending", "running"):
             return {
                 "task_id": task_id,
@@ -33,7 +33,7 @@ async def get_active_review():
                 "completed_steps": task.get("completed_steps", []),
             }
         if task["status"] == "done" and task.get("result"):
-            if task_id not in _state._confirmed_or_rejected:
+            if task_id not in _state.app.confirmed_or_rejected:
                 return {
                     "task_id": task_id,
                     "status": "done",
@@ -47,9 +47,9 @@ async def get_active_review():
 @router.post("/review/{task_id}/cancel")
 async def cancel_review(task_id: str):
     """取消正在进行的预审核"""
-    if task_id not in _state._review_tasks:
+    if task_id not in _state.app.review_tasks:
         raise HTTPException(status_code=404, detail="任务不存在")
-    task = _state._review_tasks[task_id]
+    task = _state.app.review_tasks[task_id]
     if task["status"] in ("pending", "running"):
         task["status"] = "cancelled"
         task["current_step"] = "已取消"
@@ -74,7 +74,7 @@ async def upload_document(file: UploadFile = File(...), choice: str = Form("")):
 
     new_sha = _hl.sha256(content).hexdigest()
 
-    existing = _state._doc_store.get_document(filename)
+    existing = _state.app.doc_store.get_document(filename)
     if existing and existing.status == "active":
         if existing.file_hash == new_sha:
             raise HTTPException(
@@ -98,7 +98,7 @@ async def upload_document(file: UploadFile = File(...), choice: str = Form("")):
                 ],
             }
         if choice == "overwrite":
-            _state._doc_store.remove_document(existing.doc_id)
+            _state.app.doc_store.remove_document(existing.doc_id)
             log.info(f"用户选择覆盖: 已删除旧文档 {existing.doc_id}")
 
     # ★ Fix: 用完整 SHA256 作为文件名，相同内容 → 相同路径 → 天然去重。
@@ -106,7 +106,7 @@ async def upload_document(file: UploadFile = File(...), choice: str = Form("")):
     #    无需 uuid8 子目录，原子写入避免孤儿文件。
     file_ext = os.path.splitext(filename)[1] or ".bin"
     safe_filename = f"{new_sha}{file_ext}"
-    filepath = os.path.join(_state._upload_dir, safe_filename)
+    filepath = os.path.join(_state.app.upload_dir, safe_filename)
 
     # 原子写入：先写临时文件再 rename，防止并发同名文件写冲突
     tmp_filepath = filepath + ".tmp"
@@ -116,7 +116,7 @@ async def upload_document(file: UploadFile = File(...), choice: str = Form("")):
     log.info(f"上传保存: {filename} -> {safe_filename} ({len(content)} bytes)")
 
     task_id = uuid.uuid4().hex[:12]
-    _state._review_tasks[task_id] = {
+    _state.app.review_tasks[task_id] = {
         "status": "pending",
         "filename": filename,
         "filepath": filepath,
@@ -135,11 +135,11 @@ async def upload_document(file: UploadFile = File(...), choice: str = Form("")):
 @router.get("/review/{task_id}/progress")
 async def review_progress(task_id: str):
     """SSE 进度推送"""
-    if task_id not in _state._review_tasks:
+    if task_id not in _state.app.review_tasks:
         raise HTTPException(status_code=404, detail="任务不存在")
 
     async def event_stream():
-        task = _state._review_tasks[task_id]
+        task = _state.app.review_tasks[task_id]
         last_step_count = -1
         while True:
             cur_step_count = len(task["steps"])
@@ -185,9 +185,9 @@ async def review_progress(task_id: str):
 @router.post("/review/{task_id}/confirm")
 async def confirm_review(task_id: str):
     """人工确认入库"""
-    if task_id not in _state._review_tasks:
+    if task_id not in _state.app.review_tasks:
         raise HTTPException(status_code=404, detail="任务不存在")
-    task = _state._review_tasks[task_id]
+    task = _state.app.review_tasks[task_id]
     if task["status"] != "done":
         raise HTTPException(
             status_code=400, detail=f"预审核未完成（当前状态: {task['status']}）"
@@ -202,7 +202,7 @@ async def confirm_review(task_id: str):
 
     with open(filepath, "rb") as _f:
         file_hash = _hl.sha256(_f.read()).hexdigest()
-    existing = _state._doc_store.get_document(f"{filename}#{file_hash[-8:].upper()}")
+    existing = _state.app.doc_store.get_document(f"{filename}#{file_hash[-8:].upper()}")
     if existing and existing.status == "active":
         raise HTTPException(
             status_code=409, detail=f"文档 '{filename}' 已入库（相同内容）"
@@ -212,14 +212,14 @@ async def confirm_review(task_id: str):
     #    直接复用即可。无需 adata 二次复制——相同内容任何时刻路径一致。
     try:
         meta = await asyncio.to_thread(
-            _state._doc_store.add_document, filepath, task["filename"]
+            _state.app.doc_store.add_document, filepath, task["filename"]
         )
     except Exception as e:
         log.error(f"入库失败: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"入库失败: {e!s}")
 
     task["status"] = "confirmed"
-    _state._confirmed_or_rejected.add(task_id)
+    _state.app.confirmed_or_rejected.add(task_id)
     log.info(f"入库成功: {meta.filename} ({meta.paragraph_count} paras) @ {filepath}")
     return {
         "message": "文档已入库",
@@ -231,11 +231,11 @@ async def confirm_review(task_id: str):
 @router.post("/review/{task_id}/reject")
 async def reject_review(task_id: str):
     """人工拒绝入库"""
-    if task_id not in _state._review_tasks:
+    if task_id not in _state.app.review_tasks:
         raise HTTPException(status_code=404, detail="任务不存在")
-    task = _state._review_tasks[task_id]
+    task = _state.app.review_tasks[task_id]
     task["status"] = "rejected"
-    _state._confirmed_or_rejected.add(task_id)
+    _state.app.confirmed_or_rejected.add(task_id)
     if os.path.exists(task["filepath"]):
         os.remove(task["filepath"])
     return {"message": "已拒绝，文档不入库"}
@@ -244,9 +244,9 @@ async def reject_review(task_id: str):
 @router.post("/review/{task_id}/rerun")
 async def rerun_review(task_id: str):
     """强制重新执行预审核（忽略缓存）"""
-    if task_id not in _state._review_tasks:
+    if task_id not in _state.app.review_tasks:
         raise HTTPException(status_code=404, detail="任务不存在")
-    task = _state._review_tasks[task_id]
+    task = _state.app.review_tasks[task_id]
 
     # 已确认/拒绝的任务不允许重跑（防止并发踩踏丢失确认状态）
     if task["status"] in ("confirmed", "rejected"):
@@ -263,7 +263,7 @@ async def rerun_review(task_id: str):
 
     try:
         file_md5 = compute_sha256(filepath)
-        cached_path = os.path.join(_state._REVIEW_RESULT_CACHE, f"{file_md5}.json")
+        cached_path = os.path.join(_state.app.review_result_cache, f"{file_md5}.json")
         if os.path.exists(cached_path):
             os.remove(cached_path)
             log.info(
@@ -280,7 +280,7 @@ async def rerun_review(task_id: str):
     task["completed_steps"] = []
     task["parsed_paragraphs"] = []
     task["all_steps"] = []
-    _state._confirmed_or_rejected.discard(task_id)
+    _state.app.confirmed_or_rejected.discard(task_id)
 
     await asyncio.sleep(0.1)
     asyncio.create_task(_run_pre_review(task_id))
@@ -290,9 +290,9 @@ async def rerun_review(task_id: str):
 @router.get("/review/pdf")
 async def get_review_pdf(task_id: str):
     """返回预审核文件的原始 PDF"""
-    if task_id not in _state._review_tasks:
+    if task_id not in _state.app.review_tasks:
         raise HTTPException(status_code=404, detail="任务不存在")
-    task = _state._review_tasks[task_id]
+    task = _state.app.review_tasks[task_id]
     filepath = task.get("filepath", "")
     if not filepath or not os.path.exists(filepath):
         raise HTTPException(status_code=404, detail="文件不存在")
@@ -306,13 +306,13 @@ async def get_review_page(task_id: str, page: int = 1, highlight: str = ""):
 
     from app.services.page_renderer import PageRenderer
 
-    if task_id not in _state._review_tasks:
+    if task_id not in _state.app.review_tasks:
         raise HTTPException(status_code=404, detail="任务不存在")
-    task = _state._review_tasks[task_id]
+    task = _state.app.review_tasks[task_id]
     filepath = task["filepath"]
     if not os.path.exists(filepath):
         raise HTTPException(status_code=404, detail="文件不存在")
-    renderer = PageRenderer(cache_dir=os.path.join(_state._cache_dir, "page_cache"))
+    renderer = PageRenderer(cache_dir=os.path.join(_state.app.cache_dir, "page_cache"))
     png_path = await asyncio.to_thread(
         renderer.get_page, filepath, page, unquote(highlight)
     )
@@ -327,7 +327,7 @@ async def get_review_page(task_id: str, page: int = 1, highlight: str = ""):
 def _load_existing_docs(engine):
     """同步加载已有文档到引擎（在线程中执行）"""
     # ★ Fix: 文件缺失或损坏时跳过，不中断整个预审核流程
-    for doc_meta in _state._doc_store.list_documents():
+    for doc_meta in _state.app.doc_store.list_documents():
         if not doc_meta.filepath or not os.path.exists(doc_meta.filepath):
             log.warning(f"跳过加载已有文档（文件不存在）: {doc_meta.filename} -> {doc_meta.filepath}")
             continue
@@ -340,7 +340,7 @@ def _load_existing_docs(engine):
 async def _run_pre_review(task_id: str):
     """执行预审核（异步后台任务）"""
     await asyncio.sleep(0.5)
-    task = _state._review_tasks[task_id]
+    task = _state.app.review_tasks[task_id]
     filepath = task["filepath"]
 
     if not os.path.exists(filepath):
@@ -354,13 +354,13 @@ async def _run_pre_review(task_id: str):
 
     file_md5 = compute_sha256(filepath)
 
-    cached_result_path = os.path.join(_state._REVIEW_RESULT_CACHE, f"{file_md5}.json")
+    cached_result_path = os.path.join(_state.app.review_result_cache, f"{file_md5}.json")
     if os.path.exists(cached_result_path):
         try:
             with open(cached_result_path, "r", encoding="utf-8") as _f:
                 cached = json.load(_f)
-            doc_names = sorted(d.filename for d in _state._doc_store.list_documents())
-            doc_sig = "|".join(doc_names) + f"|{_state._doc_store.total_paragraphs}"
+            doc_names = sorted(d.filename for d in _state.app.doc_store.list_documents())
+            doc_sig = "|".join(doc_names) + f"|{_state.app.doc_store.total_paragraphs}"
             cache_doc_sig = cached.get("doc_signature", "")
             if cache_doc_sig != doc_sig:
                 log.info(
@@ -389,7 +389,7 @@ async def _run_pre_review(task_id: str):
                         "elapsed": 0.01,
                     },
                 ]
-                _state._save_review_cache()
+                _state.app.save_review_cache()
                 return
         except Exception as e:
             log.warning(f"预审核缓存加载失败，重新执行: {e}")
@@ -436,11 +436,11 @@ async def _run_pre_review(task_id: str):
         from version_diff import DiffEngine
 
         engine_config = {
-            "embedding": _state._config.get_section("embedding"),
-            "llm": _state._config.get_section("llm"),
-            "diff": _state._config.get_section("pre_review"),
+            "embedding": _state.app.config.get_section("embedding"),
+            "llm": _state.app.config.get_section("llm"),
+            "diff": _state.app.config.get_section("pre_review"),
             "cache": {
-                "vector_cache_dir": os.path.join(_state._cache_dir, "vector_cache")
+                "vector_cache_dir": os.path.join(_state.app.cache_dir, "vector_cache")
             },
         }
         engine = DiffEngine(config=engine_config)
@@ -451,7 +451,7 @@ async def _run_pre_review(task_id: str):
         log.info("向量模型加载完成")
 
         on_progress("loading", 0.1, "加载已有文档到引擎...")
-        log.info(f"开始加载已有文档 ({_state._doc_store.total_documents} 篇)...")
+        log.info(f"开始加载已有文档 ({_state.app.doc_store.total_documents} 篇)...")
         await asyncio.to_thread(_load_existing_docs, engine)
         log.info("已有文档加载完成")
 
@@ -491,11 +491,11 @@ async def _run_pre_review(task_id: str):
             if result.is_safe
             else f"发现 {len(result.inconsistencies)} 处矛盾",
         }
-        _state._save_review_cache()
+        _state.app.save_review_cache()
 
         try:
-            doc_names = sorted(d.filename for d in _state._doc_store.list_documents())
-            doc_sig = "|".join(doc_names) + f"|{_state._doc_store.total_paragraphs}"
+            doc_names = sorted(d.filename for d in _state.app.doc_store.list_documents())
+            doc_sig = "|".join(doc_names) + f"|{_state.app.doc_store.total_paragraphs}"
             cache_data = {
                 "result": task["result"],
                 "parsed_paragraphs": task.get("parsed_paragraphs", []),
