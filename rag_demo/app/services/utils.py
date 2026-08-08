@@ -23,6 +23,19 @@ def compute_sha256(filepath: str) -> str:
     return h.hexdigest()
 
 
+def compute_sha256_bytes(data: bytes) -> str:
+    """
+    计算内存 bytes 的 SHA-256
+
+    Args:
+        data: 字节数据
+
+    Returns:
+        64 字符十六进制 SHA-256 字符串
+    """
+    return hashlib.sha256(data).hexdigest()
+
+
 def clear_cache_dir(path: str):
     """
     清空缓存路径（文件或目录）

@@ -197,9 +197,6 @@ class QAEngine:
         2. LLM 确认 — 对候选对调用 version_diff.judge 做精准判断
         3. LLM 失败时回退到原启发式逻辑（标记 point="可能存在描述差异"）
         """
-        import hashlib
-        from types import SimpleNamespace
-
         # 1. 两两比较，收集所有原始冲突对
         raw_pairs = []
         for i, chunk_a in enumerate(chunks):

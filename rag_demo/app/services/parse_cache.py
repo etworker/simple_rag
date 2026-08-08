@@ -7,7 +7,6 @@ SHA-256 不变则直接读缓存，跳过耗时的 PDF 解析。
 缓存结构：~/.simple_rag/parse_cache/{sha256}.json
 """
 
-import hashlib
 import json
 import logging
 import os

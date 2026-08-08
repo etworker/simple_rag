@@ -4,7 +4,6 @@
 """
 
 import asyncio
-import hashlib
 import json
 import logging
 import os
@@ -15,6 +14,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 
 from app.routes import _state
 from app.services.review_runner import run_pre_review as _run_pre_review
+from app.services.utils import compute_sha256, compute_sha256_bytes
 
 log = logging.getLogger("rag_demo.routes.review")
 
@@ -74,7 +74,7 @@ async def upload_document(file: UploadFile = File(...), choice: str = Form("")):
     filename = file.filename
     content = await file.read()
 
-    new_sha = hashlib.sha256(content).hexdigest()
+    new_sha = compute_sha256_bytes(content)
 
     existing = _state.app.doc_store.get_document(filename)
     if existing and existing.status == "active":
@@ -195,8 +195,7 @@ async def confirm_review(task_id: str):
     if not os.path.exists(filepath):
         raise HTTPException(status_code=404, detail="上传文件已丢失，请重新上传文档")
 
-    with open(filepath, "rb") as _f:
-        file_hash = hashlib.sha256(_f.read()).hexdigest()
+    file_hash = compute_sha256(filepath)
     existing = _state.app.doc_store.get_document(f"{filename}#{file_hash[-8:].upper()}")
     if existing and existing.status == "active":
         raise HTTPException(
@@ -249,8 +248,6 @@ async def rerun_review(task_id: str):
     filepath = task.get("filepath", "")
     if not filepath or not os.path.exists(filepath):
         raise HTTPException(status_code=400, detail="上传文件已不存在，请重新上传")
-
-    from app.services.utils import compute_sha256
 
     try:
         file_md5 = compute_sha256(filepath)

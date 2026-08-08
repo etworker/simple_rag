@@ -8,7 +8,6 @@
   - 集成 version_diff 进行预审核
 """
 
-import hashlib
 import json
 import logging
 import os

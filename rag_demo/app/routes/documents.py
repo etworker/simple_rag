@@ -24,12 +24,12 @@ async def list_documents():
         "documents": [
             {
                 "filename": d.filename,
-                "doc_id": getattr(d, "doc_id", d.filename),
-                "file_hash": getattr(d, "file_hash", ""),
+                "doc_id": d.doc_id,
+                "file_hash": d.file_hash,
                 "paragraph_count": d.paragraph_count,
                 "table_count": d.table_count,
-                "page_count": getattr(d, "page_count", 0),
-                "char_count": getattr(d, "char_count", 0),
+                "page_count": d.page_count,
+                "char_count": d.char_count,
                 "added_at": d.added_at,
                 "status": d.status,
             }
