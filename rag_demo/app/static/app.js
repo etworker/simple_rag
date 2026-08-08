@@ -936,3 +936,197 @@ refreshQaSessionList();
         }
     }catch(e){}
 })();
+
+// ============================================================
+// 系统设置面板
+// ============================================================
+let _settingsConfig=null;       // 打开时的配置快照
+let _settingsProfiles={};       // llm_profiles 的本地可编辑副本
+let _settingsSelectedProfile=''; // 当前选中的 profile 名
+
+const LLM_PROFILE_FIELDS=[
+  ['provider','provider'],['model','模型'],['base_url','base_url'],['api_key','api_key'],
+  ['api_key_env','api_key_env'],['endpoint','endpoint'],['region','region'],
+  ['max_tokens','max_tokens'],['timeout','timeout'],['max_retries','max_retries'],
+  ['retry_backoff','retry_backoff'],['context_window','context_window'],['concurrency','concurrency'],
+];
+
+async function openSettings(){
+  document.getElementById('settingsModal').style.display='flex';
+  document.getElementById('settingsStatus').textContent='加载中...';
+  try{
+    const res=await fetch('/api/config');
+    _settingsConfig=await res.json();
+    _settingsProfiles=JSON.parse(JSON.stringify(_settingsConfig.llm_profiles||{}));
+    _settingsSelectedProfile=Object.keys(_settingsProfiles)[0]||'';
+    renderSettingsForm();
+    document.getElementById('settingsStatus').textContent='';
+  }catch(e){
+    document.getElementById('settingsStatus').textContent='加载失败: '+e.message;
+  }
+}
+
+function closeSettings(){
+  document.getElementById('settingsModal').style.display='none';
+}
+
+function switchSettingsTab(tab,btn){
+  document.querySelectorAll('.settings-tabs .st').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+  document.querySelectorAll('.sp').forEach(p=>p.classList.remove('active'));
+  document.getElementById('sp-'+tab).classList.add('active');
+}
+
+function renderSettingsForm(){
+  // LLM
+  renderProfileSelect();
+  renderLlmProfile();
+  renderRouting();
+  // Embedding
+  const emb=_settingsConfig.embedding||{};
+  document.getElementById('emb-model').value=emb.model||'';
+  document.getElementById('emb-device').value=emb.device||'auto';
+  document.getElementById('emb-dtype').value=emb.dtype||'';
+  document.getElementById('emb-gpu_id').value=emb.gpu_id||0;
+  // Retrieval
+  const ret=_settingsConfig.retrieval||{};
+  document.getElementById('ret-top_k').value=ret.top_k||5;
+  document.getElementById('ret-threshold').value=ret.similarity_threshold||0.5;
+  // Pre-review
+  const pr=_settingsConfig.pre_review||{};
+  document.getElementById('pr-threshold').value=pr.similarity_threshold||0.8;
+  document.getElementById('pr-batch').value=pr.batch_size||0;
+  // Conflict detection
+  const cd=_settingsConfig.conflict_detection||{};
+  document.getElementById('cd-min_score').value=cd.min_score||0.7;
+  document.getElementById('cd-min_sim').value=cd.min_similarity||0.5;
+  document.getElementById('cd-max_sim').value=cd.max_similarity||0.95;
+  // Prompts
+  const p=_settingsConfig.prompts||{};
+  document.getElementById('prompt-system').value=p.system||'';
+  document.getElementById('prompt-context').value=p.context_template||'';
+  document.getElementById('prompt-conflict').value=p.conflict_warning||'';
+  document.getElementById('judge-prompt_file').value=(_settingsConfig.judge||{}).prompt_file||'';
+  // Chat
+  document.getElementById('chat-max_history').value=(_settingsConfig.chat||{}).max_history||20;
+}
+
+function renderProfileSelect(){
+  const sel=document.getElementById('llmProfileSelect');
+  sel.innerHTML='';
+  for(const name of Object.keys(_settingsProfiles)){
+    const opt=document.createElement('option');
+    opt.value=name; opt.textContent=name;
+    if(name===_settingsSelectedProfile)opt.selected=true;
+    sel.appendChild(opt);
+  }
+}
+
+function renderLlmProfile(){
+  const p=_settingsProfiles[_settingsSelectedProfile]||{};
+  const container=document.getElementById('llmProfileFields');
+  container.innerHTML='';
+  for(const [key,label] of LLM_PROFILE_FIELDS){
+    const row=document.createElement('div');
+    row.className='setting-row';
+    row.innerHTML=`<label>${label}</label><input id="lp-${key}" class="long" value="${esc(p[key]??'')}" ${key==='api_key'?'type="password"':''}>`;
+    container.appendChild(row);
+  }
+}
+
+function renderRouting(){
+  const routing=_settingsConfig.llm_routing||{};
+  const names=Object.keys(_settingsProfiles);
+  for(const route of ['qa','pre_review','conflict_detection']){
+    const sel=document.getElementById('route-'+route);
+    sel.innerHTML='';
+    for(const name of names){
+      const opt=document.createElement('option');
+      opt.value=name; opt.textContent=name;
+      if(name===routing[route])opt.selected=true;
+      sel.appendChild(opt);
+    }
+  }
+}
+
+function addLlmProfile(){
+  const name=prompt('新 Profile 名称:');
+  if(!name||name in _settingsProfiles){alert('名称为空或已存在');return;}
+  _settingsProfiles[name]={provider:'openai',model:'',base_url:'',api_key:'',endpoint:'chat',max_tokens:2048,timeout:120,max_retries:3,retry_backoff:2.0,context_window:8192,concurrency:1};
+  _settingsSelectedProfile=name;
+  renderProfileSelect();
+  renderLlmProfile();
+}
+
+function delLlmProfile(){
+  if(!confirm(`删除 Profile "${_settingsSelectedProfile}"？`))return;
+  delete _settingsProfiles[_settingsSelectedProfile];
+  _settingsSelectedProfile=Object.keys(_settingsProfiles)[0]||'';
+  renderProfileSelect();
+  renderLlmProfile();
+  renderRouting();
+}
+
+async function saveSettings(){
+  // 收集当前 profile 的值
+  if(_settingsSelectedProfile){
+    const p=_settingsProfiles[_settingsSelectedProfile];
+    for(const [key] of LLM_PROFILE_FIELDS){
+      const el=document.getElementById('lp-'+key);
+      if(el){
+        const v=el.value.trim();
+        if(['max_tokens','timeout','max_retries','context_window','concurrency'].includes(key))
+          p[key]=parseInt(v)||0;
+        else if(key==='retry_backoff')
+          p[key]=parseFloat(v)||0;
+        else
+          p[key]=v;
+      }
+    }
+  }
+  // 构造更新
+  const updates={
+    embedding:{
+      model:document.getElementById('emb-model').value.trim(),
+      device:document.getElementById('emb-device').value,
+      dtype:document.getElementById('emb-dtype').value,
+      gpu_id:parseInt(document.getElementById('emb-gpu_id').value)||0,
+    },
+    retrieval:{
+      top_k:parseInt(document.getElementById('ret-top_k').value)||5,
+      similarity_threshold:parseFloat(document.getElementById('ret-threshold').value)||0.5,
+    },
+    pre_review:{
+      similarity_threshold:parseFloat(document.getElementById('pr-threshold').value)||0.8,
+      batch_size:parseInt(document.getElementById('pr-batch').value)||0,
+    },
+    conflict_detection:{
+      min_score:parseFloat(document.getElementById('cd-min_score').value)||0.7,
+      min_similarity:parseFloat(document.getElementById('cd-min_sim').value)||0.5,
+      max_similarity:parseFloat(document.getElementById('cd-max_sim').value)||0.95,
+    },
+    prompts:{
+      system:document.getElementById('prompt-system').value,
+      context_template:document.getElementById('prompt-context').value,
+      conflict_warning:document.getElementById('prompt-conflict').value,
+    },
+    judge:{prompt_file:document.getElementById('judge-prompt_file').value.trim()},
+    chat:{max_history:parseInt(document.getElementById('chat-max_history').value)||20},
+    llm_profiles:_settingsProfiles,
+    llm_routing:{
+      qa:document.getElementById('route-qa').value,
+      pre_review:document.getElementById('route-pre_review').value,
+      conflict_detection:document.getElementById('route-conflict_detection').value,
+    },
+  };
+  const st=document.getElementById('settingsStatus');
+  st.textContent='保存中...';
+  try{
+    const res=await fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(updates)});
+    if(!res.ok){const e=await res.json();st.textContent='保存失败: '+(e.detail||res.status);return;}
+    st.textContent='✅ 已保存';
+    setTimeout(()=>closeSettings(),800);
+  }catch(e){
+    st.textContent='保存失败: '+e.message;
+  }
+}
