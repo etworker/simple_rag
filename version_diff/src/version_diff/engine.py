@@ -434,8 +434,11 @@ class DiffEngine:
 
         策略：
         1. 按表头内容相似度配对表格（不靠位置序号）
-        2. 配对成功的表格，按首列关键字对齐行
-        3. 输出行级差异（modified/added/removed）
+        2. 列对齐：按列名模糊匹配配对新旧列
+        3. 行对齐：按首列关键字配对新旧行
+        4. 只比较对齐列的内容，新增/删除列单独报告
+
+        支持：列增减、行增减、单元格内容修改
         """
         from difflib import SequenceMatcher
 
@@ -446,14 +449,6 @@ class DiffEngine:
             if table.rows:
                 return " ".join(str(cell) for cell in table.rows[0])
             return ""
-
-        def row_key(row) -> str:
-            """行的配对键：首列文本"""
-            return str(row[0]).strip() if row else ""
-
-        def row_text(row) -> str:
-            """行的完整文本"""
-            return " | ".join(str(cell).strip() for cell in row)
 
         # 1. 配对表格（按表头相似度）
         paired_old = set()
@@ -482,11 +477,72 @@ class DiffEngine:
             old_t = old_tables[old_idx]
             new_t = new_tables[new_idx]
             section = old_t.chapter_title or old_t.location
-            header_text = row_text(old_t.rows[0]) if old_t.rows else "表格"
 
-            # 跳过表头行（index 0），对数据行按首列对齐
-            old_rows = {row_key(r): r for r in old_t.rows[1:]} if len(old_t.rows) > 1 else {}
-            new_rows = {row_key(r): r for r in new_t.rows[1:]} if len(new_t.rows) > 1 else {}
+            if not old_t.rows or not new_t.rows:
+                continue
+
+            old_header = [str(c).strip() for c in old_t.rows[0]]
+            new_header = [str(c).strip() for c in new_t.rows[0]]
+
+            # 2a. 列对齐：按列名模糊匹配
+            col_map = {}  # old_col_idx → new_col_idx
+            used_new_cols = set()
+            for oi, oh in enumerate(old_header):
+                best_ci = -1
+                best_cs = 0.0
+                for ni, nh in enumerate(new_header):
+                    if ni in used_new_cols:
+                        continue
+                    cs = SequenceMatcher(None, oh, nh).ratio()
+                    if cs > best_cs and cs >= 0.5:
+                        best_cs = cs
+                        best_ci = ni
+                if best_ci >= 0:
+                    col_map[oi] = best_ci
+                    used_new_cols.add(best_ci)
+
+            # 报告新增/删除的列
+            added_cols = [new_header[ni] for ni in range(len(new_header)) if ni not in used_new_cols]
+            removed_cols = [old_header[oi] for oi in range(len(old_header)) if oi not in col_map]
+            if added_cols:
+                changes.append(VersionChange(
+                    change_type="added",
+                    section=f"表格: {section}",
+                    location="表格结构",
+                    old_text="",
+                    new_text=f"新增列: {', '.join(added_cols)}",
+                    summary=f"表格新增 {len(added_cols)} 列",
+                ))
+            if removed_cols:
+                changes.append(VersionChange(
+                    change_type="removed",
+                    section=f"表格: {section}",
+                    location="表格结构",
+                    old_text=f"删除列: {', '.join(removed_cols)}",
+                    new_text="",
+                    summary=f"表格删除 {len(removed_cols)} 列",
+                ))
+
+            # 2b. 行对齐：按首列（对齐后）关键字配对
+            # 找到首列在对齐后的映射
+            first_old_col = 0  # 旧表首列
+            first_new_col = col_map.get(0, 0)  # 对齐后对应的新表列
+
+            def row_key_old(row):
+                return str(row[first_old_col]).strip() if len(row) > first_old_col else ""
+
+            def row_key_new(row):
+                return str(row[first_new_col]).strip() if len(row) > first_new_col else ""
+
+            def aligned_row_text(row, is_old=True):
+                """只提取对齐列的内容（忽略新增/删除列的噪音）"""
+                if is_old:
+                    return " | ".join(str(row[oi]).strip() for oi in sorted(col_map.keys()) if oi < len(row))
+                else:
+                    return " | ".join(str(row[col_map[oi]]).strip() for oi in sorted(col_map.keys()) if col_map[oi] < len(row))
+
+            old_rows = {row_key_old(r): r for r in old_t.rows[1:]}
+            new_rows = {row_key_new(r): r for r in new_t.rows[1:]}
 
             all_keys = list(dict.fromkeys(list(old_rows.keys()) + list(new_rows.keys())))
 
@@ -497,15 +553,15 @@ class DiffEngine:
                 new_r = new_rows.get(key)
 
                 if old_r and new_r:
-                    old_txt = row_text(old_r)
-                    new_txt = row_text(new_r)
+                    old_txt = aligned_row_text(old_r, is_old=True)
+                    new_txt = aligned_row_text(new_r, is_old=False)
                     if old_txt != new_txt:
                         changes.append(VersionChange(
                             change_type="modified",
                             section=f"表格: {section}",
                             location=f"行: {key}",
-                            old_text=old_txt,
-                            new_text=new_txt,
+                            old_text=" | ".join(str(c).strip() for c in old_r),
+                            new_text=" | ".join(str(c).strip() for c in new_r),
                             summary="",
                             similarity=SequenceMatcher(None, old_txt, new_txt).ratio(),
                         ))
@@ -514,7 +570,7 @@ class DiffEngine:
                         change_type="removed",
                         section=f"表格: {section}",
                         location=f"行: {key}",
-                        old_text=row_text(old_r),
+                        old_text=" | ".join(str(c).strip() for c in old_r),
                         new_text="",
                         summary="",
                     ))
@@ -524,7 +580,7 @@ class DiffEngine:
                         section=f"表格: {section}",
                         location=f"行: {key}",
                         old_text="",
-                        new_text=row_text(new_r),
+                        new_text=" | ".join(str(c).strip() for c in new_r),
                         summary="",
                     ))
 

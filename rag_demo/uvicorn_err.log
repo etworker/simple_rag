@@ -148,3 +148,5 @@ zipfile.BadZipFile: Bad magic number for central directory
 2026-08-08 22:18:27,683 | version_diff.judge |   📊 总计: 24 候选 → 规则排除 9 → LLM判断 15 → 确认矛盾 1
 2026-08-08 22:18:27,684 | version_diff.engine | 判断完成: 1 处矛盾 (4.3s)
 2026-08-08 22:18:27,689 | rag_demo.review_runner | 💾 已缓存预审核结果: IT运维管理规范.docx (SHA256=46587312)
+2026-08-08 22:56:00,329 | rag_demo.page_renderer | 渲染PDF页面: c06568783edd39c6bfb51af545894393b95dbd9594c7c6f08b9d35c846587312.docx 第1页
+2026-08-08 22:56:00,710 | rag_demo.page_renderer | 渲染PDF页面: c06568783edd39c6bfb51af545894393b95dbd9594c7c6f08b9d35c846587312.docx 第1页
