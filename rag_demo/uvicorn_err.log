@@ -1,0 +1,11 @@
+2026-08-08 21:01:33,118 | rag_demo | ================================================================================
+2026-08-08 21:01:33,120 | rag_demo | 🚀 服务启动 @ 2026-08-08 21:01:33
+2026-08-08 21:01:33,121 | rag_demo |    日志文件: C:\Users\0937\.simple_rag\logs\app.log
+2026-08-08 21:01:33,122 | rag_demo | ================================================================================
+2026-08-08 21:01:33,124 | rag_demo.config | 配置已加载: C:\Users\0937\Documents\work\simple_rag\rag_demo\config.json
+2026-08-08 21:01:33,126 | rag_demo | 缓存目录: C:\Users\0937\.simple_rag
+2026-08-08 21:01:33,127 | rag_demo | 上传目录: C:\Users\0937\.simple_rag\uploads
+INFO:     Started server process [29792]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)

@@ -10,6 +10,22 @@ function esc(s){return s?s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>
 function escA(s){return s?s.replace(/"/g,'&quot;'):'';}
 function renderMd(s){return (typeof marked!=='undefined')?marked.parse(s||''):esc(s||'');}
 function fmtDocName(name,hash){const h=hash?hash.slice(-8).toUpperCase():'';return h?`${name} [${h}]`:name;}
+function splitFileHash(sf){
+  if(!sf)return {name:'',hash:''};
+  const i=sf.lastIndexOf('#');
+  if(i<0)return {name:sf,hash:''};
+  return {name:sf.slice(0,i),hash:sf.slice(i+1)};
+}
+function fileColoredHtml(sf){
+  const {name,hash}=splitFileHash(sf||'');
+  return hash?`${esc(name)} <span class="src-file-hash">#${esc(hash)}</span>`:esc(name);
+}
+function stripOldSourceLines(s){
+  if(!s)return s;
+  // 防御：LLM 若仍按旧格式在末尾堆叠多段 "来源：xxx.pdf#SHA1234 第N页 ..." 或 "[来源: ...]",
+  // 则从首次出现处到文末整段移除；正文行不会以 "来源：[来源:" 或 "来源：...pdf#..." 开头，不会误伤
+  return s.replace(/(?:\n|^)\s*(?:来源[：:]|\[来源:)\s*[\s\S]*$/,'').replace(/\n{3,}/g,'\n\n').trim();
+}
 function scrollToRef(n){const el=document.getElementById('ref-'+n);if(el){el.scrollIntoView({behavior:'smooth',block:'start'});el.classList.add('ref-flash');setTimeout(()=>el.classList.remove('ref-flash'),1500);}else{console.warn('[scrollToRef] ref-'+n+' not found');}}
 
 // ============================================================
@@ -655,7 +671,8 @@ async function loadQaSession(sessionId){
             if(msg.role==='user'){
                 appendMsg('user',esc(msg.content));
             }else{
-                let html=renderMd(msg.content||'');
+                const cleanContent=stripOldSourceLines(msg.content||'');
+                let html=renderMd(cleanContent);
                 html=html.replace(
                     /\[(\d+)\](?![\w\s]*<\/a>)/g,
                     (m, p1) => `<a href="#ref-${p1}" class="ref-link" data-ref="${p1}" onclick="event.preventDefault();scrollToRef(${p1});return false;">[${p1}]</a>`
@@ -675,7 +692,7 @@ async function loadQaSession(sessionId){
                         if(!s.idx&&!fileIds[s.source_file]) fileIds[s.source_file]=id;
                         const displayId=s.idx?('B'+s.idx):fileIds[s.source_file];
                         srcHtml+=`<div class="src-item" id="ref-${displayId.replace('B','')}" data-file="${escA(s.source_file||'')}" data-loc="${escA(s.location||'')}">`;
-                        srcHtml+=`<div><span class="src-id">${displayId}</span><span class="src-file">${esc(s.source_file||'')}</span></div>`;
+                        srcHtml+=`<div><span class="src-id">${displayId}</span><span class="src-file">${fileColoredHtml(s.source_file)}</span></div>`;
                         srcHtml+=`<div class="src-loc">${esc(s.location||'')}</div>`;
                         srcHtml+=`<div class="src-text">${esc((s.text||'').slice(0,120))}</div></div>`;
                     }
@@ -726,7 +743,8 @@ async function sendQuestion(){
         const last=document.querySelector('.qa-messages .msg.bot:last-child');
         if(data.detail){if(last)last.innerHTML='<span style="color:var(--danger);">'+esc(data.detail)+'</span>';return;}
         // 后处理：将答案中 LLM 输出的 [1] [2] 编号转为可点击链接
-        let answerHtml=renderMd(data.answer||'');
+        const cleanAnswer=stripOldSourceLines(data.answer||'');
+        let answerHtml=renderMd(cleanAnswer);
         // 若 LLM 按引用指南使用了 [1] [2] 编号，转成可跳转到底部来源的链接
         answerHtml=answerHtml.replace(
             /\[(\d+)\](?![\w\s]*<\/a>)/g,
@@ -756,13 +774,10 @@ async function sendQuestion(){
                 const id=s.idx?('B'+s.idx):'B'+(fileIdx++);
                 if(!s.idx&&!fileIds[s.source_file]) fileIds[s.source_file]=id;
                 const displayId=s.idx?('B'+s.idx):fileIds[s.source_file];
-                const loc=esc(s.location||'');
-                const file=esc(s.source_file||'');
-                const text=esc((s.text||'').slice(0,120));
                 srcHtml+=`<div class="src-item" id="ref-${displayId.replace('B','')}" data-file="${escA(s.source_file||'')}" data-loc="${escA(s.location||'')}">`;
-                srcHtml+=`<div><span class="src-id">${displayId}</span><span class="src-file">${file}</span></div>`;
-                srcHtml+=`<div class="src-loc">${loc}</div>`;
-                srcHtml+=`<div class="src-text">${text}${(s.text||'').length>120?'…':''}</div>`;
+                srcHtml+=`<div><span class="src-id">${displayId}</span><span class="src-file">${fileColoredHtml(s.source_file)}</span></div>`;
+                srcHtml+=`<div class="src-loc">${esc(s.location||'')}</div>`;
+                srcHtml+=`<div class="src-text">${esc((s.text||'').slice(0,120))}${(s.text||'').length>120?'…':''}</div>`;
                 srcHtml+=`</div>`;
             }
             srcHtml+='</div>';
