@@ -21,7 +21,7 @@ class TestConfigStore:
     def test_get_dot_notation(self):
         from app.services.config_store import ConfigStore
         config = ConfigStore()
-        assert config.get("llm.model") == "zai.glm-4.7-flash"
+        assert config.get("llm.model") == ""  # 默认空，由 config.json 填充
         assert config.get("retrieval.top_k") == 5
 
     def test_get_default(self):
@@ -40,17 +40,17 @@ class TestConfigStore:
         config = ConfigStore()
         config.update({"llm": {"model": "new-model"}})
         assert config.get("llm.model") == "new-model"
-        # region should not be overwritten
-        assert config.get("llm.region") == "us-east-1"
+        # provider should not be overwritten
+        assert config.get("llm.provider") == "openai"
 
     def test_get_section(self):
         from app.services.config_store import ConfigStore
         config = ConfigStore()
         llm = config.get_section("llm")
-        assert llm["model"] == "zai.glm-4.7-flash"
+        assert llm["model"] == ""  # 默认空
         # Modifying the returned dict should not affect original
         llm["model"] = "changed"
-        assert config.get("llm.model") == "zai.glm-4.7-flash"
+        assert config.get("llm.model") == ""
 
 
 class TestChatHistoryStore:

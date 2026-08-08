@@ -25,6 +25,11 @@ class Config:
     embedding: dict[str, Any] = field(
         default_factory=lambda: {
             "model": os.environ.get("EMBEDDING_MODEL", "BAAI/bge-base-zh-v1.5"),
+            "device": os.environ.get("SIMPLE_RAG_EMBEDDING_DEVICE", "auto"),
+            # dtype: "auto" / "float16" / "bfloat16" / "float32"，仅在 device 非 cpu 时生效
+            "dtype": os.environ.get("SIMPLE_RAG_EMBEDDING_DTYPE", ""),
+            # 多 GPU 场景下的 GPU 设备 ID
+            "gpu_id": 0,
         }
     )
 

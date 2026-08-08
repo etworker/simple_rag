@@ -5,22 +5,25 @@
   },
   "embedding": {
     "model": "BAAI/bge-base-zh-v1.5",
-    "cache_dir": ""
+    "cache_dir": "",
+    "device": "auto",
+    "dtype": "auto",
+    "gpu_id": 0
   },
   "llm": {
     "provider": "openai",
     "model": "/home/ec2-user/models/GLM-4.7-Flash-Q4_K_M.gguf",
-    "region": "us-east-1",
+    "base_url": "http://a10bj.etworker.tech:8731/v1",
+    "api_key": "dummy",
     "api_key_env": "AWS_BEARER_TOKEN_BEDROCK",
+    "endpoint": "chat",
     "max_tokens": 2048,
     "timeout": 120,
     "max_retries": 3,
     "retry_backoff": 2.0,
-    "base_url": "http://a10bj.etworker.tech:8731/v1",
-    "api_key": "dummy",
-    "endpoint": "chat",
     "context_window": 80000,
-    "concurrency": 2
+    "concurrency": 2,
+    "region": "us-east-1"
   },
   "retrieval": {
     "top_k": 15,

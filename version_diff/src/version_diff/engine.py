@@ -68,9 +68,21 @@ class DiffEngine:
     def _get_model(self):
         """懒加载 embedding 模型"""
         if self._model is None:
+            from version_diff.device_utils import (
+                embedding_model_kwargs,
+                log_device_status,
+                resolve_embedding_device,
+            )
+
             model_name = self.config.embedding.get("model", "")
             cache_dir = self.config.embedding.get("cache_dir") or None
-            self._model = SentenceTransformer(model_name, cache_folder=cache_dir)
+            device = resolve_embedding_device(self.config.embedding)
+            kwargs = embedding_model_kwargs(self.config.embedding)
+            log.info(f"加载 embedding 模型: {model_name} (device={device})")
+            m_kwargs = {"cache_folder": cache_dir}
+            m_kwargs.update(kwargs)
+            self._model = SentenceTransformer(model_name, device=device, **m_kwargs)
+            log_device_status(device)
         return self._model
 
     def _notify(self, callback, step, percent, message):
@@ -158,12 +170,19 @@ class DiffEngine:
         t2 = time.time()
 
         # 构建已有文档的 FAISS index
+        from version_diff.device_utils import maybe_index_to_gpu
+
         dim = self._all_embeddings.shape[1]
-        index = faiss.IndexFlatIP(dim)
+        cpu_index = faiss.IndexFlatIP(dim)
         norms_existing = np.linalg.norm(self._all_embeddings, axis=1, keepdims=True)
         norms_existing[norms_existing == 0] = 1
         normalized_existing = (self._all_embeddings / norms_existing).astype(np.float32)
-        index.add(normalized_existing)
+        cpu_index.add(normalized_existing)
+        index, used_gpu = maybe_index_to_gpu(
+            cpu_index, gpu_id=self.config.embedding.get("gpu_id", 0)
+        )
+        if used_gpu:
+            log.info("  FAISS 检索在 GPU 上执行")
 
         # 归一化新文档 embedding
         norms_new = np.linalg.norm(new_emb, axis=1, keepdims=True)

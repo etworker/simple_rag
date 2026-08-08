@@ -111,11 +111,19 @@ class DocStore:
     def _get_model(self) -> SentenceTransformer:
         """懒加载 embedding 模型"""
         if self._model is None:
+            from version_diff.device_utils import embedding_model_kwargs, resolve_embedding_device
+
             emb_config = self._config.get("embedding", {})
             model_name = emb_config.get("model", "")
             cache_dir = emb_config.get("cache_dir") or None
-            log.info(f"加载 embedding 模型: {model_name}")
-            self._model = SentenceTransformer(model_name, cache_folder=cache_dir)
+            device = resolve_embedding_device(emb_config)
+            kwargs = embedding_model_kwargs(emb_config)
+            log.info(f"加载 embedding 模型: {model_name} (device={device})")
+            m_kwargs = {"cache_folder": cache_dir}
+            m_kwargs.update(kwargs)
+            self._model = SentenceTransformer(model_name, device=device, **m_kwargs)
+            if device and device != "cpu":
+                log.info(f"🚀 Embedding 加速: GPU, device={device}")
         return self._model
 
     def add_document(self, filepath: str, original_filename: str = "") -> DocMeta:

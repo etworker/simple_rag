@@ -152,6 +152,9 @@ n    策略（单次打开 PDF，两遍遍历）：
             if end_offset > start_offset:
                 page_boundaries.append((start_offset, end_offset, page_num))
 
+    # ========== 跨页表格合并 (启发式) ==========
+    tables = _merge_cross_page_tables(tables)
+
     # ========== 流式分段 + 章节标记 + 反查页码 ==========
     paragraphs = _segment_and_locate(full_text, page_boundaries, filepath, cfg)
 
@@ -373,6 +376,113 @@ def _assign_table_chapters(tables, paragraphs):
         if best:
             table.chapter = best.chapter
             table.chapter_title = best.chapter_title
+
+
+def _merge_cross_page_tables(tables: list) -> list:
+    """
+    启发式合并跨页连续表格。
+
+    合并条件（同时满足）:
+    1. 同一 source_file
+    2. 页码连续 (后续表格的 page == 前一表格的 page/page_end + 1)
+    3. 列数接近 (差异 ≤ 1)
+    续页的表头相似度仅用于 _append 阶段决定是否跳过重复行，不影响是否合并。
+
+    合并后:
+    - 保留首张表格的 headers / page / chapter
+    - 续页的数据行追加到首张的 rows 末尾（跳过重复表头行）
+    - 更新 page_end = 末页页码
+    """
+    if len(tables) <= 1:
+        return tables
+
+    merged: list = []
+    i = 0
+    while i < len(tables):
+        cur = tables[i]
+        j = i + 1
+        while j < len(tables):
+            nxt = tables[j]
+            if not _should_merge_tables(cur, nxt):
+                break
+            # 执行合并: cur.rows += nxt 的非表头行
+            new_rows = _append_rows_skip_dup_header(cur, nxt)
+            cur.rows = new_rows
+            # 更新页码范围
+            cur.page_end = getattr(nxt, "page_end", None) or getattr(nxt, "page")
+            # 继承章节（取第一个有的）
+            if not cur.chapter and getattr(nxt, "chapter", None):
+                cur.chapter = nxt.chapter
+                cur.chapter_title = nxt.chapter_title
+            j += 1
+        merged.append(cur)
+        i = j if j > i + 1 else i + 1
+
+    # 重新标号
+    for idx, t in enumerate(merged, 1):
+        t.index = idx
+    return merged
+
+
+def _should_merge_tables(a, b) -> bool:
+    """判断两张表格是否应为同一逻辑表格的跨页片段。
+
+    合并判定: 同文件 + 页码连续 + 列数兼容 (差异 ≤ 1)
+    header 相似度不影响是否合并，仅用于 _append 阶段决定是否跳过重复表头。
+    """
+    # 1. 同文件
+    if a.source_file != b.source_file:
+        return False
+
+    # 2. 页码连续
+    a_end = a.page_end or a.page
+    if b.page != a_end + 1:
+        return False
+
+    # 3. 列数接近
+    a_rows = a.rows or []
+    b_rows = b.rows or []
+    if not a_rows or not b_rows:
+        return False
+    a_cols = len(a_rows[0]) if a_rows[0] else 0
+    b_cols = len(b_rows[0]) if b_rows[0] else 0
+    if abs(a_cols - b_cols) > 1:
+        return False
+
+    return True
+
+
+def _row_token_jaccard(row_a, row_b) -> float:
+    """两行之间的 Token Jaccard 相似度。"""
+    tokens_a = set(str(c).strip() for c in row_a if c and str(c).strip())
+    tokens_b = set(str(c).strip() for c in row_b if c and str(c).strip())
+    if not tokens_a or not tokens_b:
+        return 0.0
+    return len(tokens_a & tokens_b) / len(tokens_a | tokens_b)
+
+
+def _append_rows_skip_dup_header(target, source, header_threshold: float = 0.85) -> list:
+    """追加 source 的行到 target 末尾，跳过重复的表头行（如果有）。"""
+    result = list(target.rows or [])
+    source_rows = list(source.rows or [])
+    if not source_rows:
+        return result
+
+    target_header = result[0] if result else None
+    target_cols = len(target_header) if target_header else len(source_rows[0])
+
+    for idx, row in enumerate(source_rows):
+        # 续页第 0 行若与表头相似 → 跳过（重复表头）
+        if idx == 0 and target_header:
+            if _row_token_jaccard(target_header, row) >= header_threshold:
+                continue
+        # 列数对齐: 短的补空, 长的截断
+        if len(row) < target_cols:
+            row = list(row) + [""] * (target_cols - len(row))
+        elif len(row) > target_cols:
+            row = row[:target_cols]
+        result.append(row)
+    return result
 
 
 # ============================================================

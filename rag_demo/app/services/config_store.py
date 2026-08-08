@@ -29,16 +29,26 @@ DEFAULT_CONFIG = {
     "embedding": {
         "model": "BAAI/bge-base-zh-v1.5",
         "cache_dir": "",
+        # device: "auto" / "cpu" / "cuda" / "cuda:0" / "mps"
+        "device": "auto",
+        # dtype: "" / "auto" / "float16" / "bfloat16" / "float32"
+        "dtype": "auto",
+        # GPU device id (多 GPU 场景)
+        "gpu_id": 0,
     },
     "llm": {
-        "provider": "bedrock_converse",
-        "model": "zai.glm-4.7-flash",
-        "region": "us-east-1",
-        "api_key_env": "AWS_BEARER_TOKEN_BEDROCK",
+        "provider": "openai",
+        "model": "",
+        "base_url": "",
+        "api_key": "",
+        "api_key_env": "",
+        "endpoint": "chat",
         "max_tokens": 2048,
         "timeout": 120,
         "max_retries": 3,
         "retry_backoff": 2.0,
+        "context_window": 8192,
+        "concurrency": 1,
     },
     "retrieval": {
         "top_k": 5,
@@ -46,7 +56,7 @@ DEFAULT_CONFIG = {
     },
     "pre_review": {
         "similarity_threshold": 0.80,
-        "batch_size": 5,
+        "batch_size": 0,  # 0=按 context_window 自动计算
     },
     "conflict_detection": {
         "min_score": 0.7,
