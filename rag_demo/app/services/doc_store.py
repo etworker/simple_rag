@@ -21,6 +21,7 @@ from sentence_transformers import SentenceTransformer
 from version_diff.vectorstore import VectorStore
 
 from app.services.parse_cache import cached_parse as parse
+from app.services.utils import compute_sha256
 from doc_parser import Paragraph
 
 log = logging.getLogger("rag_demo.doc_store")
@@ -102,11 +103,7 @@ class DocStore:
     @staticmethod
     def _compute_file_hash(filepath: str) -> str:
         """计算文件 SHA-256"""
-        h = hashlib.sha256()
-        with open(filepath, "rb") as f:
-            for chunk in iter(lambda: f.read(8192), b""):
-                h.update(chunk)
-        return h.hexdigest()
+        return compute_sha256(filepath)
 
     def _get_model(self) -> SentenceTransformer:
         """懒加载 embedding 模型"""

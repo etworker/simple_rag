@@ -12,6 +12,7 @@ import json
 import logging
 import os
 
+from app.services.utils import compute_sha256
 from doc_parser import Document, Paragraph, Table
 from doc_parser import parse as _raw_parse
 
@@ -34,7 +35,7 @@ def cached_parse(filepath: str, config: dict = None) -> Document:
     """
     os.makedirs(_CACHE_DIR, exist_ok=True)
 
-    file_hash = _file_sha256(filepath)
+    file_hash = compute_sha256(filepath)
     cache_path = os.path.join(_CACHE_DIR, f"{file_hash}.json")
 
     # 命中缓存
@@ -59,15 +60,6 @@ def cached_parse(filepath: str, config: dict = None) -> Document:
     log.info(f"💾 已缓存解析结果: SHA256={file_hash[-8:].upper()}")
 
     return doc
-
-
-def _file_sha256(filepath: str) -> str:
-    """计算文件 SHA-256"""
-    h = hashlib.sha256()
-    with open(filepath, "rb") as f:
-        for chunk in iter(lambda: f.read(8192), b""):
-            h.update(chunk)
-    return h.hexdigest()
 
 
 def _save_cache(cache_path: str, doc: Document):

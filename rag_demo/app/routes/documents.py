@@ -1,6 +1,7 @@
 """文档管理路由 — 列表/删除/清除/PDF/页面预览"""
 
 import asyncio
+import logging
 import os
 
 from fastapi import APIRouter, HTTPException
@@ -8,6 +9,8 @@ from fastapi.responses import FileResponse
 
 from app.routes import _state
 from app.routes._state import init  # noqa: F401 - re-export for main.py
+
+log = logging.getLogger("rag_demo.routes.documents")
 
 router = APIRouter()
 
@@ -114,31 +117,16 @@ async def delete_document(filename: str):
 @router.post("/clear")
 async def clear_all_documents():
     """清空知识库（删除所有文档、缓存、向量，完全从0开始）"""
-    import shutil
+    from app.services.utils import clear_cache_dir
 
     count = await asyncio.to_thread(_state._doc_store.clear_all)
     _state._review_tasks.clear()
-    if os.path.exists(_state._REVIEW_CACHE_PATH):
-        os.remove(_state._REVIEW_CACHE_PATH)
-    if os.path.exists(_state._REVIEW_RESULT_CACHE):
-        shutil.rmtree(_state._REVIEW_RESULT_CACHE, ignore_errors=True)
-    os.makedirs(_state._REVIEW_RESULT_CACHE, exist_ok=True)
+    clear_cache_dir(_state._REVIEW_CACHE_PATH)
+    clear_cache_dir(_state._REVIEW_RESULT_CACHE)
     _state._confirmed_or_rejected.clear()
-    parse_cache_dir = os.path.join(_state._cache_dir, "parse_cache")
-    if os.path.exists(parse_cache_dir):
-        shutil.rmtree(parse_cache_dir, ignore_errors=True)
-    os.makedirs(parse_cache_dir, exist_ok=True)
-    page_cache_dir = os.path.join(_state._cache_dir, "page_cache")
-    if os.path.exists(page_cache_dir):
-        shutil.rmtree(page_cache_dir, ignore_errors=True)
-    os.makedirs(page_cache_dir, exist_ok=True)
-    vector_cache_dir = os.path.join(_state._cache_dir, "vector_cache")
-    if os.path.exists(vector_cache_dir):
-        shutil.rmtree(vector_cache_dir, ignore_errors=True)
-    os.makedirs(vector_cache_dir, exist_ok=True)
-    import logging
 
-    logging.getLogger("rag_demo.routes").info(
-        f"🗑️ 知识库完全重置: 清空 {count} 篇文档 + 全部缓存"
-    )
+    for sub in ("parse_cache", "page_cache", "vector_cache"):
+        clear_cache_dir(os.path.join(_state._cache_dir, sub))
+
+    log.info(f"🗑️ 知识库完全重置: 清空 {count} 篇文档 + 全部缓存")
     return {"message": f"知识库已完全重置，共移除 {count} 篇文档，所有缓存已清除"}

@@ -259,14 +259,10 @@ async def rerun_review(task_id: str):
     if not filepath or not os.path.exists(filepath):
         raise HTTPException(status_code=400, detail="上传文件已不存在，请重新上传")
 
-    import hashlib as _hashlib
+    from app.services.utils import compute_sha256
 
     try:
-        _md5 = _hashlib.sha256()
-        with open(filepath, "rb") as _f:
-            for chunk in iter(lambda: _f.read(8192), b""):
-                _md5.update(chunk)
-        file_md5 = _md5.hexdigest()
+        file_md5 = compute_sha256(filepath)
         cached_path = os.path.join(_state._REVIEW_RESULT_CACHE, f"{file_md5}.json")
         if os.path.exists(cached_path):
             os.remove(cached_path)
@@ -354,13 +350,9 @@ async def _run_pre_review(task_id: str):
         return
 
     # ====== 1. 快速路径：检查预审核结果缓存 ======
-    import hashlib as _hashlib
+    from app.services.utils import compute_sha256
 
-    _md5 = _hashlib.sha256()
-    with open(filepath, "rb") as _f:
-        for chunk in iter(lambda: _f.read(8192), b""):
-            _md5.update(chunk)
-    file_md5 = _md5.hexdigest()
+    file_md5 = compute_sha256(filepath)
 
     cached_result_path = os.path.join(_state._REVIEW_RESULT_CACHE, f"{file_md5}.json")
     if os.path.exists(cached_result_path):
