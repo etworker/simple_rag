@@ -11,19 +11,75 @@
     "gpu_id": 0
   },
   "llm": {
-    "provider": "openai",
-    "model": "/home/ec2-user/models/GLM-4.7-Flash-Q4_K_M.gguf",
-    "base_url": "http://a10bj.etworker.tech:8731/v1",
-    "api_key": "dummy",
-    "api_key_env": "AWS_BEARER_TOKEN_BEDROCK",
+    "provider": "",
+    "model": "",
+    "base_url": "",
+    "api_key": "",
+    "api_key_env": "",
     "endpoint": "chat",
     "max_tokens": 2048,
     "timeout": 120,
     "max_retries": 3,
     "retry_backoff": 2.0,
-    "context_window": 80000,
-    "concurrency": 2,
-    "region": "us-east-1"
+    "context_window": 8192,
+    "concurrency": 1
+  },
+  "llm_profiles": {
+    "self_hosted_glm": {
+      "provider": "openai",
+      "model": "/home/ec2-user/models/GLM-4.7-Flash-Q4_K_M.gguf",
+      "base_url": "http://a10bj.etworker.tech:8731/v1",
+      "api_key": "dummy",
+      "endpoint": "chat",
+      "max_tokens": 2048,
+      "timeout": 120,
+      "max_retries": 3,
+      "retry_backoff": 2.0,
+      "context_window": 80000,
+      "concurrency": 2
+    },
+    "bedrock_glm_flash": {
+      "provider": "bedrock",
+      "model": "zai.glm-4.7-flash",
+      "region": "us-east-1",
+      "api_key_env": "AWS_BEARER_TOKEN_BEDROCK",
+      "max_tokens": 2048,
+      "timeout": 120,
+      "max_retries": 3,
+      "retry_backoff": 2.0,
+      "context_window": 8192,
+      "concurrency": 1
+    },
+    "bedrock_kimi_thinking": {
+      "provider": "bedrock",
+      "model": "moonshot.kimi-k2-thinking",
+      "region": "us-east-1",
+      "api_key_env": "AWS_BEARER_TOKEN_BEDROCK",
+      "max_tokens": 4096,
+      "timeout": 180,
+      "max_retries": 2,
+      "retry_backoff": 3.0,
+      "context_window": 128000,
+      "concurrency": 1
+    },
+    "deepseek": {
+      "provider": "openai",
+      "model": "deepseek-chat",
+      "base_url": "https://api.deepseek.com/v1",
+      "api_key_env": "DEEPSEEK_API_KEY",
+      "endpoint": "chat",
+      "max_tokens": 4096,
+      "timeout": 120,
+      "max_retries": 3,
+      "retry_backoff": 2.0,
+      "context_window": 64000,
+      "concurrency": 4
+    }
+  },
+  "llm_routing": {
+    "qa": "self_hosted_glm",
+    "pre_review": "self_hosted_glm",
+    "conflict_detection": "self_hosted_glm"
   },
   "retrieval": {
     "top_k": 15,

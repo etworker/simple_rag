@@ -50,6 +50,12 @@ DEFAULT_CONFIG = {
         "context_window": 8192,
         "concurrency": 1,
     },
+    "llm_profiles": {},  # 多 LLM 配置（优先于 llm 段）
+    "llm_routing": {     # 各用途使用哪个 profile
+        "qa": "default",
+        "pre_review": "default",
+        "conflict_detection": "default",
+    },
     "retrieval": {
         "top_k": 5,
         "similarity_threshold": 0.5,
@@ -122,6 +128,56 @@ class ConfigStore:
     def get_section(self, section: str) -> dict:
         """获取整个配置段"""
         return deepcopy(self._config.get(section, {}))
+
+    def get_llm_profile(self, use_case: str = "qa") -> dict:
+        """
+        获取指定用途的 LLM 配置
+
+        先从 llm_routing 查找用途对应的 profile 名，
+        再从 llm_profiles 中取出完整配置。
+
+        兼容旧格式：如果没有 llm_profiles，退回到 llm 段。
+
+        Args:
+            use_case: 用途标识 ("qa" | "pre_review" | "conflict_detection" | 或自定义)
+
+        Returns:
+            完整的 LLM 配置字典
+
+        Example:
+            config.get_llm_profile("qa")        → fast profile
+            config.get_llm_profile("pre_review") → precise profile
+        """
+        profiles = self._config.get("llm_profiles", {})
+        routing = self._config.get("llm_routing", {})
+
+        # 查找 profile 名
+        profile_name = routing.get(use_case, "default")
+
+        # 从 profiles 中获取
+        if profiles and profile_name in profiles:
+            return deepcopy(profiles[profile_name])
+
+        # fallback: 如果 profiles 中有 "default"
+        if profiles and "default" in profiles:
+            return deepcopy(profiles["default"])
+
+        # 兼容旧格式：退回到 "llm" 段
+        llm_section = self._config.get("llm", {})
+        if llm_section:
+            return deepcopy(llm_section)
+
+        return {}
+
+    def list_llm_profiles(self) -> list[str]:
+        """列出所有可用的 LLM profile 名称"""
+        profiles = self._config.get("llm_profiles", {})
+        if profiles:
+            return list(profiles.keys())
+        # 兼容旧格式
+        if self._config.get("llm"):
+            return ["default"]
+        return []
 
     def to_dict(self) -> dict:
         """导出完整配置"""

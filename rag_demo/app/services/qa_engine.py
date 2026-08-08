@@ -141,7 +141,7 @@ class QAEngine:
         """获取或创建会话"""
         if session_id not in self._sessions:
             system_prompt = self._config.get("prompts.system", "")
-            llm_config = self._config.get_section("llm")
+            llm_config = self._config.get_llm_profile("qa")
             max_history = self._config.get("chat.max_history", 20)
             self._sessions[session_id] = ChatSession(
                 system_prompt=system_prompt,
@@ -260,7 +260,7 @@ class QAEngine:
         except ImportError:
             return None
 
-        llm_config = self._config.get_section("llm")
+        llm_config = self._config.get_llm_profile("conflict_detection")
         if not llm_config.get("model") and not llm_config.get("provider"):
             return None
 

@@ -114,7 +114,7 @@ async def run_pre_review(task_id: str):
 
         engine_config = {
             "embedding": _state.app.config.get_section("embedding"),
-            "llm": _state.app.config.get_section("llm"),
+            "llm": _state.app.config.get_llm_profile("pre_review"),
             "diff": _state.app.config.get_section("pre_review"),
             "cache": {
                 "vector_cache_dir": os.path.join(_state.app.cache_dir, "vector_cache")
