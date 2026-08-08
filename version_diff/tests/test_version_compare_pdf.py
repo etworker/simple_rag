@@ -12,7 +12,7 @@ import os
 import pytest
 
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-_DATA_DIR = os.path.join(_PROJECT_ROOT, "data", "pdf")
+_DATA_DIR = os.path.join(_PROJECT_ROOT, "data", "pdf", "IT运维管理规范")
 V1_PATH = os.path.join(_DATA_DIR, "v1", "IT运维管理规范.pdf")
 V2_PATH = os.path.join(_DATA_DIR, "v2", "IT运维管理规范.pdf")
 
@@ -64,8 +64,9 @@ class TestPdfContentAccuracy:
 
     def test_shift_staff(self, version_diff_result):
         modified = [c for c in version_diff_result.changes if c.change_type == "modified"]
-        found = any("2人" in c.old_text and "3人" in c.new_text for c in modified)
-        assert found, "未检测到白班人数 2→3"
+        # PDF 提取可能在数字和汉字间插入空格："2 人" vs "3 人"
+        found = any(("2人" in c.old_text or "2 人" in c.old_text) and ("3人" in c.new_text or "3 人" in c.new_text) for c in modified)
+        assert found, "未检测到白班人数 2→3（含PDF空格变体）"
 
     def test_new_chapter_content(self, version_diff_result):
         added = [c for c in version_diff_result.changes if c.change_type == "added"]

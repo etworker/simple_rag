@@ -441,13 +441,22 @@ class DiffEngine:
         支持：列增减、行增减、单元格内容修改
         """
         from difflib import SequenceMatcher
+        import re
 
         changes = []
 
+        def _normalize(text: str) -> str:
+            """标准化单元格文本：去换行、压缩空格"""
+            return re.sub(r'\s+', '', str(text).strip())
+
+        def _normalize_display(text: str) -> str:
+            """显示用标准化：去换行、压缩连续空格为单个"""
+            return re.sub(r'\s+', ' ', str(text).strip())
+
         def table_header_text(table) -> str:
-            """提取表格表头文本用于配对"""
+            """提取表格表头文本用于配对（标准化后）"""
             if table.rows:
-                return " ".join(str(cell) for cell in table.rows[0])
+                return " ".join(_normalize(cell) for cell in table.rows[0])
             return ""
 
         # 1. 配对表格（按表头相似度）
@@ -472,6 +481,28 @@ class DiffEngine:
                 paired_old.add(i)
                 paired_new.add(best_match)
 
+        # Fallback：未配对的大表格按列数+行数规模匹配（处理 PDF 跨页表头丢失的情况）
+        for i, old_t in enumerate(old_tables):
+            if i in paired_old:
+                continue
+            if not old_t.rows or len(old_t.rows) < 5:
+                continue  # 只对大表格做 fallback
+            old_cols = len(old_t.rows[0])
+            for j, new_t in enumerate(new_tables):
+                if j in paired_new:
+                    continue
+                if not new_t.rows or len(new_t.rows) < 5:
+                    continue
+                new_cols = len(new_t.rows[0])
+                # 列数相同 + 行数差异在 30% 以内
+                if old_cols == new_cols:
+                    size_ratio = min(len(old_t.rows), len(new_t.rows)) / max(len(old_t.rows), len(new_t.rows))
+                    if size_ratio >= 0.7:
+                        table_pairs.append((i, j))
+                        paired_old.add(i)
+                        paired_new.add(j)
+                        break
+
         # 2. 对配对的表格做行级 diff
         for old_idx, new_idx in table_pairs:
             old_t = old_tables[old_idx]
@@ -487,19 +518,30 @@ class DiffEngine:
             # 2a. 列对齐：按列名模糊匹配
             col_map = {}  # old_col_idx → new_col_idx
             used_new_cols = set()
-            for oi, oh in enumerate(old_header):
-                best_ci = -1
-                best_cs = 0.0
-                for ni, nh in enumerate(new_header):
-                    if ni in used_new_cols:
-                        continue
-                    cs = SequenceMatcher(None, oh, nh).ratio()
-                    if cs > best_cs and cs >= 0.5:
-                        best_cs = cs
-                        best_ci = ni
-                if best_ci >= 0:
-                    col_map[oi] = best_ci
-                    used_new_cols.add(best_ci)
+
+            # 检测新表头是否被截断（PDF跨页导致表头丢失）
+            new_header_valid = sum(1 for h in new_header if _normalize(h)) >= len(new_header) * 0.5
+
+            if new_header_valid and len(old_header) > 0:
+                # 正常列对齐
+                for oi, oh in enumerate(old_header):
+                    best_ci = -1
+                    best_cs = 0.0
+                    for ni, nh in enumerate(new_header):
+                        if ni in used_new_cols:
+                            continue
+                        cs = SequenceMatcher(None, _normalize(oh), _normalize(nh)).ratio()
+                        if cs > best_cs and cs >= 0.5:
+                            best_cs = cs
+                            best_ci = ni
+                    if best_ci >= 0:
+                        col_map[oi] = best_ci
+                        used_new_cols.add(best_ci)
+            else:
+                # 新表头被截断：假设列结构相同，1:1 映射
+                for ci in range(min(len(old_header), len(new_header))):
+                    col_map[ci] = ci
+                    used_new_cols.add(ci)
 
             # 报告新增/删除的列
             added_cols = [new_header[ni] for ni in range(len(new_header)) if ni not in used_new_cols]
@@ -529,17 +571,17 @@ class DiffEngine:
             first_new_col = col_map.get(0, 0)  # 对齐后对应的新表列
 
             def row_key_old(row):
-                return str(row[first_old_col]).strip() if len(row) > first_old_col else ""
+                return _normalize(row[first_old_col]) if len(row) > first_old_col else ""
 
             def row_key_new(row):
-                return str(row[first_new_col]).strip() if len(row) > first_new_col else ""
+                return _normalize(row[first_new_col]) if len(row) > first_new_col else ""
 
             def aligned_row_text(row, is_old=True):
                 """只提取对齐列的内容（忽略新增/删除列的噪音）"""
                 if is_old:
-                    return " | ".join(str(row[oi]).strip() for oi in sorted(col_map.keys()) if oi < len(row))
+                    return " | ".join(_normalize(row[oi]) for oi in sorted(col_map.keys()) if oi < len(row))
                 else:
-                    return " | ".join(str(row[col_map[oi]]).strip() for oi in sorted(col_map.keys()) if col_map[oi] < len(row))
+                    return " | ".join(_normalize(row[col_map[oi]]) for oi in sorted(col_map.keys()) if col_map[oi] < len(row))
 
             old_rows = {row_key_old(r): r for r in old_t.rows[1:]}
             new_rows = {row_key_new(r): r for r in new_t.rows[1:]}
@@ -560,8 +602,8 @@ class DiffEngine:
                             change_type="modified",
                             section=f"表格: {section}",
                             location=f"行: {key}",
-                            old_text=" | ".join(str(c).strip() for c in old_r),
-                            new_text=" | ".join(str(c).strip() for c in new_r),
+                            old_text=" | ".join(_normalize_display(c) for c in old_r),
+                            new_text=" | ".join(_normalize_display(c) for c in new_r),
                             summary="",
                             similarity=SequenceMatcher(None, old_txt, new_txt).ratio(),
                         ))
@@ -570,7 +612,7 @@ class DiffEngine:
                         change_type="removed",
                         section=f"表格: {section}",
                         location=f"行: {key}",
-                        old_text=" | ".join(str(c).strip() for c in old_r),
+                        old_text=" | ".join(_normalize_display(c) for c in old_r),
                         new_text="",
                         summary="",
                     ))
@@ -580,7 +622,7 @@ class DiffEngine:
                         section=f"表格: {section}",
                         location=f"行: {key}",
                         old_text="",
-                        new_text=" | ".join(str(c).strip() for c in new_r),
+                        new_text=" | ".join(_normalize_display(c) for c in new_r),
                         summary="",
                     ))
 
