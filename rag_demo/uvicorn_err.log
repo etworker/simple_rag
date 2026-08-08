@@ -78,3 +78,73 @@ zipfile.BadZipFile: Bad magic number for central directory
 2026-08-08 21:10:23,687 | rag_demo.doc_store | 已入库: A_IT管理规定.docx
 2026-08-08 21:10:23,690 | rag_demo.doc_store | 持久化完成: 1 文档, 13 段落
 2026-08-08 21:10:23,691 | rag_demo.routes.review | 入库成功: A_IT管理规定.docx (13 paras) @ C:\Users\0937\.simple_rag\uploads\d595a34f10af8a5d00ef62359685e7129d386eb4b70f90822d0b4b4f10e04ab9.docx
+2026-08-08 22:17:36,029 | rag_demo.routes.review | 上传保存: IT运维管理规范.docx -> 06d87f826a2a426a9d5eb77ee918d671b48c59bc6a35c8e8a6ff5f4f61a554e8.docx (39539 bytes)
+2026-08-08 22:17:36,646 | rag_demo.review_runner | 开始加载向量模型...
+2026-08-08 22:17:36,648 | version_diff.engine | 加载 embedding 模型: BAAI/bge-base-zh-v1.5 (device=cpu)
+Loading weights:   0%|          | 0/199 [00:00<?, ?it/s]Loading weights: 100%|██████████| 199/199 [00:00<00:00, 13143.53it/s]
+2026-08-08 22:17:36,939 | version_diff.device | 💻 Embedding 加速: CPU, device=cpu
+2026-08-08 22:17:36,941 | rag_demo.review_runner | 向量模型加载完成
+2026-08-08 22:17:36,942 | rag_demo.review_runner | 开始加载已有文档 (1 篇)...
+2026-08-08 22:17:36,973 | version_diff.vectorstore |   💾 命中缓存 (ed5dc802...)，跳过 embedding 计算
+2026-08-08 22:17:36,975 | version_diff.engine | 已加载到对比引擎: d595a34f10af8a5d00ef62359685e7129d386eb4b70f90822d0b4b4f10e04ab9.docx (13 段落)
+2026-08-08 22:17:36,976 | rag_demo.review_runner | 已有文档加载完成
+2026-08-08 22:17:36,977 | rag_demo.review_runner | 开始解析新文档: IT运维管理规范.docx
+2026-08-08 22:17:37,011 | rag_demo.parse_cache | ✅ 解析完成: 06d87f826a2a426a9d5eb77ee918d671b48c59bc6a35c8e8a6ff5f4f61a554e8.docx (39 段, 3 表)
+2026-08-08 22:17:37,014 | rag_demo.parse_cache | 💾 已缓存解析结果: SHA256=61A554E8
+2026-08-08 22:17:37,015 | rag_demo.review_runner | 新文档解析完成: 39 段落
+2026-08-08 22:17:37,047 | version_diff.engine | 解析完成: 06d87f826a2a426a9d5eb77ee918d671b48c59bc6a35c8e8a6ff5f4f61a554e8.docx (39 段落, 0.0s)
+2026-08-08 22:17:37,048 | version_diff.vectorstore |   ⏳ 计算 39 段嵌入...
+2026-08-08 22:17:38,753 | version_diff.vectorstore |   💾 已缓存 (423c318c..., 39 段, 768维)
+2026-08-08 22:17:38,754 | version_diff.engine | Embedding 完成 (1.7s)
+2026-08-08 22:17:38,767 | version_diff.engine | 检索完成: 1 个候选对 (0.0s)
+2026-08-08 22:17:38,768 | version_diff.engine | Diff 完成: 1 处有差异 (0.0s)
+2026-08-08 22:17:38,769 | version_diff.judge | 🧠 一致性判断流水线
+2026-08-08 22:17:38,769 | version_diff.judge |   阶段1: 规则预过滤...
+2026-08-08 22:17:38,770 | version_diff.judge |   规则预过滤: 0 项排除 ({})
+2026-08-08 22:17:38,770 | version_diff.judge |   待 LLM 判断: 1 pairs
+2026-08-08 22:17:38,771 | version_diff.judge |   阶段2: LLM 判断（1 pairs, 1 batches, batch_size=50, concurrency=2）...
+2026-08-08 22:17:38,771 | version_diff.judge |     batch 1/1 (1 pairs) submitted
+2026-08-08 22:17:39,323 | version_diff.judge |     batch 1/1 完成
+2026-08-08 22:17:39,324 | version_diff.judge |   ✅ 确认不一致: 0 处
+2026-08-08 22:17:39,325 | version_diff.judge |   📊 总计: 1 候选 → 规则排除 0 → LLM判断 1 → 确认矛盾 0
+2026-08-08 22:17:39,325 | version_diff.engine | 判断完成: 0 处矛盾 (0.6s)
+2026-08-08 22:17:39,330 | rag_demo.review_runner | 💾 已缓存预审核结果: IT运维管理规范.docx (SHA256=61A554E8)
+2026-08-08 22:18:12,050 | rag_demo.parse_cache | 📦 命中解析缓存: 06d87f826a2a426a9d5eb77ee918d671b48c59bc6a35c8e8a6ff5f4f61a554e8.docx (39 段, SHA256=61A554E8)
+2026-08-08 22:18:12,050 | rag_demo.doc_store | 解析完成: IT运维管理规范.docx (39 段, 3 表)
+2026-08-08 22:18:12,052 | version_diff.vectorstore |   💾 命中缓存 (423c318c...)，跳过 embedding 计算
+2026-08-08 22:18:12,055 | rag_demo.doc_store | 已入库: IT运维管理规范.docx
+2026-08-08 22:18:12,061 | rag_demo.doc_store | 持久化完成: 2 文档, 52 段落
+2026-08-08 22:18:12,062 | rag_demo.routes.review | 入库成功: IT运维管理规范.docx (39 paras) @ C:\Users\0937\.simple_rag\uploads\06d87f826a2a426a9d5eb77ee918d671b48c59bc6a35c8e8a6ff5f4f61a554e8.docx
+2026-08-08 22:18:20,591 | rag_demo.routes.review | 上传保存: IT运维管理规范.docx -> c06568783edd39c6bfb51af545894393b95dbd9594c7c6f08b9d35c846587312.docx (39867 bytes)
+2026-08-08 22:18:21,211 | rag_demo.review_runner | 开始加载向量模型...
+2026-08-08 22:18:21,219 | version_diff.engine | 加载 embedding 模型: BAAI/bge-base-zh-v1.5 (device=cpu)
+Loading weights:   0%|          | 0/199 [00:00<?, ?it/s]Loading weights: 100%|██████████| 199/199 [00:00<00:00, 13758.39it/s]
+2026-08-08 22:18:21,411 | version_diff.device | 💻 Embedding 加速: CPU, device=cpu
+2026-08-08 22:18:21,412 | rag_demo.review_runner | 向量模型加载完成
+2026-08-08 22:18:21,412 | rag_demo.review_runner | 开始加载已有文档 (2 篇)...
+2026-08-08 22:18:21,427 | version_diff.vectorstore |   💾 命中缓存 (ed5dc802...)，跳过 embedding 计算
+2026-08-08 22:18:21,428 | version_diff.engine | 已加载到对比引擎: d595a34f10af8a5d00ef62359685e7129d386eb4b70f90822d0b4b4f10e04ab9.docx (13 段落)
+2026-08-08 22:18:21,458 | version_diff.vectorstore |   💾 命中缓存 (423c318c...)，跳过 embedding 计算
+2026-08-08 22:18:21,459 | version_diff.engine | 已加载到对比引擎: 06d87f826a2a426a9d5eb77ee918d671b48c59bc6a35c8e8a6ff5f4f61a554e8.docx (39 段落)
+2026-08-08 22:18:21,460 | rag_demo.review_runner | 已有文档加载完成
+2026-08-08 22:18:21,461 | rag_demo.review_runner | 开始解析新文档: IT运维管理规范.docx
+2026-08-08 22:18:21,493 | rag_demo.parse_cache | ✅ 解析完成: c06568783edd39c6bfb51af545894393b95dbd9594c7c6f08b9d35c846587312.docx (46 段, 3 表)
+2026-08-08 22:18:21,496 | rag_demo.parse_cache | 💾 已缓存解析结果: SHA256=46587312
+2026-08-08 22:18:21,497 | rag_demo.review_runner | 新文档解析完成: 46 段落
+2026-08-08 22:18:21,525 | version_diff.engine | 解析完成: c06568783edd39c6bfb51af545894393b95dbd9594c7c6f08b9d35c846587312.docx (46 段落, 0.0s)
+2026-08-08 22:18:21,526 | version_diff.vectorstore |   ⏳ 计算 46 段嵌入...
+2026-08-08 22:18:23,379 | version_diff.vectorstore |   💾 已缓存 (eacfcdb8..., 46 段, 768维)
+2026-08-08 22:18:23,380 | version_diff.engine | Embedding 完成 (1.9s)
+2026-08-08 22:18:23,381 | version_diff.engine | 检索完成: 53 个候选对 (0.0s)
+2026-08-08 22:18:23,384 | version_diff.engine | Diff 完成: 24 处有差异 (0.0s)
+2026-08-08 22:18:23,384 | version_diff.judge | 🧠 一致性判断流水线
+2026-08-08 22:18:23,385 | version_diff.judge |   阶段1: 规则预过滤...
+2026-08-08 22:18:23,388 | version_diff.judge |   规则预过滤: 9 项排除 ({'numbering': 9})
+2026-08-08 22:18:23,389 | version_diff.judge |   待 LLM 判断: 15 pairs
+2026-08-08 22:18:23,389 | version_diff.judge |   阶段2: LLM 判断（15 pairs, 1 batches, batch_size=50, concurrency=2）...
+2026-08-08 22:18:23,389 | version_diff.judge |     batch 1/1 (15 pairs) submitted
+2026-08-08 22:18:27,681 | version_diff.judge |     batch 1/1 完成
+2026-08-08 22:18:27,683 | version_diff.judge |   ✅ 确认不一致: 1 处
+2026-08-08 22:18:27,683 | version_diff.judge |   📊 总计: 24 候选 → 规则排除 9 → LLM判断 15 → 确认矛盾 1
+2026-08-08 22:18:27,684 | version_diff.engine | 判断完成: 1 处矛盾 (4.3s)
+2026-08-08 22:18:27,689 | rag_demo.review_runner | 💾 已缓存预审核结果: IT运维管理规范.docx (SHA256=46587312)

@@ -416,6 +416,10 @@ class DiffEngine:
                     summary="",
                 ))
 
+        # ====== 表格对比 ======
+        table_changes = self._compare_tables(old_doc.tables, new_doc.tables)
+        changes.extend(table_changes)
+
         self._notify(on_progress, "done", 1.0, "版本对比完成")
 
         return VersionDiffResult(
@@ -423,3 +427,105 @@ class DiffEngine:
             old_paragraph_count=len(old_doc.paragraphs),
             new_paragraph_count=len(new_doc.paragraphs),
         )
+
+    def _compare_tables(self, old_tables: list, new_tables: list) -> list[VersionChange]:
+        """
+        表格版本对比：配对新旧表格，逐行比较差异
+
+        策略：
+        1. 按表头内容相似度配对表格（不靠位置序号）
+        2. 配对成功的表格，按首列关键字对齐行
+        3. 输出行级差异（modified/added/removed）
+        """
+        from difflib import SequenceMatcher
+
+        changes = []
+
+        def table_header_text(table) -> str:
+            """提取表格表头文本用于配对"""
+            if table.rows:
+                return " ".join(str(cell) for cell in table.rows[0])
+            return ""
+
+        def row_key(row) -> str:
+            """行的配对键：首列文本"""
+            return str(row[0]).strip() if row else ""
+
+        def row_text(row) -> str:
+            """行的完整文本"""
+            return " | ".join(str(cell).strip() for cell in row)
+
+        # 1. 配对表格（按表头相似度）
+        paired_old = set()
+        paired_new = set()
+        table_pairs = []
+
+        for i, old_t in enumerate(old_tables):
+            old_header = table_header_text(old_t)
+            best_match = -1
+            best_score = 0.0
+            for j, new_t in enumerate(new_tables):
+                if j in paired_new:
+                    continue
+                new_header = table_header_text(new_t)
+                score = SequenceMatcher(None, old_header, new_header).ratio()
+                if score > best_score and score >= 0.5:
+                    best_score = score
+                    best_match = j
+            if best_match >= 0:
+                table_pairs.append((i, best_match))
+                paired_old.add(i)
+                paired_new.add(best_match)
+
+        # 2. 对配对的表格做行级 diff
+        for old_idx, new_idx in table_pairs:
+            old_t = old_tables[old_idx]
+            new_t = new_tables[new_idx]
+            section = old_t.chapter_title or old_t.location
+            header_text = row_text(old_t.rows[0]) if old_t.rows else "表格"
+
+            # 跳过表头行（index 0），对数据行按首列对齐
+            old_rows = {row_key(r): r for r in old_t.rows[1:]} if len(old_t.rows) > 1 else {}
+            new_rows = {row_key(r): r for r in new_t.rows[1:]} if len(new_t.rows) > 1 else {}
+
+            all_keys = list(dict.fromkeys(list(old_rows.keys()) + list(new_rows.keys())))
+
+            for key in all_keys:
+                if not key:
+                    continue
+                old_r = old_rows.get(key)
+                new_r = new_rows.get(key)
+
+                if old_r and new_r:
+                    old_txt = row_text(old_r)
+                    new_txt = row_text(new_r)
+                    if old_txt != new_txt:
+                        changes.append(VersionChange(
+                            change_type="modified",
+                            section=f"表格: {section}",
+                            location=f"行: {key}",
+                            old_text=old_txt,
+                            new_text=new_txt,
+                            summary="",
+                            similarity=SequenceMatcher(None, old_txt, new_txt).ratio(),
+                        ))
+                elif old_r and not new_r:
+                    changes.append(VersionChange(
+                        change_type="removed",
+                        section=f"表格: {section}",
+                        location=f"行: {key}",
+                        old_text=row_text(old_r),
+                        new_text="",
+                        summary="",
+                    ))
+                elif new_r and not old_r:
+                    changes.append(VersionChange(
+                        change_type="added",
+                        section=f"表格: {section}",
+                        location=f"行: {key}",
+                        old_text="",
+                        new_text=row_text(new_r),
+                        summary="",
+                    ))
+
+        return changes
