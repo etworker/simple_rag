@@ -272,13 +272,17 @@ class QAEngine:
         from types import SimpleNamespace
 
         try:
-            from version_diff.judge import _judge_batch, _parse_json_response, CONSISTENCY_JUDGE_PROMPT
+            from version_diff.judge import _judge_batch, _resolve_prompt_template
         except ImportError:
             return None
 
         llm_config = self._config.get_llm_profile("conflict_detection")
         if not llm_config.get("model") and not llm_config.get("provider"):
             return None
+
+        # 通过统一的 prompt 解析机制（支持 prompt_file / prompt_template 配置覆盖）
+        judge_config = self._config.get_section("judge")
+        prompt_template = _resolve_prompt_template(judge_config)
 
         # 构造 judge 兼容的 item 列表
         items = []
@@ -299,7 +303,7 @@ class QAEngine:
             )
 
         log.info(f"🔍 LLM 冲突确认: {len(items)} 候选对")
-        results = _judge_batch(items, llm_config, CONSISTENCY_JUDGE_PROMPT)
+        results = _judge_batch(items, llm_config, prompt_template)
         if results is None:
             log.warning("LLM 冲突确认失败，回退到启发式")
             return None

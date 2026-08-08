@@ -50,6 +50,10 @@ DEFAULT_CONFIG = {
         "similarity_threshold": 0.80,
         "batch_size": 0,  # 0=按 context_window 自动计算
     },
+    "judge": {
+        "prompt_file": "",  # 空=用随包默认, 设路径则加载自定义 prompt
+        "prompt_template": "",  # 直接传字符串（优先级低于 prompt_file）
+    },
     "conflict_detection": {
         "min_score": 0.7,
         "min_similarity": 0.5,

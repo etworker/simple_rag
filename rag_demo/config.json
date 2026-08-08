@@ -75,6 +75,10 @@
     "similarity_threshold": 0.8,
     "batch_size": 0
   },
+  "judge": {
+    "prompt_file": "",
+    "prompt_template": ""
+  },
   "conflict_detection": {
     "min_score": 0.7,
     "min_similarity": 0.5,
