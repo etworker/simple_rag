@@ -75,6 +75,8 @@ async def upload_document(file: UploadFile = File(...), choice: str = Form("")):
     content = await file.read()
 
     new_sha = compute_sha256_bytes(content)
+    # 记录旧版本信息（如果是同名文档更新）
+    old_version_filepath = ""
 
     existing = _state.app.doc_store.get_document(filename)
     if existing and existing.status == "active":
@@ -102,6 +104,10 @@ async def upload_document(file: UploadFile = File(...), choice: str = Form("")):
         if choice == "overwrite":
             _state.app.doc_store.remove_document(existing.doc_id)
             log.info(f"用户选择覆盖: 已删除旧文档 {existing.doc_id}")
+            old_version_filepath = existing.filepath  # 保存旧版路径用于版本对比
+        elif choice == "coexist":
+            old_version_filepath = existing.filepath  # coexist 模式也记录旧版路径
+            log.info(f"用户选择并存: 旧文档保留, 新文档将做版本对比")
 
     file_ext = os.path.splitext(filename)[1] or ".bin"
     safe_filename = f"{new_sha}{file_ext}"
@@ -124,6 +130,7 @@ async def upload_document(file: UploadFile = File(...), choice: str = Form("")):
         "current_step": f"正在处理: {filename}",
         "steps": [],
         "result": None,
+        "old_version_filepath": old_version_filepath,  # 版本对比用
     }
 
     await asyncio.sleep(0.1)

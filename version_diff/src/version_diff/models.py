@@ -4,6 +4,28 @@ from dataclasses import dataclass, field
 
 
 @dataclass
+class VersionChange:
+    """一处版本变更"""
+
+    change_type: str  # "modified" | "added" | "removed"
+    section: str  # 所在章节（如 "2.2 备份策略"）
+    location: str  # 位置描述
+    old_text: str  # 旧版内容（modified/removed 时有值）
+    new_text: str  # 新版内容（modified/added 时有值）
+    summary: str  # 变更摘要（如"备份频率从每4小时改为每2小时"）
+    similarity: float = 0.0  # 段落相似度（modified 时有值）
+
+
+@dataclass
+class VersionDiffResult:
+    """版本对比结果"""
+
+    changes: list[VersionChange] = field(default_factory=list)
+    old_paragraph_count: int = 0
+    new_paragraph_count: int = 0
+
+
+@dataclass
 class Inconsistency:
     """一处文档间不一致"""
 

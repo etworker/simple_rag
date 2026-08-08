@@ -146,6 +146,34 @@ async def run_pre_review(task_id: str):
             engine.pre_review, filepath, on_progress=on_progress
         )
 
+        # ====== 3. 版本对比（如果存在旧版本文档）======
+        version_changes = []
+        old_version_filepath = task.get("old_version_filepath", "")
+        if old_version_filepath and os.path.exists(old_version_filepath):
+            log.info(f"检测到旧版本文档，启动版本对比: {old_version_filepath}")
+            try:
+                version_result = await asyncio.to_thread(
+                    engine.version_compare, old_version_filepath, filepath
+                )
+                for change in version_result.changes:
+                    version_changes.append({
+                        "type": change.change_type,
+                        "section": change.section,
+                        "location": change.location,
+                        "old_text": change.old_text[:300],
+                        "new_text": change.new_text[:300],
+                        "summary": change.summary,
+                        "similarity": change.similarity,
+                    })
+                log.info(
+                    f"版本对比完成: {len(version_changes)} 处变更 "
+                    f"(modified={sum(1 for c in version_changes if c['type']=='modified')}, "
+                    f"added={sum(1 for c in version_changes if c['type']=='added')}, "
+                    f"removed={sum(1 for c in version_changes if c['type']=='removed')})"
+                )
+            except Exception as e:
+                log.error(f"版本对比失败: {e}", exc_info=True)
+
         task["progress"] = 100
         task["current_step"] = "预审核完成"
         task["status"] = "done"
@@ -167,6 +195,8 @@ async def run_pre_review(task_id: str):
             "message": "无矛盾，可安全入库"
             if result.is_safe
             else f"发现 {len(result.inconsistencies)} 处矛盾",
+            "version_changes": version_changes,
+            "has_version_changes": len(version_changes) > 0,
         }
         _state.app.save_review_cache()
 

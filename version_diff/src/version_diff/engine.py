@@ -26,7 +26,7 @@ from sentence_transformers import SentenceTransformer
 from version_diff.config import Config
 from version_diff.judge import filter_diffs
 from version_diff.matcher import compute_diff
-from version_diff.models import DiffResult, Inconsistency
+from version_diff.models import DiffResult, Inconsistency, VersionChange, VersionDiffResult
 from version_diff.vectorstore import VectorStore
 
 log = logging.getLogger("version_diff.engine")
@@ -325,3 +325,101 @@ class DiffEngine:
             )
             for item in judge_result.inconsistent_items
         ]
+
+    def version_compare(
+        self, old_filepath: str, new_filepath: str, on_progress: Callable | None = None
+    ) -> VersionDiffResult:
+        """
+        版本对比：两个文件直接对比，列出全部差异
+
+        不经过 LLM 矛盾判断，直接用语义配对 + 文本 diff 输出所有变更。
+        适用于同一文档的新旧版本对比。
+
+        Args:
+            old_filepath: 旧版本文件路径
+            new_filepath: 新版本文件路径
+            on_progress: 进度回调
+
+        Returns:
+            VersionDiffResult 包含所有变更
+        """
+        from doc_parser import parse
+        from version_diff.matcher import pair_paragraphs
+
+        self._notify(on_progress, "parsing", 0.1, "解析新旧版本...")
+
+        parse_config = self.config.embedding.get("parse_config")
+        old_doc = parse(old_filepath, config=parse_config)
+        new_doc = parse(new_filepath, config=parse_config)
+
+        self._notify(on_progress, "embedding", 0.3, "计算语义向量...")
+
+        model = self._get_model()
+        threshold = self.config.diff.get("similarity_threshold", 0.80)
+
+        self._notify(on_progress, "diffing", 0.5, "配对与差异计算...")
+
+        # 语义配对
+        pairs = pair_paragraphs(
+            old_doc.paragraphs, new_doc.paragraphs, model,
+            threshold=threshold,
+            file_a=old_filepath, file_b=new_filepath,
+            vector_store=self._vector_store,
+        )
+
+        changes = []
+        paired_old = set()
+        paired_new = set()
+
+        # 处理配对成功的段落（modified）
+        for old_idx, new_idx, sim in pairs:
+            paired_old.add(old_idx)
+            paired_new.add(new_idx)
+            old_para = old_doc.paragraphs[old_idx]
+            new_para = new_doc.paragraphs[new_idx]
+
+            # 完全相同则跳过
+            if old_para.text.strip() == new_para.text.strip():
+                continue
+
+            changes.append(VersionChange(
+                change_type="modified",
+                section=new_para.chapter_title or new_para.chapter or "",
+                location=new_para.location,
+                old_text=old_para.text.strip(),
+                new_text=new_para.text.strip(),
+                summary="",  # 后续可用 LLM 生成摘要
+                similarity=sim,
+            ))
+
+        # 旧版有但新版没有的（removed）
+        for i, para in enumerate(old_doc.paragraphs):
+            if i not in paired_old:
+                changes.append(VersionChange(
+                    change_type="removed",
+                    section=para.chapter_title or para.chapter or "",
+                    location=para.location,
+                    old_text=para.text.strip(),
+                    new_text="",
+                    summary="",
+                ))
+
+        # 新版有但旧版没有的（added）
+        for i, para in enumerate(new_doc.paragraphs):
+            if i not in paired_new:
+                changes.append(VersionChange(
+                    change_type="added",
+                    section=para.chapter_title or para.chapter or "",
+                    location=para.location,
+                    old_text="",
+                    new_text=para.text.strip(),
+                    summary="",
+                ))
+
+        self._notify(on_progress, "done", 1.0, "版本对比完成")
+
+        return VersionDiffResult(
+            changes=changes,
+            old_paragraph_count=len(old_doc.paragraphs),
+            new_paragraph_count=len(new_doc.paragraphs),
+        )

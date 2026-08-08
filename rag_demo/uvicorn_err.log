@@ -9,3 +9,72 @@ INFO:     Started server process [29792]
 INFO:     Waiting for application startup.
 INFO:     Application startup complete.
 INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+2026-08-08 21:06:39,030 | rag_demo.routes.review | 上传保存: A_IT管理规定.docx -> 542fc3fc0d82b1c7612de5c88bdbd6739eaf8cdf15b734a0ee19f04ce045e0a9.docx (66750 bytes)
+2026-08-08 21:06:39,650 | rag_demo.review_runner | 开始加载向量模型...
+2026-08-08 21:06:39,657 | version_diff.engine | 加载 embedding 模型: BAAI/bge-base-zh-v1.5 (device=cpu)
+Loading weights:   0%|          | 0/199 [00:00<?, ?it/s]Loading weights: 100%|██████████| 199/199 [00:00<00:00, 26374.27it/s]
+2026-08-08 21:06:40,384 | version_diff.device | 💻 Embedding 加速: CPU, device=cpu
+2026-08-08 21:06:40,384 | rag_demo.review_runner | 向量模型加载完成
+2026-08-08 21:06:40,386 | rag_demo.review_runner | 开始加载已有文档 (0 篇)...
+2026-08-08 21:06:40,387 | rag_demo.review_runner | 已有文档加载完成
+2026-08-08 21:06:40,387 | rag_demo.review_runner | 开始解析新文档: A_IT管理规定.docx
+2026-08-08 21:06:40,391 | rag_demo.review_runner | 预审核失败: Bad magic number for central directory
+Traceback (most recent call last):
+  File "C:\Users\0937\Documents\work\simple_rag\rag_demo\app\services\review_runner.py", line 138, in run_pre_review
+    new_doc = await asyncio.to_thread(_parse, filepath)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\0937\miniforge3\Lib\asyncio\threads.py", line 25, in to_thread
+    return await loop.run_in_executor(None, func_call)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\0937\miniforge3\Lib\concurrent\futures\thread.py", line 59, in run
+    result = self.fn(*self.args, **self.kwargs)
+  File "C:\Users\0937\Documents\work\simple_rag\rag_demo\app\services\parse_cache.py", line 52, in cached_parse
+    doc = _raw_parse(filepath, config=config)
+  File "C:\Users\0937\Documents\work\simple_rag\doc_parser\src\doc_parser\parser.py", line 593, in parse
+    return extract_document(filepath, config)
+  File "C:\Users\0937\Documents\work\simple_rag\doc_parser\src\doc_parser\parser.py", line 557, in extract_document
+    return extract_docx(filepath, config)
+  File "C:\Users\0937\Documents\work\simple_rag\doc_parser\src\doc_parser\parser.py", line 495, in extract_docx
+    doc = DocxDocument(filepath)
+  File "C:\Users\0937\Documents\work\simple_rag\rag_demo\.venv\Lib\site-packages\docx\api.py", line 27, in Document
+    document_part = cast("DocumentPart", Package.open(docx).main_document_part)
+                                         ~~~~~~~~~~~~^^^^^^
+  File "C:\Users\0937\Documents\work\simple_rag\rag_demo\.venv\Lib\site-packages\docx\opc\package.py", line 126, in open
+    pkg_reader = PackageReader.from_file(pkg_file)
+  File "C:\Users\0937\Documents\work\simple_rag\rag_demo\.venv\Lib\site-packages\docx\opc\pkgreader.py", line 22, in from_file
+    phys_reader = PhysPkgReader(pkg_file)
+  File "C:\Users\0937\Documents\work\simple_rag\rag_demo\.venv\Lib\site-packages\docx\opc\phys_pkg.py", line 76, in __init__
+    self._zipf = ZipFile(pkg_file, "r")
+                 ~~~~~~~^^^^^^^^^^^^^^^
+  File "C:\Users\0937\miniforge3\Lib\zipfile\__init__.py", line 1401, in __init__
+    self._RealGetContents()
+    ~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\0937\miniforge3\Lib\zipfile\__init__.py", line 1495, in _RealGetContents
+    raise BadZipFile("Bad magic number for central directory")
+zipfile.BadZipFile: Bad magic number for central directory
+2026-08-08 21:09:48,357 | rag_demo.routes.review | 上传保存: A_IT管理规定.docx -> d595a34f10af8a5d00ef62359685e7129d386eb4b70f90822d0b4b4f10e04ab9.docx (37347 bytes)
+2026-08-08 21:09:48,973 | rag_demo.review_runner | 开始加载向量模型...
+2026-08-08 21:09:48,975 | version_diff.engine | 加载 embedding 模型: BAAI/bge-base-zh-v1.5 (device=cpu)
+Loading weights:   0%|          | 0/199 [00:00<?, ?it/s]Loading weights: 100%|██████████| 199/199 [00:00<00:00, 18505.38it/s]
+2026-08-08 21:09:49,150 | version_diff.device | 💻 Embedding 加速: CPU, device=cpu
+2026-08-08 21:09:49,151 | rag_demo.review_runner | 向量模型加载完成
+2026-08-08 21:09:49,151 | rag_demo.review_runner | 开始加载已有文档 (0 篇)...
+2026-08-08 21:09:49,152 | rag_demo.review_runner | 已有文档加载完成
+2026-08-08 21:09:49,152 | rag_demo.review_runner | 开始解析新文档: A_IT管理规定.docx
+2026-08-08 21:09:49,169 | rag_demo.parse_cache | ✅ 解析完成: d595a34f10af8a5d00ef62359685e7129d386eb4b70f90822d0b4b4f10e04ab9.docx (13 段, 0 表)
+2026-08-08 21:09:49,171 | rag_demo.parse_cache | 💾 已缓存解析结果: SHA256=10E04AB9
+2026-08-08 21:09:49,172 | rag_demo.review_runner | 新文档解析完成: 13 段落
+2026-08-08 21:09:49,185 | version_diff.engine | 解析完成: d595a34f10af8a5d00ef62359685e7129d386eb4b70f90822d0b4b4f10e04ab9.docx (13 段落, 0.0s)
+2026-08-08 21:09:49,186 | version_diff.vectorstore |   ⏳ 计算 13 段嵌入...
+2026-08-08 21:09:50,658 | version_diff.vectorstore |   💾 已缓存 (ed5dc802..., 13 段, 768维)
+2026-08-08 21:09:50,659 | version_diff.engine | Embedding 完成 (1.5s)
+2026-08-08 21:09:50,660 | version_diff.engine | 库中无已有文档，跳过对比步骤
+2026-08-08 21:09:50,665 | rag_demo.review_runner | 💾 已缓存预审核结果: A_IT管理规定.docx (SHA256=10E04AB9)
+2026-08-08 21:10:23,533 | rag_demo.parse_cache | 📦 命中解析缓存: d595a34f10af8a5d00ef62359685e7129d386eb4b70f90822d0b4b4f10e04ab9.docx (13 段, SHA256=10E04AB9)
+2026-08-08 21:10:23,533 | rag_demo.doc_store | 解析完成: A_IT管理规定.docx (13 段, 0 表)
+2026-08-08 21:10:23,534 | rag_demo.doc_store | 加载 embedding 模型: BAAI/bge-base-zh-v1.5 (device=cpu)
+Loading weights:   0%|          | 0/199 [00:00<?, ?it/s]Loading weights: 100%|██████████| 199/199 [00:00<00:00, 16800.52it/s]
+2026-08-08 21:10:23,684 | version_diff.vectorstore |   💾 命中缓存 (ed5dc802...)，跳过 embedding 计算
+2026-08-08 21:10:23,687 | rag_demo.doc_store | 已入库: A_IT管理规定.docx
+2026-08-08 21:10:23,690 | rag_demo.doc_store | 持久化完成: 1 文档, 13 段落
+2026-08-08 21:10:23,691 | rag_demo.routes.review | 入库成功: A_IT管理规定.docx (13 paras) @ C:\Users\0937\.simple_rag\uploads\d595a34f10af8a5d00ef62359685e7129d386eb4b70f90822d0b4b4f10e04ab9.docx
