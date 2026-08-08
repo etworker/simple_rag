@@ -420,6 +420,10 @@ class DiffEngine:
         table_changes = self._compare_tables(old_doc.tables, new_doc.tables)
         changes.extend(table_changes)
 
+        # ====== LLM 过滤：只保留实质性变更 ======
+        self._notify(on_progress, "filtering", 0.9, "过滤非实质性差异...")
+        changes = self._filter_substantive_changes(changes)
+
         self._notify(on_progress, "done", 1.0, "版本对比完成")
 
         return VersionDiffResult(
@@ -627,3 +631,129 @@ class DiffEngine:
                     ))
 
         return changes
+
+    # ============================================================
+    # 版本对比：实质性变更过滤
+    # ============================================================
+
+    _VERSION_FILTER_PROMPT = """你是文档版本对比专家。我会给你若干处新旧版本的文本差异，请判断每处是否为"实质性变更"。
+
+**实质性变更（需要保留）：**
+- 数值/频率/标准变化（如"30分钟→15分钟"、"99.9%→99.95%"、"4周→8周"）
+- 设备型号/软件版本变化（如"PA-850→PA-3260"、"Oracle 19c→21c"）
+- 职责/责任人变化
+- 流程步骤的增加或删除（如新增了"安全评审"环节）
+- 审批层级变化
+- 考核指标变化
+- 任何客观事实的变化
+
+**非实质性变更（应过滤掉）：**
+- 仅编号/序号变化（如"（3）→（4）"——因为中间插入了一步导致重编号）
+- 等义改写（"须"→"必须"、"进行"→"开展"、"实施"→"执行"）
+- 纯标点/格式差异
+- 仅语序调整但含义完全不变
+- 版本号/日期/文件编号变化（这是文档元数据，不是业务内容）
+
+请对以下 {count} 处差异逐一判断：
+
+{items}
+
+请回复 JSON 数组，对每处差异：
+- 实质性变更: {{"index": N, "keep": true, "summary": "简要描述变更内容"}}
+- 非实质性: {{"index": N, "keep": false}}
+
+[{{"index": 1, "keep": true, "summary": "P1响应时间从30分钟缩短为15分钟"}}, {{"index": 2, "keep": false}}, ...]"""
+
+    def _filter_substantive_changes(self, changes: list) -> list:
+        """
+        过滤版本对比结果，只保留实质性变更
+
+        策略：
+        1. added/removed 直接保留（新增/删除本身就是实质变更）
+        2. modified 先做规则预过滤（明显噪音）
+        3. 剩余 modified 批量送 LLM 判断
+        """
+        import json
+        import math
+        import re
+
+        from llm_chat import ask_once
+
+        # 分离 added/removed（直接保留）和 modified（需要过滤）
+        keep = [c for c in changes if c.change_type != "modified"]
+        modified = [c for c in changes if c.change_type == "modified"]
+
+        if not modified:
+            return keep
+
+        # 规则预过滤：明显的非实质差异
+        need_llm = []
+        for c in modified:
+            old_norm = re.sub(r'\s+', '', c.old_text)
+            new_norm = re.sub(r'\s+', '', c.new_text)
+
+            # 完全相同（normalize 后）→ 跳过
+            if old_norm == new_norm:
+                continue
+
+            # 仅编号差异
+            old_no_num = re.sub(r'[（(]\d+[)）]', '', old_norm)
+            new_no_num = re.sub(r'[（(]\d+[)）]', '', new_norm)
+            if old_no_num == new_no_num:
+                continue
+
+            need_llm.append(c)
+
+        if not need_llm:
+            return keep
+
+        # 批量 LLM 判断
+        batch_size = self.config.diff.get("batch_size", 5) or 10
+        num_batches = math.ceil(len(need_llm) / batch_size)
+        log.info(f"  版本diff过滤: {len(modified)} modified → 规则过滤 {len(modified)-len(need_llm)} → LLM判断 {len(need_llm)} ({num_batches} batches)")
+
+        llm_config = self.config.llm
+        backend = llm_config.get("provider", "bedrock")
+
+        for batch_idx in range(num_batches):
+            start = batch_idx * batch_size
+            end = min(start + batch_size, len(need_llm))
+            batch = need_llm[start:end]
+
+            items_text = ""
+            for i, c in enumerate(batch, 1):
+                items_text += f"--- 第 {i} 处 ---\n旧: {c.old_text[:200]}\n新: {c.new_text[:200]}\n\n"
+
+            prompt = self._VERSION_FILTER_PROMPT.format(count=len(batch), items=items_text)
+
+            try:
+                response = ask_once(
+                    prompt,
+                    backend=backend,
+                    model=llm_config.get("model", ""),
+                    region=llm_config.get("region", ""),
+                    api_key_env=llm_config.get("api_key_env", ""),
+                    api_key=llm_config.get("api_key", ""),
+                    base_url=llm_config.get("base_url", ""),
+                    max_tokens=llm_config.get("max_tokens", 2048),
+                    timeout=llm_config.get("timeout", 120),
+                )
+                json_match = re.search(r'\[[\s\S]*\]', response)
+                if json_match:
+                    results = json.loads(json_match.group())
+                    for r in results:
+                        if not isinstance(r, dict):
+                            continue
+                        idx = int(r.get("index", 0)) - 1
+                        if 0 <= idx < len(batch) and r.get("keep", False):
+                            c = batch[idx]
+                            c.summary = r.get("summary", "")
+                            keep.append(c)
+                else:
+                    keep.extend(batch)
+            except Exception as e:
+                log.warning(f"  版本diff LLM过滤失败，保守保留: {e}")
+                keep.extend(batch)
+
+        log.info(f"  版本diff过滤完成: {len(changes)} → {len(keep)} 处实质性变更")
+        return keep
