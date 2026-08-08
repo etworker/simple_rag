@@ -91,19 +91,5 @@
   },
   "chat": {
     "max_history": 20
-  },
-  "llm": {
-    "provider": "",
-    "model": "",
-    "base_url": "",
-    "api_key": "",
-    "api_key_env": "",
-    "endpoint": "chat",
-    "max_tokens": 2048,
-    "timeout": 120,
-    "max_retries": 3,
-    "retry_backoff": 2.0,
-    "context_window": 8192,
-    "concurrency": 1
   }
 }

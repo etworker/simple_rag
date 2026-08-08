@@ -13,8 +13,8 @@
     <h1>📚 RAG</h1>
     <button class="tab-btn active" onclick="showPage('kb')">知识库</button>
     <button class="tab-btn" onclick="showPage('qa')">问答</button>
+    <button class="tab-btn" onclick="showPage('settings')">设置</button>
     <div class="topbar-right">
-        <button class="top-btn" id="settingsBtn" onclick="openSettings()">⚙️ 设置</button>
         <button class="top-btn" id="debugBtn" onclick="toggleDebug()">🐛 Debug</button>
     </div>
 </div>
@@ -113,76 +113,68 @@
             <div class="qa-preview-body" id="qaPdfContainer"></div>
         </div>
     </div>
+
+    <!-- ============ 设置页 ============ -->
+    <div class="page settings-page" id="pageSettings">
+        <div class="settings-nav">
+            <button class="sn active" onclick="switchSettingsTab('llm',this)">LLM 模型</button>
+            <button class="sn" onclick="switchSettingsTab('emb',this)">向量模型</button>
+            <button class="sn" onclick="switchSettingsTab('ret',this)">检索/审核</button>
+            <button class="sn" onclick="switchSettingsTab('prompt',this)">Prompt</button>
+            <button class="sn" onclick="switchSettingsTab('chat',this)">对话</button>
+            <div class="settings-nav-spacer"></div>
+            <span id="settingsStatus" class="hint"></span>
+            <button class="mini-btn primary" onclick="saveSettings()">💾 保存</button>
+        </div>
+        <div class="settings-content">
+            <!-- LLM -->
+            <div class="sp active" id="sp-llm">
+                <div class="setting-row"><label>Profile</label><select id="llmProfileSelect" onchange="renderLlmProfile()"></select><button class="mini-btn" onclick="addLlmProfile()">+ 新增</button><button class="mini-btn danger" onclick="delLlmProfile()">删除</button></div>
+                <div id="llmProfileFields"></div>
+                <div class="setting-section-title">场景路由</div>
+                <div class="setting-row"><label>问答</label><select id="route-qa"></select></div>
+                <div class="setting-row"><label>预审核</label><select id="route-pre_review"></select></div>
+                <div class="setting-row"><label>冲突检测</label><select id="route-conflict_detection"></select></div>
+            </div>
+            <!-- Embedding -->
+            <div class="sp" id="sp-emb">
+                <div class="setting-row"><label>模型</label><input id="emb-model" class="long"></div>
+                <div class="setting-row"><label>device</label><select id="emb-device"><option>auto</option><option>cpu</option><option>cuda</option><option>mps</option></select></div>
+                <div class="setting-row"><label>dtype</label><select id="emb-dtype"><option value="">默认</option><option>auto</option><option>float16</option><option>bfloat16</option><option>float32</option></select></div>
+                <div class="setting-row"><label>GPU ID</label><input type="number" id="emb-gpu_id" style="width:60px"></div>
+            </div>
+            <!-- Retrieval / Pre-review / Conflict -->
+            <div class="sp" id="sp-ret">
+                <div class="setting-section-title">检索</div>
+                <div class="setting-row"><label>top_k</label><input type="number" id="ret-top_k" style="width:80px"></div>
+                <div class="setting-row"><label>相似度阈值</label><input type="number" step="0.05" id="ret-threshold" style="width:80px"></div>
+                <div class="setting-section-title">预审核</div>
+                <div class="setting-row"><label>相似度阈值</label><input type="number" step="0.05" id="pr-threshold" style="width:80px"></div>
+                <div class="setting-row"><label>batch_size</label><input type="number" id="pr-batch" style="width:80px"><span class="hint">0=自动</span></div>
+                <div class="setting-section-title">冲突检测</div>
+                <div class="setting-row"><label>min_score</label><input type="number" step="0.05" id="cd-min_score" style="width:80px"></div>
+                <div class="setting-row"><label>min_similarity</label><input type="number" step="0.05" id="cd-min_sim" style="width:80px"></div>
+                <div class="setting-row"><label>max_similarity</label><input type="number" step="0.05" id="cd-max_sim" style="width:80px"></div>
+            </div>
+            <!-- Prompts -->
+            <div class="sp" id="sp-prompt">
+                <div class="setting-section-title">QA 系统提示</div>
+                <textarea id="prompt-system" class="prompt-area" rows="6"></textarea>
+                <div class="setting-section-title">Context 模板</div>
+                <textarea id="prompt-context" class="prompt-area" rows="3"></textarea>
+                <div class="setting-section-title">冲突警告模板</div>
+                <textarea id="prompt-conflict" class="prompt-area" rows="3"></textarea>
+                <div class="setting-section-title">Judge Prompt 文件路径（空=内置默认）</div>
+                <div class="setting-row"><input id="judge-prompt_file" class="long" placeholder="留空使用内置 prompt"></div>
+            </div>
+            <!-- Chat -->
+            <div class="sp" id="sp-chat">
+                <div class="setting-row"><label>max_history</label><input type="number" id="chat-max_history" style="width:80px"></div>
+            </div>
+        </div>
+    </div>
 </div>
 <div id="debugPanel"></div>
-
-<!-- ============ 设置弹窗 ============ -->
-<div class="modal-overlay" id="settingsModal" style="display:none">
-  <div class="modal-box settings-box">
-    <div class="modal-header">
-      <span>⚙️ 系统设置</span>
-      <button class="modal-close" onclick="closeSettings()">✕</button>
-    </div>
-    <div class="modal-body">
-      <div class="settings-tabs">
-        <button class="st active" onclick="switchSettingsTab('llm',this)">LLM 模型</button>
-        <button class="st" onclick="switchSettingsTab('emb',this)">向量模型</button>
-        <button class="st" onclick="switchSettingsTab('ret',this)">检索/审核</button>
-        <button class="st" onclick="switchSettingsTab('prompt',this)">Prompt</button>
-        <button class="st" onclick="switchSettingsTab('chat',this)">对话</button>
-      </div>
-      <!-- LLM -->
-      <div class="sp active" id="sp-llm">
-        <div class="setting-row"><label>Profile</label><select id="llmProfileSelect" onchange="renderLlmProfile()"></select><button class="mini-btn" onclick="addLlmProfile()">+ 新增</button><button class="mini-btn danger" onclick="delLlmProfile()">删除</button></div>
-        <div id="llmProfileFields"></div>
-        <div class="setting-section-title">场景路由</div>
-        <div class="setting-row"><label>问答</label><select id="route-qa"></select></div>
-        <div class="setting-row"><label>预审核</label><select id="route-pre_review"></select></div>
-        <div class="setting-row"><label>冲突检测</label><select id="route-conflict_detection"></select></div>
-      </div>
-      <!-- Embedding -->
-      <div class="sp" id="sp-emb">
-        <div class="setting-row"><label>模型</label><input id="emb-model" class="long"></div>
-        <div class="setting-row"><label>device</label><select id="emb-device"><option>auto</option><option>cpu</option><option>cuda</option><option>mps</option></select></div>
-        <div class="setting-row"><label>dtype</label><select id="emb-dtype"><option value="">默认</option><option>auto</option><option>float16</option><option>bfloat16</option><option>float32</option></select></div>
-        <div class="setting-row"><label>GPU ID</label><input type="number" id="emb-gpu_id" style="width:60px"></div>
-      </div>
-      <!-- Retrieval / Pre-review / Conflict -->
-      <div class="sp" id="sp-ret">
-        <div class="setting-section-title">检索</div>
-        <div class="setting-row"><label>top_k</label><input type="number" id="ret-top_k" style="width:80px"></div>
-        <div class="setting-row"><label>相似度阈值</label><input type="number" step="0.05" id="ret-threshold" style="width:80px"></div>
-        <div class="setting-section-title">预审核</div>
-        <div class="setting-row"><label>相似度阈值</label><input type="number" step="0.05" id="pr-threshold" style="width:80px"></div>
-        <div class="setting-row"><label>batch_size</label><input type="number" id="pr-batch" style="width:80px"><span class="hint">0=自动</span></div>
-        <div class="setting-section-title">冲突检测</div>
-        <div class="setting-row"><label>min_score</label><input type="number" step="0.05" id="cd-min_score" style="width:80px"></div>
-        <div class="setting-row"><label>min_similarity</label><input type="number" step="0.05" id="cd-min_sim" style="width:80px"></div>
-        <div class="setting-row"><label>max_similarity</label><input type="number" step="0.05" id="cd-max_sim" style="width:80px"></div>
-      </div>
-      <!-- Prompts -->
-      <div class="sp" id="sp-prompt">
-        <div class="setting-section-title">QA 系统提示</div>
-        <textarea id="prompt-system" class="prompt-area" rows="6"></textarea>
-        <div class="setting-section-title">Context 模板</div>
-        <textarea id="prompt-context" class="prompt-area" rows="3"></textarea>
-        <div class="setting-section-title">冲突警告模板</div>
-        <textarea id="prompt-conflict" class="prompt-area" rows="3"></textarea>
-        <div class="setting-section-title">Judge Prompt 文件路径（空=内置默认）</div>
-        <div class="setting-row"><input id="judge-prompt_file" class="long" placeholder="留空使用内置 prompt"></div>
-      </div>
-      <!-- Chat -->
-      <div class="sp" id="sp-chat">
-        <div class="setting-row"><label>max_history</label><input type="number" id="chat-max_history" style="width:80px"></div>
-      </div>
-    </div>
-    <div class="modal-footer">
-      <span id="settingsStatus" class="hint"></span>
-      <button class="mini-btn" onclick="closeSettings()">取消</button>
-      <button class="mini-btn primary" onclick="saveSettings()">💾 保存</button>
-    </div>
-  </div>
-</div>
 
 <script src="/static/app.js"></script>
 </body>

@@ -32,9 +32,13 @@ function scrollToRef(n){const el=document.getElementById('ref-'+n);if(el){el.scr
 // 页面切换
 // ============================================================
 function showPage(name){
-    document.getElementById('pageKb').classList.toggle('active',name==='kb');
-    document.getElementById('pageQa').classList.toggle('active',name==='qa');
-    document.querySelectorAll('.topbar .tab-btn').forEach((b,i)=>b.classList.toggle('active',i===(name==='kb'?0:1)));
+    const pages={kb:'pageKb',qa:'pageQa',settings:'pageSettings'};
+    for(const [k,id] of Object.entries(pages))
+        document.getElementById(id).classList.toggle('active',name===k);
+    document.querySelectorAll('.topbar .tab-btn').forEach(b=>{
+        b.classList.toggle('active',b.textContent.includes(name==='kb'?'知识':name==='qa'?'问答':'设置'));
+    });
+    if(name==='settings'&&!_settingsConfig) loadSettings();
 }
 
 // ============================================================
@@ -951,8 +955,7 @@ const LLM_PROFILE_FIELDS=[
   ['retry_backoff','retry_backoff'],['context_window','context_window'],['concurrency','concurrency'],
 ];
 
-async function openSettings(){
-  document.getElementById('settingsModal').style.display='flex';
+async function loadSettings(){
   document.getElementById('settingsStatus').textContent='加载中...';
   try{
     const res=await fetch('/api/config');
@@ -966,12 +969,8 @@ async function openSettings(){
   }
 }
 
-function closeSettings(){
-  document.getElementById('settingsModal').style.display='none';
-}
-
 function switchSettingsTab(tab,btn){
-  document.querySelectorAll('.settings-tabs .st').forEach(b=>b.classList.remove('active'));
+  document.querySelectorAll('.settings-nav .sn').forEach(b=>b.classList.remove('active'));
   btn.classList.add('active');
   document.querySelectorAll('.sp').forEach(p=>p.classList.remove('active'));
   document.getElementById('sp-'+tab).classList.add('active');
@@ -1125,7 +1124,7 @@ async function saveSettings(){
     const res=await fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(updates)});
     if(!res.ok){const e=await res.json();st.textContent='保存失败: '+(e.detail||res.status);return;}
     st.textContent='✅ 已保存';
-    setTimeout(()=>closeSettings(),800);
+    _settingsConfig=null; // 下次进入页面时重新加载
   }catch(e){
     st.textContent='保存失败: '+e.message;
   }

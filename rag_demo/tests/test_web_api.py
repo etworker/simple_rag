@@ -56,7 +56,7 @@ class TestConfigAPI:
         assert resp.status_code == 200
         data = resp.json()
         assert "embedding" in data
-        assert "llm" in data
+        assert "llm_profiles" in data
         assert "retrieval" in data
 
     async def test_update_config(self, client):
