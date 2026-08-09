@@ -219,5 +219,10 @@
 .mini-btn:hover { border-color: var(--primary); color: var(--primary); }
 .mini-btn.primary { background: var(--primary); color: #fff; border-color: var(--primary); }
 .mini-btn.primary:hover { opacity: .85; }
-.mini-btn.danger { color: var(--danger); }
+        .mini-btn.danger { color: var(--danger); }
+        .text-btn { background: none; border: none; cursor: pointer; font-size: 12px; padding: 4px 8px; border-radius: 4px; transition: all 0.15s; }
+        .text-btn:hover { background: #f0f0f0; }
+        .text-btn.danger { color: var(--danger); }
+        .text-btn.danger:hover { background: #fff1f0; }
+        .kb-danger-zone { text-align: center; }
 .hint { font-size: 11px; color: var(--text3); }

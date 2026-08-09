@@ -150,3 +150,246 @@ zipfile.BadZipFile: Bad magic number for central directory
 2026-08-08 22:18:27,689 | rag_demo.review_runner | 💾 已缓存预审核结果: IT运维管理规范.docx (SHA256=46587312)
 2026-08-08 22:56:00,329 | rag_demo.page_renderer | 渲染PDF页面: c06568783edd39c6bfb51af545894393b95dbd9594c7c6f08b9d35c846587312.docx 第1页
 2026-08-08 22:56:00,710 | rag_demo.page_renderer | 渲染PDF页面: c06568783edd39c6bfb51af545894393b95dbd9594c7c6f08b9d35c846587312.docx 第1页
+2026-08-09 09:48:47,997 | rag_demo.doc_store | 🗑️ 知识库已清空: 移除 2 篇文档
+2026-08-09 09:48:48,070 | rag_demo.routes.documents | 🗑️ 知识库完全重置: 清空 2 篇文档 + 全部缓存
+2026-08-09 09:49:11,145 | rag_demo.routes.review | 上传保存: IT运维管理规范.pdf -> e0c73470e66c4688d74a8f566f06898357cd46e881c33482c7e58825644baa5b.pdf (529877 bytes)
+2026-08-09 09:49:11,767 | rag_demo.review_runner | 开始加载向量模型...
+2026-08-09 09:49:11,776 | version_diff.engine | 加载 embedding 模型: BAAI/bge-base-zh-v1.5 (device=cpu)
+Loading weights:   0%|          | 0/199 [00:00<?, ?it/s]Loading weights: 100%|██████████| 199/199 [00:00<00:00, 12251.81it/s]
+2026-08-09 09:49:12,372 | version_diff.device | 💻 Embedding 加速: CPU, device=cpu
+2026-08-09 09:49:12,373 | rag_demo.review_runner | 向量模型加载完成
+2026-08-09 09:49:12,374 | rag_demo.review_runner | 开始加载已有文档 (0 篇)...
+2026-08-09 09:49:12,375 | rag_demo.review_runner | 已有文档加载完成
+2026-08-09 09:49:12,376 | rag_demo.review_runner | 开始解析新文档: IT运维管理规范.pdf
+2026-08-09 09:49:13,434 | rag_demo.parse_cache | ✅ 解析完成: e0c73470e66c4688d74a8f566f06898357cd46e881c33482c7e58825644baa5b.pdf (23 段, 3 表)
+2026-08-09 09:49:13,437 | rag_demo.parse_cache | 💾 已缓存解析结果: SHA256=644BAA5B
+2026-08-09 09:49:13,438 | rag_demo.review_runner | 新文档解析完成: 23 段落
+2026-08-09 09:49:15,883 | version_diff.engine | 解析完成: e0c73470e66c4688d74a8f566f06898357cd46e881c33482c7e58825644baa5b.pdf (23 段落, 2.4s)
+2026-08-09 09:49:15,885 | version_diff.vectorstore |   ⏳ 计算 23 段嵌入...
+2026-08-09 09:49:17,421 | version_diff.vectorstore |   💾 已缓存 (da66c075..., 23 段, 768维)
+2026-08-09 09:49:17,421 | version_diff.engine | Embedding 完成 (1.5s)
+2026-08-09 09:49:17,422 | version_diff.engine | 库中无已有文档，跳过对比步骤
+2026-08-09 09:49:17,427 | rag_demo.review_runner | 💾 已缓存预审核结果: IT运维管理规范.pdf (SHA256=644BAA5B)
+2026-08-09 09:49:21,153 | rag_demo.parse_cache | 📦 命中解析缓存: e0c73470e66c4688d74a8f566f06898357cd46e881c33482c7e58825644baa5b.pdf (23 段, SHA256=644BAA5B)
+2026-08-09 09:49:21,153 | rag_demo.doc_store | 解析完成: IT运维管理规范.pdf (23 段, 3 表)
+2026-08-09 09:49:21,156 | version_diff.vectorstore |   💾 命中缓存 (da66c075...)，跳过 embedding 计算
+2026-08-09 09:49:21,172 | rag_demo.doc_store | 已入库: IT运维管理规范.pdf
+2026-08-09 09:49:21,177 | rag_demo.doc_store | 持久化完成: 1 文档, 23 段落
+2026-08-09 09:49:21,179 | rag_demo.routes.review | 入库成功: IT运维管理规范.pdf (23 paras) @ C:\Users\0937\.simple_rag\uploads\e0c73470e66c4688d74a8f566f06898357cd46e881c33482c7e58825644baa5b.pdf
+2026-08-09 10:42:22,101 | rag_demo.routes.review | 上传保存: IT运维管理规范.pdf -> d8ff93e7572335613420a87c6a4a36a6c4270550b3192b9ba03cfe95f0f390ec.pdf (556075 bytes)
+2026-08-09 10:42:22,719 | rag_demo.review_runner | 开始加载向量模型...
+2026-08-09 10:42:22,722 | version_diff.engine | 加载 embedding 模型: BAAI/bge-base-zh-v1.5 (device=cpu)
+Loading weights:   0%|          | 0/199 [00:00<?, ?it/s]Loading weights: 100%|██████████| 199/199 [00:00<00:00, 10740.37it/s]
+2026-08-09 10:42:23,025 | version_diff.device | 💻 Embedding 加速: CPU, device=cpu
+2026-08-09 10:42:23,027 | rag_demo.review_runner | 向量模型加载完成
+2026-08-09 10:42:23,027 | rag_demo.review_runner | 开始加载已有文档 (1 篇)...
+2026-08-09 10:42:24,018 | version_diff.vectorstore |   💾 命中缓存 (da66c075...)，跳过 embedding 计算
+2026-08-09 10:42:24,019 | version_diff.engine | 已加载到对比引擎: e0c73470e66c4688d74a8f566f06898357cd46e881c33482c7e58825644baa5b.pdf (23 段落)
+2026-08-09 10:42:24,020 | rag_demo.review_runner | 已有文档加载完成
+2026-08-09 10:42:24,020 | rag_demo.review_runner | 开始解析新文档: IT运维管理规范.pdf
+2026-08-09 10:42:25,017 | rag_demo.parse_cache | ✅ 解析完成: d8ff93e7572335613420a87c6a4a36a6c4270550b3192b9ba03cfe95f0f390ec.pdf (28 段, 3 表)
+2026-08-09 10:42:25,021 | rag_demo.parse_cache | 💾 已缓存解析结果: SHA256=F0F390EC
+2026-08-09 10:42:25,022 | rag_demo.review_runner | 新文档解析完成: 28 段落
+2026-08-09 10:42:26,069 | version_diff.engine | 解析完成: d8ff93e7572335613420a87c6a4a36a6c4270550b3192b9ba03cfe95f0f390ec.pdf (28 段落, 1.0s)
+2026-08-09 10:42:26,070 | version_diff.vectorstore |   ⏳ 计算 28 段嵌入...
+2026-08-09 10:42:27,864 | version_diff.vectorstore |   💾 已缓存 (8837fcad..., 28 段, 768维)
+2026-08-09 10:42:27,865 | version_diff.engine | Embedding 完成 (1.8s)
+2026-08-09 10:42:27,869 | version_diff.engine | 检索完成: 27 个候选对 (0.0s)
+2026-08-09 10:42:27,872 | version_diff.engine | Diff 完成: 14 处有差异 (0.0s)
+2026-08-09 10:42:27,873 | version_diff.judge | 🧠 一致性判断流水线
+2026-08-09 10:42:27,874 | version_diff.judge |   阶段1: 规则预过滤...
+2026-08-09 10:42:27,875 | version_diff.judge |   规则预过滤: 7 项排除 ({'numbering': 7})
+2026-08-09 10:42:27,875 | version_diff.judge |   待 LLM 判断: 7 pairs
+2026-08-09 10:42:27,876 | version_diff.judge |   阶段2: LLM 判断（7 pairs, 1 batches, batch_size=50, concurrency=2）...
+2026-08-09 10:42:27,876 | version_diff.judge |     batch 1/1 (7 pairs) submitted
+2026-08-09 10:42:34,666 | version_diff.judge |     batch 1/1 完成
+2026-08-09 10:42:34,668 | version_diff.judge |   ✅ 确认不一致: 3 处
+2026-08-09 10:42:34,669 | version_diff.judge |   📊 总计: 14 候选 → 规则排除 7 → LLM判断 7 → 确认矛盾 3
+2026-08-09 10:42:34,669 | version_diff.engine | 判断完成: 3 处矛盾 (6.8s)
+2026-08-09 10:42:34,675 | rag_demo.review_runner | 💾 已缓存预审核结果: IT运维管理规范.pdf (SHA256=F0F390EC)
+2026-08-09 10:44:01,578 | rag_demo.doc_store | 已移除: IT运维管理规范.pdf#644BAA5B
+2026-08-09 10:44:01,582 | rag_demo.doc_store | 持久化完成: 1 文档, 0 段落
+2026-08-09 10:44:01,582 | rag_demo.routes.review | 用户选择覆盖: 已删除旧文档 IT运维管理规范.pdf#644BAA5B
+2026-08-09 10:44:01,586 | rag_demo.routes.review | 上传保存: IT运维管理规范.pdf -> b5a2c96250612366ea272ffac6d9744aaf4b45aacd96aa7cfcb931ee3b558259.pdf (5 bytes)
+2026-08-09 10:44:02,200 | rag_demo.review_runner | 开始加载向量模型...
+2026-08-09 10:44:02,201 | version_diff.engine | 加载 embedding 模型: BAAI/bge-base-zh-v1.5 (device=cpu)
+Loading weights:   0%|          | 0/199 [00:00<?, ?it/s]Loading weights: 100%|██████████| 199/199 [00:00<00:00, 11684.12it/s]
+2026-08-09 10:44:02,423 | version_diff.device | 💻 Embedding 加速: CPU, device=cpu
+2026-08-09 10:44:02,424 | rag_demo.review_runner | 向量模型加载完成
+2026-08-09 10:44:02,425 | rag_demo.review_runner | 开始加载已有文档 (0 篇)...
+2026-08-09 10:44:02,426 | rag_demo.review_runner | 已有文档加载完成
+2026-08-09 10:44:02,426 | rag_demo.review_runner | 开始解析新文档: IT运维管理规范.pdf
+2026-08-09 10:44:02,430 | rag_demo.review_runner | 预审核失败: No /Root object! - Is this really a PDF?
+Traceback (most recent call last):
+  File "C:\Users\0937\Documents\work\simple_rag\rag_demo\.venv\Lib\site-packages\pdfplumber\pdf.py", line 50, in __init__
+    self.doc = PDFDocument(PDFParser(stream), password=password or "")
+               ~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\0937\Documents\work\simple_rag\rag_demo\.venv\Lib\site-packages\pdfminer\pdfdocument.py", line 744, in __init__
+    raise PDFSyntaxError("No /Root object! - Is this really a PDF?")
+pdfminer.pdfparser.PDFSyntaxError: No /Root object! - Is this really a PDF?
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\0937\Documents\work\simple_rag\rag_demo\app\services\review_runner.py", line 138, in run_pre_review
+    log.info(f"开始解析新文档: {task['filename']}")
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\0937\miniforge3\Lib\asyncio\threads.py", line 25, in to_thread
+    return await loop.run_in_executor(None, func_call)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\0937\miniforge3\Lib\concurrent\futures\thread.py", line 59, in run
+    result = self.fn(*self.args, **self.kwargs)
+  File "C:\Users\0937\Documents\work\simple_rag\rag_demo\app\services\parse_cache.py", line 52, in cached_parse
+    doc = _raw_parse(filepath, config=config)
+  File "C:\Users\0937\Documents\work\simple_rag\doc_parser\src\doc_parser\parser.py", line 593, in parse
+    return extract_document(filepath, config)
+  File "C:\Users\0937\Documents\work\simple_rag\doc_parser\src\doc_parser\parser.py", line 555, in extract_document
+    return extract_pdf(filepath, config)
+  File "C:\Users\0937\Documents\work\simple_rag\doc_parser\src\doc_parser\parser.py", line 67, in extract_pdf
+    with pdfplumber.open(filepath) as pdf:
+         ~~~~~~~~~~~~~~~^^^^^^^^^^
+  File "C:\Users\0937\Documents\work\simple_rag\rag_demo\.venv\Lib\site-packages\pdfplumber\pdf.py", line 107, in open
+    return cls(
+        stream,
+    ...<7 lines>...
+        raise_unicode_errors=raise_unicode_errors,
+    )
+  File "C:\Users\0937\Documents\work\simple_rag\rag_demo\.venv\Lib\site-packages\pdfplumber\pdf.py", line 52, in __init__
+    raise PdfminerException(e)
+pdfplumber.utils.exceptions.PdfminerException: No /Root object! - Is this really a PDF?
+2026-08-09 10:44:43,801 | rag_demo.doc_store | 🗑️ 知识库已清空: 移除 1 篇文档
+2026-08-09 10:44:43,817 | rag_demo.routes.documents | 🗑️ 知识库完全重置: 清空 1 篇文档 + 全部缓存
+2026-08-09 10:44:53,592 | rag_demo.routes.review | 上传保存: IT运维管理规范.pdf -> e0c73470e66c4688d74a8f566f06898357cd46e881c33482c7e58825644baa5b.pdf (529877 bytes)
+2026-08-09 10:44:54,216 | rag_demo.review_runner | 开始加载向量模型...
+2026-08-09 10:44:54,233 | version_diff.engine | 加载 embedding 模型: BAAI/bge-base-zh-v1.5 (device=cpu)
+Loading weights:   0%|          | 0/199 [00:00<?, ?it/s]Loading weights: 100%|██████████| 199/199 [00:00<00:00, 14301.54it/s]
+2026-08-09 10:44:54,594 | version_diff.device | 💻 Embedding 加速: CPU, device=cpu
+2026-08-09 10:44:54,595 | rag_demo.review_runner | 向量模型加载完成
+2026-08-09 10:44:54,596 | rag_demo.review_runner | 开始加载已有文档 (0 篇)...
+2026-08-09 10:44:54,597 | rag_demo.review_runner | 已有文档加载完成
+2026-08-09 10:44:54,597 | rag_demo.review_runner | 开始解析新文档: IT运维管理规范.pdf
+2026-08-09 10:44:57,010 | rag_demo.parse_cache | ✅ 解析完成: e0c73470e66c4688d74a8f566f06898357cd46e881c33482c7e58825644baa5b.pdf (23 段, 3 表)
+2026-08-09 10:44:57,015 | rag_demo.parse_cache | 💾 已缓存解析结果: SHA256=644BAA5B
+2026-08-09 10:44:57,017 | rag_demo.review_runner | 新文档解析完成: 23 段落
+2026-08-09 10:44:58,151 | version_diff.engine | 解析完成: e0c73470e66c4688d74a8f566f06898357cd46e881c33482c7e58825644baa5b.pdf (23 段落, 1.1s)
+2026-08-09 10:44:58,152 | version_diff.vectorstore |   ⏳ 计算 23 段嵌入...
+2026-08-09 10:45:01,962 | version_diff.vectorstore |   💾 已缓存 (da66c075..., 23 段, 768维)
+2026-08-09 10:45:01,971 | version_diff.engine | Embedding 完成 (3.8s)
+2026-08-09 10:45:01,971 | version_diff.engine | 库中无已有文档，跳过对比步骤
+2026-08-09 10:45:01,985 | rag_demo.review_runner | 💾 已缓存预审核结果: IT运维管理规范.pdf (SHA256=644BAA5B)
+2026-08-09 10:45:05,936 | rag_demo.parse_cache | 📦 命中解析缓存: e0c73470e66c4688d74a8f566f06898357cd46e881c33482c7e58825644baa5b.pdf (23 段, SHA256=644BAA5B)
+2026-08-09 10:45:05,938 | rag_demo.doc_store | 解析完成: IT运维管理规范.pdf (23 段, 3 表)
+2026-08-09 10:45:05,940 | version_diff.vectorstore |   💾 命中缓存 (da66c075...)，跳过 embedding 计算
+2026-08-09 10:45:05,947 | rag_demo.doc_store | 已入库: IT运维管理规范.pdf
+2026-08-09 10:45:05,955 | rag_demo.doc_store | 持久化完成: 1 文档, 23 段落
+2026-08-09 10:45:05,956 | rag_demo.routes.review | 入库成功: IT运维管理规范.pdf (23 paras) @ C:\Users\0937\.simple_rag\uploads\e0c73470e66c4688d74a8f566f06898357cd46e881c33482c7e58825644baa5b.pdf
+2026-08-09 10:45:16,482 | rag_demo.routes.review | 上传保存: IT运维管理规范.pdf -> d8ff93e7572335613420a87c6a4a36a6c4270550b3192b9ba03cfe95f0f390ec.pdf (556075 bytes)
+2026-08-09 10:45:17,095 | rag_demo.review_runner | 开始加载向量模型...
+2026-08-09 10:45:17,097 | version_diff.engine | 加载 embedding 模型: BAAI/bge-base-zh-v1.5 (device=cpu)
+Loading weights:   0%|          | 0/199 [00:00<?, ?it/s]Loading weights: 100%|██████████| 199/199 [00:00<00:00, 13652.17it/s]
+2026-08-09 10:45:17,420 | version_diff.device | 💻 Embedding 加速: CPU, device=cpu
+2026-08-09 10:45:17,422 | rag_demo.review_runner | 向量模型加载完成
+2026-08-09 10:45:17,424 | rag_demo.review_runner | 开始加载已有文档 (1 篇)...
+2026-08-09 10:45:18,828 | version_diff.vectorstore |   💾 命中缓存 (da66c075...)，跳过 embedding 计算
+2026-08-09 10:45:18,829 | version_diff.engine | 已加载到对比引擎: e0c73470e66c4688d74a8f566f06898357cd46e881c33482c7e58825644baa5b.pdf (23 段落)
+2026-08-09 10:45:18,830 | rag_demo.review_runner | 已有文档加载完成
+2026-08-09 10:45:18,830 | rag_demo.review_runner | 开始解析新文档: IT运维管理规范.pdf
+2026-08-09 10:45:20,461 | rag_demo.parse_cache | ✅ 解析完成: d8ff93e7572335613420a87c6a4a36a6c4270550b3192b9ba03cfe95f0f390ec.pdf (28 段, 3 表)
+2026-08-09 10:45:20,466 | rag_demo.parse_cache | 💾 已缓存解析结果: SHA256=F0F390EC
+2026-08-09 10:45:20,468 | rag_demo.review_runner | 新文档解析完成: 28 段落
+2026-08-09 10:45:21,940 | version_diff.engine | 解析完成: d8ff93e7572335613420a87c6a4a36a6c4270550b3192b9ba03cfe95f0f390ec.pdf (28 段落, 1.5s)
+2026-08-09 10:45:21,942 | version_diff.vectorstore |   ⏳ 计算 28 段嵌入...
+2026-08-09 10:45:27,665 | version_diff.vectorstore |   💾 已缓存 (8837fcad..., 28 段, 768维)
+2026-08-09 10:45:27,667 | version_diff.engine | Embedding 完成 (5.7s)
+2026-08-09 10:45:27,671 | version_diff.engine | 检索完成: 27 个候选对 (0.0s)
+2026-08-09 10:45:27,675 | version_diff.engine | Diff 完成: 14 处有差异 (0.0s)
+2026-08-09 10:45:27,676 | version_diff.judge | 🧠 一致性判断流水线
+2026-08-09 10:45:27,676 | version_diff.judge |   阶段1: 规则预过滤...
+2026-08-09 10:45:27,677 | version_diff.judge |   规则预过滤: 7 项排除 ({'numbering': 7})
+2026-08-09 10:45:27,678 | version_diff.judge |   待 LLM 判断: 7 pairs
+2026-08-09 10:45:27,678 | version_diff.judge |   阶段2: LLM 判断（7 pairs, 1 batches, batch_size=50, concurrency=2）...
+2026-08-09 10:45:27,678 | version_diff.judge |     batch 1/1 (7 pairs) submitted
+2026-08-09 10:45:33,064 | version_diff.judge |     batch 1/1 完成
+2026-08-09 10:45:33,065 | version_diff.judge |   ✅ 确认不一致: 2 处
+2026-08-09 10:45:33,067 | version_diff.judge |   📊 总计: 14 候选 → 规则排除 7 → LLM判断 7 → 确认矛盾 2
+2026-08-09 10:45:33,067 | version_diff.engine | 判断完成: 2 处矛盾 (5.4s)
+2026-08-09 10:45:33,076 | rag_demo.review_runner | 💾 已缓存预审核结果: IT运维管理规范.pdf (SHA256=F0F390EC)
+2026-08-09 10:47:30,452 | rag_demo.routes.review | 上传保存: IT运维管理规范.pdf -> d8ff93e7572335613420a87c6a4a36a6c4270550b3192b9ba03cfe95f0f390ec.pdf (556075 bytes)
+2026-08-09 10:47:31,067 | rag_demo.review_runner | 📦 命中预审核结果缓存: IT运维管理规范.pdf (SHA256=F0F390EC)
+2026-08-09 10:48:49,871 | rag_demo.doc_store | 已移除: IT运维管理规范.pdf#644BAA5B
+2026-08-09 10:48:49,931 | rag_demo.doc_store | 持久化完成: 1 文档, 0 段落
+2026-08-09 10:48:49,953 | rag_demo.routes.review | 用户选择覆盖: 已删除旧文档 IT运维管理规范.pdf#644BAA5B
+2026-08-09 10:48:50,008 | rag_demo.routes.review | 上传保存: IT运维管理规范.pdf -> d8ff93e7572335613420a87c6a4a36a6c4270550b3192b9ba03cfe95f0f390ec.pdf (556075 bytes)
+2026-08-09 10:48:50,627 | rag_demo.review_runner | 📦 缓存已过期（库文档变化），重新执行预审核: IT运维管理规范.pdf
+2026-08-09 10:48:50,632 | rag_demo.review_runner | 开始加载向量模型...
+2026-08-09 10:48:50,637 | version_diff.engine | 加载 embedding 模型: BAAI/bge-base-zh-v1.5 (device=cpu)
+Loading weights:   0%|          | 0/199 [00:00<?, ?it/s]Loading weights: 100%|██████████| 199/199 [00:00<00:00, 9293.49it/s]
+2026-08-09 10:48:51,953 | version_diff.device | 💻 Embedding 加速: CPU, device=cpu
+2026-08-09 10:48:51,955 | rag_demo.review_runner | 向量模型加载完成
+2026-08-09 10:48:51,957 | rag_demo.review_runner | 开始加载已有文档 (0 篇)...
+2026-08-09 10:48:51,958 | rag_demo.review_runner | 已有文档加载完成
+2026-08-09 10:48:51,958 | rag_demo.review_runner | 开始解析新文档: IT运维管理规范.pdf
+2026-08-09 10:48:51,966 | rag_demo.parse_cache | 📦 命中解析缓存: d8ff93e7572335613420a87c6a4a36a6c4270550b3192b9ba03cfe95f0f390ec.pdf (28 段, SHA256=F0F390EC)
+2026-08-09 10:48:51,969 | rag_demo.review_runner | 新文档解析完成: 28 段落
+2026-08-09 10:48:53,593 | version_diff.engine | 解析完成: d8ff93e7572335613420a87c6a4a36a6c4270550b3192b9ba03cfe95f0f390ec.pdf (28 段落, 1.6s)
+2026-08-09 10:48:53,599 | version_diff.vectorstore |   💾 命中缓存 (8837fcad...)，跳过 embedding 计算
+2026-08-09 10:48:53,600 | version_diff.engine | Embedding 完成 (0.0s)
+2026-08-09 10:48:53,601 | version_diff.engine | 库中无已有文档，跳过对比步骤
+2026-08-09 10:48:53,609 | rag_demo.review_runner | 💾 已缓存预审核结果: IT运维管理规范.pdf (SHA256=F0F390EC)
+2026-08-09 11:32:24,561 | rag_demo.doc_store | 🗑️ 知识库已清空: 移除 1 篇文档
+2026-08-09 11:32:24,622 | rag_demo.routes.documents | 🗑️ 知识库完全重置: 清空 1 篇文档 + 全部缓存
+2026-08-09 11:35:11,023 | rag_demo.routes.review | 上传保存: IT管理规定.docx -> 5fe273c5c2d86b7eae921f74dcbcc6d8c48a3920febe5a3359bc4c59e4f31b03.docx (9341 bytes)
+2026-08-09 11:35:11,677 | rag_demo.review_runner | 开始加载向量模型...
+2026-08-09 11:35:11,692 | version_diff.engine | 加载 embedding 模型: BAAI/bge-base-zh-v1.5 (device=cpu)
+Loading weights:   0%|          | 0/199 [00:00<?, ?it/s]Loading weights: 100%|██████████| 199/199 [00:00<00:00, 8009.70it/s]
+2026-08-09 11:35:12,635 | version_diff.device | 💻 Embedding 加速: CPU, device=cpu
+2026-08-09 11:35:12,639 | rag_demo.review_runner | 向量模型加载完成
+2026-08-09 11:35:12,642 | rag_demo.review_runner | 开始加载已有文档 (0 篇)...
+2026-08-09 11:35:12,646 | rag_demo.review_runner | 已有文档加载完成
+2026-08-09 11:35:12,647 | rag_demo.review_runner | 开始解析新文档: IT管理规定.docx
+2026-08-09 11:35:12,718 | rag_demo.parse_cache | ✅ 解析完成: 5fe273c5c2d86b7eae921f74dcbcc6d8c48a3920febe5a3359bc4c59e4f31b03.docx (8 段, 1 表)
+2026-08-09 11:35:12,721 | rag_demo.parse_cache | 💾 已缓存解析结果: SHA256=E4F31B03
+2026-08-09 11:35:12,722 | rag_demo.review_runner | 新文档解析完成: 8 段落
+2026-08-09 11:35:12,737 | version_diff.engine | 解析完成: 5fe273c5c2d86b7eae921f74dcbcc6d8c48a3920febe5a3359bc4c59e4f31b03.docx (8 段落, 0.0s)
+2026-08-09 11:35:12,739 | version_diff.vectorstore |   ⏳ 计算 8 段嵌入...
+2026-08-09 11:35:13,386 | version_diff.vectorstore |   💾 已缓存 (4f76ce66..., 8 段, 768维)
+2026-08-09 11:35:13,387 | version_diff.engine | Embedding 完成 (0.6s)
+2026-08-09 11:35:13,388 | version_diff.engine | 库中无已有文档，跳过对比步骤
+2026-08-09 11:35:13,396 | rag_demo.review_runner | 💾 已缓存预审核结果: IT管理规定.docx (SHA256=E4F31B03)
+2026-08-09 11:36:24,680 | rag_demo.parse_cache | 📦 命中解析缓存: 5fe273c5c2d86b7eae921f74dcbcc6d8c48a3920febe5a3359bc4c59e4f31b03.docx (8 段, SHA256=E4F31B03)
+2026-08-09 11:36:24,687 | rag_demo.doc_store | 解析完成: IT管理规定.docx (8 段, 1 表)
+2026-08-09 11:36:24,730 | version_diff.vectorstore |   💾 命中缓存 (4f76ce66...)，跳过 embedding 计算
+2026-08-09 11:36:24,739 | rag_demo.doc_store | 已入库: IT管理规定.docx
+2026-08-09 11:36:24,751 | rag_demo.doc_store | 持久化完成: 1 文档, 8 段落
+2026-08-09 11:36:24,753 | rag_demo.routes.review | 入库成功: IT管理规定.docx (8 paras) @ C:\Users\0937\.simple_rag\uploads\5fe273c5c2d86b7eae921f74dcbcc6d8c48a3920febe5a3359bc4c59e4f31b03.docx
+2026-08-09 11:39:32,644 | rag_demo.routes.review | 上传保存: IT管理规定.docx -> 8b73bddc78d964053b6445ad62ee49b6cb5bd2ff3fdd38b4da6d1b3a58f9fd18.docx (9431 bytes)
+2026-08-09 11:39:33,266 | rag_demo.review_runner | 开始加载向量模型...
+2026-08-09 11:39:33,268 | version_diff.engine | 加载 embedding 模型: BAAI/bge-base-zh-v1.5 (device=cpu)
+Loading weights:   0%|          | 0/199 [00:00<?, ?it/s]Loading weights: 100%|██████████| 199/199 [00:00<00:00, 8810.73it/s]
+2026-08-09 11:39:33,745 | version_diff.device | 💻 Embedding 加速: CPU, device=cpu
+2026-08-09 11:39:33,747 | rag_demo.review_runner | 向量模型加载完成
+2026-08-09 11:39:33,748 | rag_demo.review_runner | 开始加载已有文档 (1 篇)...
+2026-08-09 11:39:33,764 | version_diff.vectorstore |   💾 命中缓存 (4f76ce66...)，跳过 embedding 计算
+2026-08-09 11:39:33,765 | version_diff.engine | 已加载到对比引擎: 5fe273c5c2d86b7eae921f74dcbcc6d8c48a3920febe5a3359bc4c59e4f31b03.docx (8 段落)
+2026-08-09 11:39:33,765 | rag_demo.review_runner | 已有文档加载完成
+2026-08-09 11:39:33,766 | rag_demo.review_runner | 开始解析新文档: IT管理规定.docx
+2026-08-09 11:39:33,781 | rag_demo.parse_cache | ✅ 解析完成: 8b73bddc78d964053b6445ad62ee49b6cb5bd2ff3fdd38b4da6d1b3a58f9fd18.docx (8 段, 1 表)
+2026-08-09 11:39:33,784 | rag_demo.parse_cache | 💾 已缓存解析结果: SHA256=58F9FD18
+2026-08-09 11:39:33,785 | rag_demo.review_runner | 新文档解析完成: 8 段落
+2026-08-09 11:39:33,796 | version_diff.engine | 解析完成: 8b73bddc78d964053b6445ad62ee49b6cb5bd2ff3fdd38b4da6d1b3a58f9fd18.docx (8 段落, 0.0s)
+2026-08-09 11:39:33,797 | version_diff.vectorstore |   ⏳ 计算 8 段嵌入...
+2026-08-09 11:39:35,239 | version_diff.vectorstore |   💾 已缓存 (15ced27e..., 8 段, 768维)
+2026-08-09 11:39:35,240 | version_diff.engine | Embedding 完成 (1.4s)
+2026-08-09 11:39:35,298 | version_diff.engine | 检索完成: 9 个候选对 (0.1s)
+2026-08-09 11:39:35,316 | version_diff.engine | Diff 完成: 5 处有差异 (0.0s)
+2026-08-09 11:39:35,318 | version_diff.judge | 🧠 一致性判断流水线
+2026-08-09 11:39:35,318 | version_diff.judge |   阶段1: 规则预过滤...
+2026-08-09 11:39:35,332 | version_diff.judge |   规则预过滤: 3 项排除 ({'numbering': 3})
+2026-08-09 11:39:35,333 | version_diff.judge |   待 LLM 判断: 2 pairs
+2026-08-09 11:39:35,333 | version_diff.judge |   阶段2: LLM 判断（2 pairs, 1 batches, batch_size=50, concurrency=2）...
+2026-08-09 11:39:35,334 | version_diff.judge |     batch 1/1 (2 pairs) submitted
+2026-08-09 11:39:36,156 | version_diff.judge |     batch 1/1 完成
+2026-08-09 11:39:36,162 | version_diff.judge |   ✅ 确认不一致: 0 处
+2026-08-09 11:39:36,163 | version_diff.judge |   📊 总计: 5 候选 → 规则排除 3 → LLM判断 2 → 确认矛盾 0
+2026-08-09 11:39:36,164 | version_diff.engine | 判断完成: 0 处矛盾 (0.8s)
+2026-08-09 11:39:36,169 | rag_demo.review_runner | 💾 已缓存预审核结果: IT管理规定.docx (SHA256=58F9FD18)
