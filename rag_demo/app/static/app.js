@@ -6,7 +6,7 @@ pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/p
 // ============================================================
 // 工具函数
 // ============================================================
-function esc(s){return s?s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'):'';}
+function esc(s){s=s==null?'':String(s);return s?s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'):'';} 
 function escA(s){return s?s.replace(/"/g,'&quot;'):'';}
 function renderMd(s){return (typeof marked!=='undefined')?marked.parse(s||''):esc(s||'');}
 function fmtDocName(name,hash){const h=hash?hash.slice(-8).toUpperCase():'';return h?`${name} [${h}]`:name;}
