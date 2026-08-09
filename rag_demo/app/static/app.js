@@ -416,7 +416,7 @@ if(data.needs_choice){
     newDocHash=data2.file_hash||'';
     document.getElementById('stepTitle').textContent='预审核: '+fmtDocName(data2.filename,newDocHash);
     refreshDocList();
-    pollReviewProgress();
+    connectSSE(data2.task_id);
     return;
 }
 reviewTaskId=data.task_id;
