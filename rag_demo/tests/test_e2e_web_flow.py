@@ -22,8 +22,8 @@ import tempfile
 import time
 
 # Force UTF-8 output on Windows (emoji + Chinese)
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
-sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
+sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 import pytest
 from fastapi.testclient import TestClient

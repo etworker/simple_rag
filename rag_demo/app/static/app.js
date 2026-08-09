@@ -141,7 +141,7 @@ async function resetKnowledgeBase(){
 // ============================================================
 // 文档预览
 // ============================================================
-// 预览待审核文档（使用 review API）
+// 预览待审核文档（支持 PDF / docx 等）
 async function selectPendingDoc(filename){
     // 如果正在预审核 tab，弹窗确认
     const reviewTabActive=document.getElementById('reviewPanel').classList.contains('active');
@@ -149,22 +149,70 @@ async function selectPendingDoc(filename){
         if(!confirm('当前正在查看预审核结果，确定切换到文档预览？'))return;
         switchKbTab('preview');
     }
+    // 清理 PDF 状态
+    kbPdfDoc=null;kbPdfUrl=null;
     currentDoc=filename;
     refreshDocList();
     document.getElementById('previewEmpty').style.display='none';
     document.getElementById('previewContent').style.display='flex';
+    const ext = filename.split('.').pop().toLowerCase();
     document.getElementById('previewTitle').textContent='X '+filename;
-    // 用 review PDF 接口
-    const url=`/api/documents/review/pdf?task_id=${reviewTaskId}`;
-    kbPdfUrl=null;  // 强制重新加载
-    kbPdfDoc=await pdfjsLib.getDocument(url).promise;
-    totalPages=kbPdfDoc.numPages;
-    currentPage=getDocPage(filename);
-    document.getElementById('kbPageInput').value=currentPage;
-    document.getElementById('kbTotalPages').textContent=totalPages;
-    buildPageSlots('kbPdfContainer', totalPages);
-    setupLazyRender('kbPdfContainer', kbPdfDoc);
-    scrollToPage('kbPdfContainer', currentPage);
+    if(ext === 'pdf'){
+        if(!reviewTaskId){
+            document.getElementById('kbPdfContainer').innerHTML=
+                '<div style="padding:20px;color:var(--danger);text-align:center;">预审核任务不存在，请重新上传文档</div>';
+            return;
+        }
+        const url=`/api/documents/review/pdf?task_id=${reviewTaskId}`;
+        try{
+            kbPdfDoc=await pdfjsLib.getDocument(url).promise;
+        }catch(e){
+            document.getElementById('kbPdfContainer').innerHTML=
+                `<div style="padding:20px;color:var(--danger);text-align:center;">PDF 加载失败: ${esc(e.message||String(e))}</div>`;
+            return;
+        }
+        totalPages=kbPdfDoc.numPages;
+        currentPage=getDocPage(filename);
+        document.getElementById('kbPageInput').value=currentPage;
+        document.getElementById('kbTotalPages').textContent=totalPages;
+        buildPageSlots('kbPdfContainer', totalPages);
+        setupLazyRender('kbPdfContainer', kbPdfDoc);
+        scrollToPage('kbPdfContainer', currentPage);
+    } else {
+        // 非 PDF：用文本段落预览
+        await loadPendingTextPreview(filename);
+    }
+}
+
+// 待审核文档（尚未入库）的文本段落预览
+async function loadPendingTextPreview(filename){
+    const container=document.getElementById('kbPdfContainer');
+    container.innerHTML='<div style="padding:16px;color:var(--text3);">加载中...</div>';
+    const pager=document.getElementById('kbPager');
+    if(pager)pager.style.display='none';
+    try{
+        const resp=await fetch(`/api/documents/review/paragraphs?file=${encodeURIComponent(filename)}`);
+        const data=await resp.json();
+        if(!data.paragraphs||!data.paragraphs.length){
+            container.innerHTML='<div style="padding:16px;color:var(--text3);">该文档无段落内容</div>';
+            return;
+        }
+        let html='<div style="padding:16px;max-width:800px;">';
+        data.paragraphs.forEach((p,i)=>{
+            const loc=p.location?`<span style="color:var(--text3);font-size:11px;margin-left:8px;">${esc(p.location)}</span>`:'';
+            html+=`<div class="text-para" id="pp-${i}" style="margin-bottom:12px;padding:8px 12px;background:var(--bg2);border-radius:6px;font-size:13px;line-height:1.6;cursor:default;"><span style="color:var(--primary);font-size:11px;margin-right:6px;">¶${i+1}</span>${esc(p.text)}${loc}${p.page?`<span style="float:right;color:var(--text3);font-size:10px;">第${p.page}页</span>`:''}</div>`;
+        });
+        html+='</div>';
+        container.innerHTML=html;
+        container.scrollTop=0;
+    }catch(e){
+        container.innerHTML=`<div style="padding:16px;color:var(--danger);">预览加载失败: ${esc(e.message)}</div>`;
+    }
+}
+// 点击段落滚动到可视区域（用于版本变更跳转）
+function scrollParaIntoView(el){
+    if(!el)return;
+    el.scrollIntoView({behavior:'smooth',block:'center'});
 }
 
 let kbPageCache={};  // {filename: page}
@@ -181,6 +229,8 @@ function getDocPage(filename){
 }
 
 async function selectDoc(filename){
+    // filename 可能是 doc_id（含 #hash）或纯文件名
+    const basename = filename.split('#')[0];
     // 如果正在预审核 tab，弹窗确认
     const reviewTabActive=document.getElementById('reviewPanel').classList.contains('active');
     if(reviewTabActive){
@@ -192,21 +242,23 @@ async function selectDoc(filename){
     // 保存当前文档页码
     if(currentDoc){
         const input=document.getElementById('kbPageInput');
-        saveDocPage(currentDoc, parseInt(input.value)||1);
+        if(input)saveDocPage(currentDoc, parseInt(input.value)||1);
     }
+    // 清理 PDF 状态（切换文档时强制重新加载，无论哪种预览类型）
+    kbPdfDoc=null;kbPdfUrl=null;
     currentDoc=filename;
     currentPage=getDocPage(filename);
     refreshDocList();
-    loadKbPreview();
+    loadKbPreview(basename);
 }
 
 // PDF.js 渲染核心
 let kbPdfDoc=null, kbPdfUrl=null;
 
-async function loadKbPreview(){
+async function loadKbPreview(basename){
     if(!currentDoc)return;
-    // 非 PDF 文件显示文本预览
-    const basename = currentDoc.split('#')[0];  // 去掉 #hash 后缀
+    // 优先使用传入的 basename，否则从 currentDoc 提取
+    if(!basename)basename = currentDoc.split('#')[0];
     const ext = basename.split('.').pop().toLowerCase();
     if(ext !== 'pdf'){
         loadTextPreview(basename);
@@ -214,7 +266,7 @@ async function loadKbPreview(){
     }
     document.getElementById('previewEmpty').style.display='none';
     document.getElementById('previewContent').style.display='flex';
-    document.getElementById('previewTitle').textContent=(docMap[currentDoc]||'')+' '+currentDoc;
+    document.getElementById('previewTitle').textContent=(docMap[currentDoc]||'')+' '+basename;
     // 确保翻页控件可见（从文本预览切回 PDF 时）
     const pager=document.getElementById('kbPager');
     if(pager)pager.style.display='';
@@ -222,7 +274,14 @@ async function loadKbPreview(){
     // 如果换了文档才重新加载 PDF（否则只渲染页面）
     if(kbPdfUrl!==url){
         kbPdfUrl=url;
-        kbPdfDoc=await pdfjsLib.getDocument(url).promise;
+        document.getElementById('kbPdfContainer').innerHTML='<div style="padding:20px;color:var(--text3);text-align:center;">PDF 加载中...</div>';
+        try{
+            kbPdfDoc=await pdfjsLib.getDocument(url).promise;
+        }catch(e){
+            document.getElementById('kbPdfContainer').innerHTML=
+                `<div style="padding:20px;color:var(--danger);text-align:center;">PDF 加载失败: ${esc(e.message||String(e))}<br><span style="font-size:11px;">${esc(url)}</span></div>`;
+            return;
+        }
         totalPages=kbPdfDoc.numPages;
         kbTotalPagesCache[currentDoc]=totalPages;
         buildPageSlots('kbPdfContainer', totalPages);
@@ -437,14 +496,23 @@ function connectSSE(taskId){
             es.close();
             if(d.status==='done'&&d.result){
                 reviewResult=d.result;
+                // 把旧版信息合并到 reviewResult 中供后续使用
+                if(d.old_version_filepath) reviewResult.old_version_filepath = d.old_version_filepath;
+                if(d.old_doc_filename) reviewResult.old_doc_filename = d.old_doc_filename;
                 document.getElementById('stepArea').classList.remove('show');
                 const n=d.result.inconsistencies?d.result.inconsistencies.length:0;
+                const vc=d.result.version_changes?d.result.version_changes.length:0;
                 if(n>0){
-                    document.getElementById('reviewBtn').textContent=`⚠️ 预审核完成，发现 ${n} 处矛盾 → 查看`;
+                    document.getElementById('reviewBtn').textContent=`⚠️ 发现 ${n} 处内容矛盾 → 查看详情`;
                     document.getElementById('reviewBtn').classList.add('show');
                     buildReviewPanel();
+                } else if(vc>0){
+                    document.getElementById('reviewBtn').textContent=`✅ 未发现内容矛盾，检测到 ${vc} 处版本更新 → 查看详情`;
+                    document.getElementById('reviewBtn').classList.add('show');
+                    buildReviewPanel();
+                    showReviewTab();
                 } else {
-                    document.getElementById('reviewBtn').textContent='✅ 预审核通过，无矛盾 → 确认入库';
+                    document.getElementById('reviewBtn').textContent='✅ 预审核通过，未发现矛盾或版本差异 → 确认入库';
                     document.getElementById('reviewBtn').classList.add('show');
                     buildReviewPanel();
                     showReviewTab();
@@ -501,11 +569,16 @@ function buildReviewPanel(){
 const r=reviewResult;if(!r)return;
 const items=r.inconsistencies||[];
 const vChanges=r.version_changes||[];
+const oldVf = r.old_version_filepath || '';
+const oldDocName = r.old_doc_filename || oldVf || '';
 let infoText='';
-if(items.length>0) infoText+=`⚠️ ${items.length} 处矛盾`;
-if(vChanges.length>0) infoText+=(infoText?' ｜ ':'')+ `📝 ${vChanges.length} 处版本变更`;
-if(!infoText) infoText='✅ 未发现矛盾，可入库';
-infoText+=`　（新文档: ${esc(newDocFile||'')})`;
+if(items.length>0) infoText+=`⚠️ 发现 ${items.length} 处内容矛盾`;
+if(vChanges.length>0){
+    infoText+=(infoText?'，':'');
+    infoText+=`检测到 ${vChanges.length} 处版本更新`;
+}
+if(!infoText) infoText='✅ 未发现内容矛盾，可安全入库';
+infoText+=`　（新文档: ${esc(newDocFile||'')}${oldDocName?` vs 旧版 ${esc(oldDocName)}`:''})`;
 document.getElementById('reviewInfo').textContent=infoText;
 
 // 按 point 去重合并（同一矛盾事项可能有多条记录）
@@ -540,32 +613,147 @@ if(m.count>1)html+=`<br><span style="color:var(--text3);font-size:10px;">共 ${m
 html+=`</div></div>`;
 });
 
-// ====== 版本变更列表 ======
+// ====== 版本差异列表（双列原文 + LLM 总结 + 点击跳转） ======
 if(vChanges.length>0){
-    html+=`<div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--border);"><div style="font-weight:600;font-size:12px;margin-bottom:8px;">📝 版本变更明细（新旧版本对比）</div>`;
+    const oldName = oldVf ? oldVf.replace(/\.[^.]+$/, '') : '旧版';
+    html+=`<div class="version-diff-section" style="margin-top:12px;padding-top:10px;border-top:1px solid var(--border);">`;
+    html+=`<div style="font-weight:600;font-size:12px;margin-bottom:8px;">📝 版本更新列表（共 ${vChanges.length} 项，点击查看对比）</div>`;
     vChanges.forEach((c,i)=>{
         const icon=c.type==='modified'?'✏️':c.type==='added'?'➕':'➖';
-        const summary=c.summary?` — ${esc(c.summary)}`:'';
-        html+=`<div class="conflict-item" style="cursor:default;">`;
-        html+=`<div class="title">${icon} #${i+1} ${esc(c.location||'')}${summary}</div>`;
-        html+=`<div class="desc">`;
+        const typeLabel=c.type==='modified'?'修改':c.type==='added'?'新增':'删除';
+        const summary=c.summary?esc(c.summary):'（无摘要）';
+        html+=`<div class="version-diff-item" onclick="showVersionDiff(${i})" data-idx="${i}">`;
+        html+=`<div class="vd-header"><span class="vd-type">${icon} ${typeLabel}</span><span class="vd-loc">${esc(c.location||'')}</span><span class="vd-summary">${summary}</span></div>`;
+        html+=`<div class="vd-body">`;
         if(c.old_text){
-            html+=`<div style="margin-bottom:4px;"><span style="color:var(--danger);font-weight:500;">旧:</span> <span style="background:#fff0f0;padding:1px 4px;border-radius:2px;">${esc(c.old_text.slice(0,150))}${c.old_text.length>150?'…':''}</span></div>`;
+            html+=`<div class="vd-old"><span class="vd-label">旧:</span><span class="vd-text">${esc(c.old_text.slice(0,150))}${c.old_text.length>150?'…':''}</span></div>`;
         }
         if(c.new_text){
-            html+=`<div><span style="color:var(--success, #2d8);font-weight:500;">新:</span> <span style="background:#f0fff0;padding:1px 4px;border-radius:2px;">${esc(c.new_text.slice(0,150))}${c.new_text.length>150?'…':''}</span></div>`;
+            html+=`<div class="vd-new"><span class="vd-label">新:</span><span class="vd-text">${esc(c.new_text.slice(0,150))}${c.new_text.length>150?'…':''}</span></div>`;
         }
         html+=`</div></div>`;
     });
+    html+='<div class="vd-hint" style="margin-top:6px;font-size:11px;color:var(--text3);">💡 点击某条差异可在右侧预览两个文档的对应位置</div>';
     html+=`</div>`;
 }
 
 // 无任何结果时的提示
 if(items.length===0&&vChanges.length===0){
-    html='<div style="padding:30px;text-align:center;color:var(--text3);">✅ 预审核通过，未发现矛盾或版本变更</div>';
+    html='<div style="padding:30px;text-align:center;color:var(--text3);">✅ 预审核通过，未发现矛盾或版本差异</div>';
 }
 
 document.getElementById('conflictList').innerHTML=html;
+}
+
+// 点击某条版本差异 → 在右侧预览中定位显示，支持切换旧/新文档
+function showVersionDiff(idx){
+    const vc = reviewResult?.version_changes?.[idx];
+    if(!vc)return;
+    document.querySelectorAll('.version-diff-item').forEach((el,i)=>el.classList.toggle('selected',i===idx));
+    // 确保切到预览 tab
+    switchKbTab('preview');
+    // 计算新文档对应段落号（按 location 中的段落#N）
+    const loc = vc.location||'';
+
+    // 显示版本对比浮层
+    const panel = document.getElementById('versionComparePanel');
+    if(!panel)return;
+    panel.classList.add('show');
+    panel.dataset.vcIdx = idx;
+
+    // 构建对比面板
+    const oldVf = (reviewResult.old_version_filepath||'').replace(/\.[^.]+$/,'');
+    const oldName = reviewResult.old_doc_filename || oldVf || '旧版';
+    const newVf = reviewResult.new_filename||newDocFile||'';
+    const diffData = reviewResult._diffCache || (reviewResult._diffCache = {});
+
+    let bodyHtml = '';
+    bodyHtml += `<div class="vc-title-bar"><span>📝 差异 #${idx+1} · ${esc(vc.location||'')}</span><button class="vc-back-btn" onclick="closeVersionCompare()" style="float:right;">✕ 返回列表</button></div>`;
+    if(vc.summary) bodyHtml += `<div class="vc-summary">${esc(vc.summary)}</div>`;
+
+    // 双列原文
+    bodyHtml += `<div class="vc-columns">`;
+    bodyHtml += `<div class="vc-col"><div class="vc-col-header">旧版：${esc(oldVf||'（无）')}</div>`;
+    if(vc.old_text) bodyHtml += `<div class="vc-col-text vc-old-text">${esc(vc.old_text.slice(0,500))}</div>`;
+    else bodyHtml += `<div class="vc-col-empty">（无对应内容，此为新增段落）</div>`;
+    bodyHtml += `</div>`;
+    bodyHtml += `<div class="vc-col"><div class="vc-col-header">新版：${esc(newVf||'（无）')}</div>`;
+    if(vc.new_text) bodyHtml += `<div class="vc-col-text vc-new-text">${esc(vc.new_text.slice(0,500))}</div>`;
+    else bodyHtml += `<div class="vc-col-empty">（无对应内容，此为删除段落）</div>`;
+    bodyHtml += `</div>`;
+    bodyHtml += `</div>`;
+
+    // 页面预览区 — 提供两个 tab: 显示旧版 x 页 / 显示新版 x 页
+    const newPage = extractPageFromLoc(vc.location);
+    bodyHtml += `<div class="vc-preview-bar">`;
+    bodyHtml += `<button class="vc-prev-btn active" onclick="showVcDoc('new',${idx})">${esc(newVf)}（新版）</button>`;
+    if(vc.type!=='added' && oldName) bodyHtml += `<button class="vc-prev-btn" onclick="showVcDoc('old',${idx})">${esc(oldName)}（旧版）</button>`;
+    bodyHtml += `</div>`;
+    bodyHtml += `<div class="vc-preview-area" id="vcPreviewArea"></div>`;
+
+    panel.innerHTML = bodyHtml;
+    // 默认显示新版对应页
+    showVcDoc('new', idx);
+}
+
+// 在版本预览中切换旧版/新版文档
+function showVcDoc(side, idx){
+    const vc = reviewResult?.version_changes?.[idx];
+    if(!vc)return;
+    const panel = document.getElementById('versionComparePanel');
+    if(!panel)return;
+    const area = document.getElementById('vcPreviewArea');
+    if(!area)return;
+    // 更新按钮状态
+    panel.querySelectorAll('.vc-prev-btn').forEach(b=>b.classList.remove('active'));
+    const btns = panel.querySelectorAll('.vc-prev-btn');
+    if(side==='new'&&btns[0])btns[0].classList.add('active');
+    if(side==='old'&&btns[1])btns[1].classList.add('active');
+
+    if(side==='new'){
+        // 在 review 文档中定位（待审核文件，使用 review API）
+        const page = extractPageFromLoc(vc.location);
+        const imgUrl = `/api/documents/review/page?task_id=${reviewTaskId}&page=${page}`;
+        area.innerHTML = `<img src="${imgUrl}" style="max-width:100%;border:1px solid var(--border);border-radius:4px;" onerror="this.outerHTML='<div style=\\'color:#aaa;padding:20px;text-align:center;\\'>新版文档第${page}页预览加载失败</div>'">`;
+    } else {
+        // 尝试从 B 项列表中匹配旧版文件（用可读文件名，如 "IT管理规定.docx"）
+        const oldName = reviewResult.old_doc_filename || (reviewResult.old_version_filepath||'').split('/').pop().replace(/\.[^.]+$/,'');
+        const oldExt = (reviewResult.old_doc_filename||reviewResult.old_version_filepath||'').split('.').pop()?.toLowerCase();
+        const oldDoc = findDocInList(oldName);
+        if(oldDoc){
+            const page = extractPageFromLoc(vc.location);
+            // 用已入库文档 API 渲染页面
+            const imgUrl = `/api/documents/page?name=${encodeURIComponent(oldName)}&page=${page}`;
+            area.innerHTML = `<img src="${imgUrl}" style="max-width:100%;border:1px solid var(--border);border-radius:4px;" onerror="this.outerHTML='<div style=\\'color:#aaa;padding:20px;text-align:center;\\'>旧版文档第${page}页预览加载失败</div>'">`;
+        } else {
+            area.innerHTML = `<div style="color:#aaa;padding:20px;text-align:center;">旧版文档不在当前知识库中，无法定位预览</div>`;
+        }
+    }
+}
+
+// 从 location 描述中提取段落号并映射到页码（简单启发式：直接使用段落号作为序位）
+function extractPageFromLoc(loc){
+    if(!loc)return 1;
+    // 尝试匹配 段落#N → 返回段落号粗略映射到第 N/2 页（假设每页约 2 段落）
+    const m = loc.match(/段落#(\d+)/);
+    if(m)return Math.max(1, Math.ceil(parseInt(m[1]) / 2));
+    // 尝试匹配 页码
+    const m2 = loc.match(/第(\d+)页/);
+    if(m2)return parseInt(m2[1]);
+    return 1;
+}
+
+// 在 B 项列表中查找匹配文件名
+function findDocInList(filename){
+    const items = document.querySelectorAll('.doc-item');
+    for(const item of items){
+        const nameEl = item.querySelector('.name');
+        if(nameEl){
+            const txt = nameEl.textContent.replace(/\[.*?\]/g,'').trim();
+            if(txt.startsWith(filename)||txt===filename)return {el:item,name:filename};
+        }
+    }
+    return null;
 }
 
 function selectConflict(idx){
@@ -609,6 +797,12 @@ function closeCompare(){
     document.getElementById('comparePanel').classList.remove('show');
     document.getElementById('conflictList').classList.remove('collapsed');
     document.querySelectorAll('.conflict-item').forEach(el=>el.classList.remove('selected'));
+}
+function closeVersionCompare(){
+    const panel=document.getElementById('versionComparePanel');
+    if(panel)panel.classList.remove('show');
+    document.querySelectorAll('.version-diff-item').forEach(el=>el.classList.remove('selected'));
+    switchKbTab('review');
 }
 
 async function confirmIngest(){
@@ -979,12 +1173,14 @@ refreshQaSessionList();
         refreshDocList();
         if(d.status==='done'&&d.result){
             reviewResult=d.result;
+            if(d.old_version_filepath) reviewResult.old_version_filepath = d.old_version_filepath;
+            if(d.old_doc_filename) reviewResult.old_doc_filename = d.old_doc_filename;
             const n=d.result.inconsistencies?d.result.inconsistencies.length:0;
             const vc=d.result.version_changes?d.result.version_changes.length:0;
             let btnText='';
-            if(n>0) btnText=`⚠️ 发现 ${n} 处矛盾`;
-            else btnText='✅ 无矛盾';
-            if(vc>0) btnText+=`，${vc} 处版本变更`;
+            if(n>0) btnText=`⚠️ 发现 ${n} 处内容矛盾`;
+            else btnText='✅ 无内容矛盾';
+            if(vc>0) btnText+=`，识别出 ${vc} 处版本差异`;
             btnText+=' → 查看详情';
             document.getElementById('reviewBtn').textContent=btnText;
             document.getElementById('reviewBtn').classList.add('show');

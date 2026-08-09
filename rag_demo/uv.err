@@ -1,0 +1,29 @@
+INFO:     Will watch for changes in these directories: ['C:\\Users\\0937\\Documents\\work\\simple_rag\\rag_demo']
+INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+INFO:     Started reloader process [2228] using StatReload
+2026-08-09 20:45:48,469 | rag_demo | ================================================================================
+2026-08-09 20:45:48,470 | rag_demo | 🚀 服务启动 @ 2026-08-09 20:45:48
+2026-08-09 20:45:48,470 | rag_demo |    日志文件: C:\Users\0937\.simple_rag\logs\app.log
+2026-08-09 20:45:48,470 | rag_demo | ================================================================================
+2026-08-09 20:45:48,473 | rag_demo.config | 配置已加载: C:\Users\0937\Documents\work\simple_rag\rag_demo\config.json
+2026-08-09 20:45:48,474 | rag_demo | 缓存目录: C:\Users\0937\.simple_rag
+2026-08-09 20:45:48,474 | rag_demo | 上传目录: C:\Users\0937\.simple_rag\uploads
+INFO:     Started server process [25116]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+WARNING:  StatReload detected changes in 'app\routes\review.py'. Reloading...
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [25116]
+2026-08-09 20:51:56,114 | rag_demo | ================================================================================
+2026-08-09 20:51:56,114 | rag_demo | 🚀 服务启动 @ 2026-08-09 20:51:56
+2026-08-09 20:51:56,115 | rag_demo |    日志文件: C:\Users\0937\.simple_rag\logs\app.log
+2026-08-09 20:51:56,115 | rag_demo | ================================================================================
+2026-08-09 20:51:56,116 | rag_demo.config | 配置已加载: C:\Users\0937\Documents\work\simple_rag\rag_demo\config.json
+2026-08-09 20:51:56,117 | rag_demo | 缓存目录: C:\Users\0937\.simple_rag
+2026-08-09 20:51:56,117 | rag_demo | 上传目录: C:\Users\0937\.simple_rag\uploads
+INFO:     Started server process [1908]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+WARNING:  StatReload detected changes in 'tests\test_e2e_web_flow.py'. Reloading...

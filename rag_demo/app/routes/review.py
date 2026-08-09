@@ -38,12 +38,18 @@ async def get_active_review():
             }
         if task["status"] == "done" and task.get("result"):
             if task_id not in _state.app.confirmed_or_rejected:
+                # 解析旧版文档信息（用于前端在 B 项列表中定位对比基线）
+                old_vf = task.get("old_version_filepath", "")
+                old_vf_basename = os.path.basename(old_vf) if old_vf else ""
+                old_doc_filename = task.get("old_doc_filename", "")
                 return {
                     "task_id": task_id,
                     "status": "done",
                     "filename": task["filename"],
                     "file_hash": task.get("file_hash", ""),
                     "result": task["result"],
+                    "old_version_filepath": old_vf_basename,
+                    "old_doc_filename": old_doc_filename,
                 }
     return {"task_id": None}
 
@@ -77,6 +83,7 @@ async def upload_document(file: UploadFile = File(...), choice: str = Form("")):
     new_sha = compute_sha256_bytes(content)
     # 记录旧版本信息（如果是同名文档更新）
     old_version_filepath = ""
+    old_doc_filename = ""
 
     existing = _state.app.doc_store.get_document(filename)
     if existing and existing.status == "active":
@@ -101,6 +108,8 @@ async def upload_document(file: UploadFile = File(...), choice: str = Form("")):
                     {"id": "coexist", "label": "作为新版本并存"},
                 ],
             }
+        # 记录旧版文档信息（可对比版本）
+        old_doc_filename = existing.filename if existing else ""
         if choice == "overwrite":
             _state.app.doc_store.remove_document(existing.doc_id)
             log.info(f"用户选择覆盖: 已删除旧文档 {existing.doc_id}")
@@ -130,7 +139,8 @@ async def upload_document(file: UploadFile = File(...), choice: str = Form("")):
         "current_step": f"正在处理: {filename}",
         "steps": [],
         "result": None,
-        "old_version_filepath": old_version_filepath,  # 版本对比用
+        "old_version_filepath": old_version_filepath,  # 版本对比用（文件路径）
+        "old_doc_filename": old_doc_filename,  # 版本对比用（可读文件名）
     }
 
     await asyncio.sleep(0.1)
@@ -173,6 +183,8 @@ async def review_progress(task_id: str):
                     "completed_steps": task.get("completed_steps", []),
                     "current_elapsed": current_elapsed,
                     "result": task["result"],
+                    "old_version_filepath": os.path.basename(task.get("old_version_filepath", "")),
+                    "old_doc_filename": task.get("old_doc_filename", ""),
                 }
                 yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
                 if task["status"] in ("done", "error", "cancelled"):

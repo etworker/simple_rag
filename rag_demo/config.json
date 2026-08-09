@@ -1,7 +1,7 @@
 {
   "cache": {
-    "base_dir": "C:\\Users\\0937\\.simple_rag",
-    "upload_dir": ""
+    "base_dir": "C:\\Users\\0937\\AppData\\Local\\Temp\\rag_e2e_h3jva4u7",
+    "upload_dir": "C:\\Users\\0937\\AppData\\Local\\Temp\\rag_e2e_h3jva4u7\\uploads"
   },
   "embedding": {
     "model": "BAAI/bge-base-zh-v1.5",
