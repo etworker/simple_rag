@@ -103,17 +103,17 @@ async function refreshDocList(){
 // 待审核文档（放上面）
 if(newDocFile&&!docMap[newDocFile]){
 docMap[newDocFile]='X';
-const hashShort=newDocHash?newDocHash.slice(-8).toUpperCase():'';
-const pendingName=hashShort?`${esc(newDocFile)} <span style="color:var(--text3);font-size:10px;">[${hashShort}]</span>`:esc(newDocFile);
+const pendingName=esc(newDocFile);
 const cls=(currentDoc===newDocFile)?'doc-item pending active':'doc-item pending';
-pendingHtml=`<div class="doc-list-title" style="color:var(--warn);">待审核</div><div class="${cls}" onclick="selectPendingDoc('${escA(newDocFile)}')" title="${escA(newDocFile)}${hashShort?' ['+hashShort+']':''}"><span class="id" style="color:var(--warn);">X</span><div class="info"><div class="name">${pendingName}</div><div class="stats">等待人工确认</div></div></div>`;
+const pendingStatus=reviewTaskId?'预审核进行中...':'等待审核';
+pendingHtml=`<div class="doc-list-title" style="color:var(--warn);">待审核</div><div class="${cls}" onclick="selectPendingDoc('${escA(newDocFile)}')" title="${escA(newDocFile)}"><span class="id" style="color:var(--warn);">X</span><div class="info"><div class="name">${pendingName}</div><div class="stats">${pendingStatus}</div></div></div>`;
 }
     // 已入库文档
     if(!data.documents||!data.documents.length){
-        ingestedHtml='<div class="doc-list-title">已入库文档<span class="reset-btn" onclick="resetKnowledgeBase()" title="清空全部文档和缓存，恢复初始状态">🔴 重置</span></div><div style="color:#ccc;padding:10px;font-size:11px;">暂无文档</div>';
+        ingestedHtml='<div class="doc-list-title">已入库文档</div><div style="color:#aaa;padding:12px;font-size:12px;">请上传第一份文档</div>';
     } else {
-        ingestedHtml='<div class="doc-list-title">已入库文档<span class="reset-btn" onclick="resetKnowledgeBase()" title="清空全部文档和缓存，恢复初始状态">🔴 重置</span></div>';
-data.documents.forEach((d,i)=>{const id='B'+(i+1);const hashShort=d.file_hash?d.file_hash.slice(-8).toUpperCase():'';const docId=d.doc_id||d.filename;docMap[docId]=id;docMap[d.filename]=id;const cls=(currentDoc===docId||currentDoc===d.filename)?'doc-item active':'doc-item';const pg=d.page_count||kbTotalPagesCache[d.filename]||'';const stats=[];if(pg)stats.push(pg+'页');if(d.char_count)stats.push(d.char_count+'字');if(d.paragraph_count)stats.push(d.paragraph_count+'段');if(d.table_count)stats.push(d.table_count+'表');const displayName=hashShort?`${esc(d.filename)} <span style="color:var(--text3);font-size:10px;">[${hashShort}]</span>`:esc(d.filename);ingestedHtml+=`<div class="${cls}" onclick="selectDoc('${escA(docId)}')" title="${escA(d.filename)}${hashShort?' ['+hashShort+']':''}"><span class="id">${id}</span><div class="info"><div class="name">${displayName}</div>${stats.length?'<div class="stats">'+stats.join(' · ')+'</div>':''}</div><span class="del-btn" onclick="event.stopPropagation();removeDoc('${escA(docId)}')">🗑️</span></div>`;});
+        ingestedHtml='<div class="doc-list-title">已入库文档</div>';
+data.documents.forEach((d,i)=>{const id='B'+(i+1);const docId=d.doc_id||d.filename;docMap[docId]=id;docMap[d.filename]=id;const cls=(currentDoc===docId||currentDoc===d.filename)?'doc-item active':'doc-item';const pg=d.page_count||kbTotalPagesCache[d.filename]||'';const stats=[];if(pg)stats.push(pg+'页');if(d.char_count)stats.push(d.char_count+'字');if(d.paragraph_count)stats.push(d.paragraph_count+'段');if(d.table_count)stats.push(d.table_count+'表');ingestedHtml+=`<div class="${cls}" onclick="selectDoc('${escA(docId)}')" title="${escA(d.filename)}"><span class="id">${id}</span><div class="info"><div class="name">${esc(d.filename)}</div>${stats.length?'<div class="stats">'+stats.join(' · ')+'</div>':''}</div><span class="del-btn" onclick="event.stopPropagation();removeDoc('${escA(docId)}')">🗑️</span></div>`;});
     }
     el.innerHTML=pendingHtml+ingestedHtml;
 }
@@ -446,6 +446,7 @@ function connectSSE(taskId){
                     document.getElementById('reviewBtn').textContent='✅ 预审核通过，无矛盾 → 确认入库';
                     document.getElementById('reviewBtn').classList.add('show');
                     buildReviewPanel();
+                    showReviewTab();
                 }
             } else {
                 resetUpload();
@@ -946,9 +947,16 @@ refreshQaSessionList();
         if(d.status==='done'&&d.result){
             reviewResult=d.result;
             const n=d.result.inconsistencies?d.result.inconsistencies.length:0;
-            document.getElementById('reviewBtn').textContent=n>0?`⚠️ 预审核完成，发现 ${n} 处矛盾 → 查看`:'✅ 预审核通过 → 确认入库';
+            const vc=d.result.version_changes?d.result.version_changes.length:0;
+            let btnText='';
+            if(n>0) btnText=`⚠️ 发现 ${n} 处矛盾`;
+            else btnText='✅ 无矛盾';
+            if(vc>0) btnText+=`，${vc} 处版本变更`;
+            btnText+=' → 查看详情';
+            document.getElementById('reviewBtn').textContent=btnText;
             document.getElementById('reviewBtn').classList.add('show');
             buildReviewPanel();
+            showReviewTab();  // 自动切到预审核 tab 展示结果
         } else if(d.status==='pending'||d.status==='running'){
             uploadZone.classList.add('disabled');
             document.getElementById('stepArea').classList.add('show');
