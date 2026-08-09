@@ -401,6 +401,24 @@ try{
 const res=await fetch('/api/documents/upload',{method:'POST',body:fd});
 if(!res.ok){const e=await res.json();alert(e.detail||'上传失败');resetUpload();return;}
 const data=await res.json();
+// 同名文档：需要用户选择覆盖/并存
+if(data.needs_choice){
+    const choice=confirm(
+        `知识库已有同名文档「${data.filename}」（${data.existing.paragraph_count}段）。\n\n` +
+        `点击"确定"覆盖旧版本（替换），点击"取消"作为新版本并存。`
+    ) ? 'overwrite' : 'coexist';
+    // 重新上传，带 choice 参数
+    const fd2=new FormData();fd2.append('file',file);fd2.append('choice',choice);
+    const res2=await fetch('/api/documents/upload',{method:'POST',body:fd2});
+    if(!res2.ok){const e=await res2.json();alert(e.detail||'上传失败');resetUpload();return;}
+    const data2=await res2.json();
+    reviewTaskId=data2.task_id;
+    newDocHash=data2.file_hash||'';
+    document.getElementById('stepTitle').textContent='预审核: '+fmtDocName(data2.filename,newDocHash);
+    refreshDocList();
+    pollReviewProgress();
+    return;
+}
 reviewTaskId=data.task_id;
 newDocHash=data.file_hash||'';
 document.getElementById('stepTitle').textContent='预审核: '+fmtDocName(data.filename,newDocHash);
