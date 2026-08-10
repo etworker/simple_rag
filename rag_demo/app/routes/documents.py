@@ -47,7 +47,16 @@ async def get_pending_paragraphs(file: str):
 
     s = _state.app
     file = unquote(file)
-    for task in s.review_tasks.values():
+    # 优先匹配当前活跃的（未确认/拒绝）task 的 filename
+    for tid, task in s.review_tasks.items():
+        if tid in s.confirmed_or_rejected:
+            continue
+        if task.get("filename") == file:
+            return {"file": file, "paragraphs": task.get("parsed_paragraphs", [])}
+    # 兼容：fallback 到 source_file 字段匹配（仅匹配活跃 task）
+    for tid, task in s.review_tasks.items():
+        if tid in s.confirmed_or_rejected:
+            continue
         paras = task.get("parsed_paragraphs", [])
         for p in paras:
             if p["source_file"] == file:

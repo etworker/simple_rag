@@ -152,16 +152,6 @@ class ConfigStore:
 
         raise KeyError(f"未配置 LLM profile（llm_profiles 为空，use_case='{use_case}'）")
 
-    def list_llm_profiles(self) -> list[str]:
-        """列出所有可用的 LLM profile 名称"""
-        profiles = self._config.get("llm_profiles", {})
-        if profiles:
-            return list(profiles.keys())
-        # 兼容旧格式
-        if self._config.get("llm"):
-            return ["default"]
-        return []
-
     def to_dict(self) -> dict:
         """导出完整配置"""
         return deepcopy(self._config)

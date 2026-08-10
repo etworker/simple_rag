@@ -6,3 +6,14 @@ uploads/
 __pycache__/
 *.pyc
 .env
+
+# 本地运行时配置（含机器相关路径，不入库；用 config.example.json 作模板）
+config.json
+
+# uv 依赖安装时的运行时日志（不入库）
+uv.err
+uv.out
+
+# uvicorn 运行时日志（不入库）
+uvicorn_err.log
+uvicorn_out.log

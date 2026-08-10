@@ -38,7 +38,7 @@ async def get_active_review():
             }
         if task["status"] == "done" and task.get("result"):
             if task_id not in _state.app.confirmed_or_rejected:
-                # 解析旧版文档信息（用于前端在 B 项列表中定位对比基线）
+                # 解析旧版文档信息
                 old_vf = task.get("old_version_filepath", "")
                 old_vf_basename = os.path.basename(old_vf) if old_vf else ""
                 old_doc_filename = task.get("old_doc_filename", "")
@@ -50,6 +50,7 @@ async def get_active_review():
                     "result": task["result"],
                     "old_version_filepath": old_vf_basename,
                     "old_doc_filename": old_doc_filename,
+                    "old_version_fullpath": old_vf,  # 完整路径，用于预览旧文档PDF
                 }
     return {"task_id": None}
 
@@ -157,13 +158,19 @@ async def review_progress(task_id: str):
     async def event_stream():
         task = _state.app.review_tasks[task_id]
         last_step_count = -1
+        last_result_seq = None
         while True:
             cur_step_count = len(task["steps"])
-            changed = cur_step_count != last_step_count or task["status"] in (
-                "done", "error", "cancelled",
+            cur_result_seq = task.get("_result_seq", 0)
+            # 三种情况推送：step 变化、result 变化（增量回调递增 _result_seq）、terminal 状态
+            changed = (
+                cur_step_count != last_step_count
+                or cur_result_seq != last_result_seq
+                or task["status"] in ("done", "error", "cancelled")
             )
             if changed:
                 last_step_count = cur_step_count
+                last_result_seq = cur_result_seq
                 import time as _t
 
                 completed = task.get("completed_steps", [])
@@ -185,6 +192,7 @@ async def review_progress(task_id: str):
                     "result": task["result"],
                     "old_version_filepath": os.path.basename(task.get("old_version_filepath", "")),
                     "old_doc_filename": task.get("old_doc_filename", ""),
+                    "old_version_fullpath": task.get("old_version_filepath", ""),
                 }
                 yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
                 if task["status"] in ("done", "error", "cancelled"):
@@ -320,5 +328,59 @@ async def get_review_page(task_id: str, page: int = 1, highlight: str = ""):
     renderer = PageRenderer(cache_dir=os.path.join(_state.app.cache_dir, "page_cache"))
     png_path = await asyncio.to_thread(
         renderer.get_page, filepath, page, unquote(highlight)
+    )
+    return FileResponse(png_path, media_type="image/png")
+
+
+@router.get("/review/info")
+async def get_review_info(task_id: str):
+    """获取预审核文档的信息（页数等）"""
+    if task_id not in _state.app.review_tasks:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    task = _state.app.review_tasks[task_id]
+    filepath = task.get("filepath", "")
+    if not filepath or not os.path.exists(filepath):
+        return {"exists": False, "page_count": 0}
+    import pdfplumber
+    try:
+        with pdfplumber.open(filepath) as pdf:
+            return {"exists": True, "page_count": len(pdf.pages)}
+    except Exception:
+        return {"exists": False, "page_count": 0}
+
+
+@router.get("/review/old/info")
+async def get_review_old_info(task_id: str):
+    """获取旧版文档的信息（页数等）"""
+    if task_id not in _state.app.review_tasks:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    task = _state.app.review_tasks[task_id]
+    old_filepath = task.get("old_version_filepath", "")
+    if not old_filepath or not os.path.exists(old_filepath):
+        return {"exists": False, "page_count": 0}
+    import pdfplumber
+    try:
+        with pdfplumber.open(old_filepath) as pdf:
+            return {"exists": True, "page_count": len(pdf.pages)}
+    except Exception:
+        return {"exists": False, "page_count": 0}
+
+
+@router.get("/review/old/page")
+async def get_review_old_page(task_id: str, page: int = 1, highlight: str = ""):
+    """获取旧版文档指定页的 PNG 图片"""
+    from urllib.parse import unquote
+
+    from app.services.page_renderer import PageRenderer
+
+    if task_id not in _state.app.review_tasks:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    task = _state.app.review_tasks[task_id]
+    old_filepath = task.get("old_version_filepath", "")
+    if not old_filepath or not os.path.exists(old_filepath):
+        raise HTTPException(status_code=404, detail="旧版文档文件不存在")
+    renderer = PageRenderer(cache_dir=os.path.join(_state.app.cache_dir, "page_cache"))
+    png_path = await asyncio.to_thread(
+        renderer.get_page, old_filepath, page, unquote(highlight)
     )
     return FileResponse(png_path, media_type="image/png")

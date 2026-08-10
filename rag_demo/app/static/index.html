@@ -6,7 +6,7 @@
     <title>RAG 文档问答系统</title>
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
-    <link rel="stylesheet" href="/static/style.css">
+    <link rel="stylesheet" href="/static/style.css?v=4">
 </head>
 <body>
 <div class="topbar">
@@ -74,9 +74,9 @@
 </div>
                 <div class="conflict-list" id="conflictList"></div>
                 <div class="compare-panel" id="comparePanel">
-                    <div class="compare-tabs">
-                        <button class="compare-tab active" id="cmpTabA" onclick="switchCompare('a')">X 新文档</button>
-                        <button class="compare-tab" id="cmpTabB" onclick="switchCompare('b')">B? 已有文档</button>
+                    <div class="compare-tabs" id="cmpTabs">
+                        <button class="compare-tab active" id="cmpTabA" onclick="compareShowTab('a')">N 新文档</button>
+                        <button class="compare-tab" id="cmpTabB" onclick="compareShowTab('b')">B1 已有文档</button>
                         <span class="compare-close" onclick="closeCompare()">✕ 关闭对比</span>
                     </div>
                     <div class="compare-body" id="compareBody"></div>
@@ -181,6 +181,17 @@
 </div>
 <div id="debugPanel"></div>
 
-<script src="/static/app.js"></script>
+<!-- 自定义确认对话框 -->
+<div class="modal-overlay" id="modalOverlay">
+    <div class="modal-box">
+        <div class="modal-msg" id="modalMsg"></div>
+        <div class="modal-btns">
+            <button class="modal-btn modal-btn-yes" id="modalBtnYes">是</button>
+            <button class="modal-btn modal-btn-no" id="modalBtnNo">否</button>
+        </div>
+    </div>
+</div>
+
+<script src="/static/app.js?v=6"></script>
 </body>
 </html>

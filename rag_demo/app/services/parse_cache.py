@@ -21,21 +21,24 @@ log = logging.getLogger("rag_demo.parse_cache")
 _CACHE_DIR = os.path.join(os.path.expanduser("~"), ".simple_rag", "parse_cache")
 
 
-def cached_parse(filepath: str, config: dict = None) -> Document:
+def cached_parse(filepath: str, config: dict = None, cache_dir: str = None) -> Document:
     """
     带缓存的文档解析
 
     Args:
         filepath: 文档路径
         config: 解析配置（传给 doc_parser.parse）
+        cache_dir: 缓存目录（默认 ~/.simple_rag/parse_cache/）；
+                   传 None 使用模块默认 _CACHE_DIR
 
     Returns:
         Document 对象
     """
-    os.makedirs(_CACHE_DIR, exist_ok=True)
+    base_dir = cache_dir or _CACHE_DIR
+    os.makedirs(base_dir, exist_ok=True)
 
     file_hash = compute_sha256(filepath)
-    cache_path = os.path.join(_CACHE_DIR, f"{file_hash}.json")
+    cache_path = os.path.join(base_dir, f"{file_hash}.json")
 
     # 命中缓存
     if os.path.exists(cache_path):
@@ -65,32 +68,8 @@ def _save_cache(cache_path: str, doc: Document):
     """序列化 Document 到 JSON"""
     data = {
         "filename": doc.filename,
-        "paragraphs": [
-            {
-                "text": p.text,
-                "page": p.page,
-                "page_end": p.page_end,
-                "chapter": p.chapter,
-                "chapter_title": p.chapter_title,
-                "source_file": p.source_file,
-                "index": p.index,
-            }
-            for p in doc.paragraphs
-        ],
-        "tables": [
-            {
-                "rows": t.rows,
-                "headers": t.headers,
-                "page": t.page,
-                "page_end": t.page_end,
-                "chapter": t.chapter,
-                "chapter_title": t.chapter_title,
-                "context_before": t.context_before,
-                "source_file": t.source_file,
-                "index": t.index,
-            }
-            for t in doc.tables
-        ],
+        "paragraphs": [p.to_dict() for p in doc.paragraphs],
+        "tables": [t.to_dict() for t in doc.tables],
     }
     with open(cache_path, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False)
@@ -101,32 +80,8 @@ def _load_cache(cache_path: str) -> Document:
     with open(cache_path, "r", encoding="utf-8") as f:
         data = json.load(f)
 
-    paragraphs = [
-        Paragraph(
-            text=p["text"],
-            page=p.get("page", 0),
-            page_end=p.get("page_end", 0),
-            chapter=p.get("chapter", ""),
-            chapter_title=p.get("chapter_title", ""),
-            source_file=p.get("source_file", ""),
-            index=p.get("index", 0),
-        )
-        for p in data["paragraphs"]
-    ]
-    tables = [
-        Table(
-            rows=t.get("rows", []),
-            headers=t.get("headers", []),
-            page=t.get("page", 0),
-            page_end=t.get("page_end", 0),
-            chapter=t.get("chapter", ""),
-            chapter_title=t.get("chapter_title", ""),
-            context_before=t.get("context_before", ""),
-            source_file=t.get("source_file", ""),
-            index=t.get("index", 0),
-        )
-        for t in data.get("tables", [])
-    ]
+    paragraphs = [Paragraph.from_dict(p) for p in data["paragraphs"]]
+    tables = [Table.from_dict(t) for t in data.get("tables", [])]
 
     return Document(
         filename=data["filename"],

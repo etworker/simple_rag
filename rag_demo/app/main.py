@@ -90,9 +90,10 @@ STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 config_store = ConfigStore(config_path=CONFIG_PATH)
 
 # 缓存目录（可配置，默认 ~/.simple_rag/）
-CACHE_DIR = config_store.get("cache.base_dir", _CACHE_ROOT)
+# 注意：配置值可能为空字符串，需回退默认，避免 os.makedirs("") 崩溃
+CACHE_DIR = config_store.get("cache.base_dir", _CACHE_ROOT) or _CACHE_ROOT
 os.makedirs(CACHE_DIR, exist_ok=True)
-UPLOAD_DIR = config_store.get("upload_dir", os.path.join(CACHE_DIR, "uploads"))
+UPLOAD_DIR = config_store.get("cache.upload_dir", os.path.join(CACHE_DIR, "uploads")) or os.path.join(CACHE_DIR, "uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 log.info(f"缓存目录: {CACHE_DIR}")
 log.info(f"上传目录: {UPLOAD_DIR}")

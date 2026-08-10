@@ -36,7 +36,7 @@ class AppState:
         self._load_review_cache()
 
     def save_review_cache(self):
-        """将已完成的 review task 持久化"""
+        """将已完成的 review task 持久化（含段落与版本对比信息）"""
         try:
             os.makedirs(os.path.dirname(self.review_cache_path), exist_ok=True)
             to_save = {}
@@ -46,7 +46,11 @@ class AppState:
                         "status": task["status"],
                         "filename": task["filename"],
                         "filepath": task["filepath"],
+                        "file_hash": task.get("file_hash", ""),
                         "result": task["result"],
+                        "parsed_paragraphs": task.get("parsed_paragraphs", []),
+                        "old_version_filepath": task.get("old_version_filepath", ""),
+                        "old_doc_filename": task.get("old_doc_filename", ""),
                     }
             with open(self.review_cache_path, "w", encoding="utf-8") as f:
                 json.dump(to_save, f, ensure_ascii=False)

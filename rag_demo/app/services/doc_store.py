@@ -133,8 +133,8 @@ class DocStore:
         Returns:
             DocMeta 文档元数据
         """
-        # 解析（带缓存）
-        doc = parse(filepath)
+        # 解析（带缓存，使用配置的 parse_cache_dir，保证与 /clear 清理的目录一致）
+        doc = parse(filepath, cache_dir=self._parse_cache_dir)
         # 用原始文件名覆盖（parse 返回的是磁盘文件名，可能是 SHA-256 安全名）
         if original_filename:
             doc.filename = original_filename
@@ -342,18 +342,7 @@ class DocStore:
 
             # 2. 段落（序列化为 JSON）
             paras_path = os.path.join(self._persist_dir, "paragraphs.json")
-            paras_data = [
-                {
-                    "text": p.text,
-                    "source_file": p.source_file,
-                    "page": p.page,
-                    "page_end": p.page_end,
-                    "chapter": p.chapter,
-                    "chapter_title": p.chapter_title,
-                    "index": p.index,
-                }
-                for p in self._paragraphs
-            ]
+            paras_data = [p.to_dict() for p in self._paragraphs]
             with open(paras_path, "w", encoding="utf-8") as f:
                 json.dump(paras_data, f, ensure_ascii=False)
 
@@ -387,18 +376,7 @@ class DocStore:
             if os.path.exists(paras_path):
                 with open(paras_path, "r", encoding="utf-8") as f:
                     paras_data = json.load(f)
-                self._paragraphs = [
-                    Paragraph(
-                        text=p["text"],
-                        source_file=p["source_file"],
-                        page=p.get("page", 0),
-                        page_end=p.get("page_end", 0),
-                        chapter=p.get("chapter", ""),
-                        chapter_title=p.get("chapter_title", ""),
-                        index=p.get("index", 0),
-                    )
-                    for p in paras_data
-                ]
+                self._paragraphs = [Paragraph.from_dict(p) for p in paras_data]
 
             # 3. Embeddings + FAISS
             if os.path.exists(emb_path):
@@ -498,11 +476,7 @@ class DocStore:
         """
         matches = []
         for p in self._paragraphs:
-            if (
-                p.source_file != doc_id
-                and not p.source_file.startswith(doc_id + "#")
-                and p.source_file != doc_id
-            ):
+            if p.source_file != doc_id and not p.source_file.startswith(doc_id + "#"):
                 continue
             if not location or p.location == location:
                 matches.append(
