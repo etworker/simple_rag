@@ -1,7 +1,6 @@
 """配置定义"""
 
 import os
-from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -51,7 +50,19 @@ class Config:
             "similarity_threshold": 0.80,
             "top_k": 3,
             "batch_size": 5,
-            "max_workers": 4,
+            # 版本管理「元数据噪声」过滤配置（通用、可覆盖）
+            # added/removed 文本剥离下列 patterns 后为空 → 判为纯元数据噪声，归入 minor_changes
+            "noise_filter": {
+                "enabled": True,
+                # 通用版本管理元数据正则（非行业词）：
+                # 修订日期戳 / 独立日期 / 版本号·文件号 / 页码跟踪表行
+                "patterns": [
+                    r"修订日期\s*[：:]\s*\S+",
+                    r"(?:^\s*|\b)\d{4}[-./]\s*\d{1,2}[-./]\s*\d{1,2}\s*(?:$|\b)",
+                    r"(?:R\d+-\d{2,}|BK-J-\d+|版次\s*[：:]\s*\S+)",
+                    r"^(?:\d{1,4}\s+)?(?:R\d{2,3}|N|A|D)\s+\d{4}[-./]\d{1,2}[-./]\d{1,2}",
+                ],
+            },
         }
     )
 
@@ -72,15 +83,19 @@ class Config:
         }
     )
 
-    progress_callback: Callable | None = None
-
     @classmethod
     def from_dict(cls, d: dict) -> "Config":
-        """从字典构造配置"""
+        """从字典构造配置
+
+        diff 段做浅合并：调用方只传部分键时，缺失键用默认值兜底
+        （保证 noise_filter 等默认项在部分配置下仍生效）。
+        """
+        diff = d.get("diff", {})
+        diff_default = {**cls().diff, **diff}
         return cls(
             embedding=d.get("embedding", {}),
             llm=d.get("llm", {}),
-            diff=d.get("diff", {}),
+            diff=diff_default,
             cache=d.get("cache", {}),
             judge=d.get("judge", {}),
         )

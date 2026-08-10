@@ -138,46 +138,35 @@ class TestCheckConflicts:
         assert result == []
 
     def test_different_files_different_text_calls_judge(self):
-        """不同文档的不同文本应调用 filter_diffs"""
+        """不同文档的不同文本应调用 LLM 判定（judge_pairs）"""
         from version_diff.engine import DiffEngine
 
-        mock_result = JudgeResult(
-            inconsistent_items=[],
-            rule_filtered=0,
-            llm_judged=1,
-        )
-
-        engine = DiffEngine(config={})
-        with patch("version_diff.engine.filter_diffs", return_value=mock_result):
+        engine = DiffEngine(config={"llm": {"model": "x", "provider": "bedrock"}})
+        with patch("version_diff.conflict.judge_pairs", return_value=[]):
             result = engine.check_conflicts([
                 {"text": "每天备份", "source_file": "A.docx", "location": "第1页"},
                 {"text": "每周备份", "source_file": "B.docx", "location": "第1页"},
             ])
-        # filter_diffs 被调用，返回空不一致
+        # judge_pairs 被调用，返回空不一致
         assert result == []
 
     def test_conflict_detected(self):
         """检测到冲突时应返回 Inconsistency"""
         from version_diff.engine import DiffEngine
 
-        para_a = Paragraph(text="每天备份", source_file="A.docx")
-        para_b = Paragraph(text="每周备份", source_file="B.docx")
-        item = TextDiffItem(
-            para_a=para_a, para_b=para_b, similarity=0.85,
-            diff_fragments=[('replace', '每天', '每周')],
-            llm_point="备份频率",
-            llm_doc_a_says="每天备份",
-            llm_doc_b_says="每周备份",
-        )
-
-        mock_result = JudgeResult(
-            inconsistent_items=[item],
-            rule_filtered=0,
-            llm_judged=1,
-        )
-
-        engine = DiffEngine(config={})
-        with patch("version_diff.engine.filter_diffs", return_value=mock_result):
+        engine = DiffEngine(config={"llm": {"model": "x", "provider": "bedrock"}})
+        with patch(
+            "version_diff.conflict.judge_pairs",
+            return_value=[
+                {
+                    "index": 1,
+                    "inconsistent": True,
+                    "point": "备份频率",
+                    "doc_a_says": "每天备份",
+                    "doc_b_says": "每周备份",
+                }
+            ],
+        ):
             result = engine.check_conflicts([
                 {"text": "每天备份", "source_file": "A.docx", "location": "第1页"},
                 {"text": "每周备份", "source_file": "B.docx", "location": "第1页"},

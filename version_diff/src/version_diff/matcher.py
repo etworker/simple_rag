@@ -30,7 +30,6 @@ class TextDiffItem:
     llm_reason: str = ""  # LLM 给出的变更描述
     category: str = ""  # 差异类别（substantive/scope/inconsistency/...）
     category_label: str = ""  # 类别中文标签
-    rag_risk: str = ""  # RAG 检索矛盾风险说明
     # 结构化字段（由 LLM 判断结果直接填充，避免后续字符串解析）
     llm_point: str = ""  # 矛盾事项（如"备份频率"）
     llm_doc_a_says: str = ""  # A 文档的说法
@@ -43,13 +42,6 @@ class TextDiffItem:
 
 # 全局 VectorStore 实例（默认使用包内缓存目录）
 _default_vector_store = VectorStore()
-
-
-def get_vector_store(cache_dir: str = "") -> VectorStore:
-    """获取 VectorStore 实例（传空则使用全局默认实例）"""
-    if cache_dir:
-        return VectorStore(cache_dir=cache_dir)
-    return _default_vector_store
 
 
 # ============================================================
@@ -183,26 +175,6 @@ def _describe_change(fragments, text_a, text_b):
 # ============================================================
 
 
-def diff_texts(
-    paras_a, paras_b, model, threshold=0.80, file_a="", file_b="", vector_store=None
-):
-    """
-    比较两篇文档的正文段落
-
-    Returns:
-        list[TextDiffItem]（只含有差异的项）
-    """
-    pairs = pair_paragraphs(
-        paras_a, paras_b, model, threshold, file_a, file_b, vector_store=vector_store
-    )
-    log.info(f"   ✅ 配对成功: {len(pairs)} 对 (阈值 {threshold})")
-
-    diff_items = []
-    for i, j, sim in pairs:
-        if paras_a[i].text.strip() == paras_b[j].text.strip():
-            continue
-        item = compute_diff(paras_a[i], paras_b[j], sim)
-        if item.has_changes:
-            diff_items.append(item)
-
-    return diff_items
+# ============================================================
+# 差异文本比较（diff_texts 已废弃，统一使用 engine/DiffEngine 入口）
+# ============================================================

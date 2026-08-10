@@ -11,14 +11,13 @@ LLM 一致性判断模块（单次推理版）
   3. 输出：仅保留 LLM 确认为 inconsistent 的项（附带矛盾点说明）
 """
 
-import json
 import logging
 import math
 import os
-import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 
+from version_diff.llm_util import call_llm_json
 from version_diff.prefilter import batch_pre_classify
 
 log = logging.getLogger("version_diff.judge")
@@ -78,18 +77,6 @@ CONSISTENCY_JUDGE_PROMPT = _load_default_prompt()
 # 摘要兜底
 # ============================================================
 
-_GENERIC_PATTERNS = [
-    re.compile(r"^数值变更\s*[\(（]"),
-    re.compile(r"^大幅内容变更$"),
-    re.compile(r"^部分内容修改$"),
-]
-
-
-def _is_generic_summary(summary: str) -> bool:
-    if not summary:
-        return True
-    return any(p.match(summary.strip()) for p in _GENERIC_PATTERNS)
-
 
 def _generate_specific_summary(item) -> str:
     """从标注片段自动生成变更描述（兜底）"""
@@ -119,52 +106,6 @@ def _generate_specific_summary(item) -> str:
 # ============================================================
 # LLM 调用
 # ============================================================
-
-
-def _call_llm(prompt: str, llm_config: dict) -> str:
-    """
-    调用 LLM API（委托给 llm_chat.ask_once）
-
-    Args:
-        prompt: 完整 prompt 文本
-        llm_config: LLM 配置字典（包含 model, region, api_key_env 等）
-    """
-    try:
-        from llm_chat import ask_once
-
-        backend = llm_config.get("provider", "bedrock")
-        # 别名（如 bedrock_converse → bedrock）由 llm_chat backends 层统一处理
-
-        return ask_once(
-            prompt,
-            backend=backend,
-            model=llm_config.get("model", ""),
-            region=llm_config.get("region", ""),
-            api_key_env=llm_config.get("api_key_env", ""),
-            api_key=llm_config.get("api_key", ""),
-            base_url=llm_config.get("base_url", ""),
-            endpoint=llm_config.get("endpoint", "chat"),
-            max_tokens=llm_config.get("max_tokens", 0),
-            timeout=llm_config.get("timeout", 0),
-            max_retries=llm_config.get("max_retries", 0),
-            retry_backoff=llm_config.get("retry_backoff", 0),
-        )
-    except Exception as e:
-        log.warning(f"LLM 调用失败: {e}")
-        return None
-
-
-def _parse_json_response(response):
-    """从 LLM 响应中解析 JSON 数组"""
-    if not response:
-        return None
-    try:
-        json_match = re.search(r"\[[\s\S]*\]", response)
-        if json_match:
-            return json.loads(json_match.group())
-    except (json.JSONDecodeError, AttributeError) as e:
-        log.warning(f"JSON 解析失败: {e}")
-    return None
 
 
 # ============================================================
@@ -221,8 +162,7 @@ def _judge_batch(items, llm_config: dict, prompt_template: str = ""):
     items_text = _format_judge_items(items)
     template = prompt_template or CONSISTENCY_JUDGE_PROMPT
     prompt = template.format(count=len(items), items=items_text)
-    response = _call_llm(prompt, llm_config)
-    return _parse_json_response(response)
+    return call_llm_json(prompt, llm_config)
 
 
 # ============================================================
@@ -328,7 +268,45 @@ def _run_batches_concurrent(
     return results
 
 
-def filter_diffs(diff_items, llm_config: dict = None, judge_config: dict = None):
+def _process_batch_results(batch, results):
+    """处理单个批次的 LLM 结果，返回新确认的不一致项列表"""
+    new_items = []
+    if not results:
+        return new_items
+    for r in results:
+        if not isinstance(r, dict):
+            log.warning(f"    ↪ 跳过非结构化 judge 输出项: {r!r}")
+            continue
+        try:
+            idx = int(r.get("index", 0)) - 1
+        except (ValueError, TypeError):
+            log.warning(f"    ↪ 非法 index 字段: {r.get('index')!r}")
+            continue
+        if 0 <= idx < len(batch) and r.get("inconsistent", False):
+            item = batch[idx]
+            point = r.get("point", "")
+            doc_a_says = r.get("doc_a_says", "")
+            doc_b_says = r.get("doc_b_says", "")
+            item.llm_point = point
+            item.llm_doc_a_says = doc_a_says
+            item.llm_doc_b_says = doc_b_says
+            if point and doc_a_says and doc_b_says:
+                item.llm_reason = (
+                    f"{point}：A称「{doc_a_says}」，B称「{doc_b_says}」"
+                )
+            elif point:
+                item.llm_reason = point
+            else:
+                item.llm_reason = _generate_specific_summary(item)
+                item.llm_point = item.llm_reason
+            item.__dict__["category"] = "inconsistency"
+            item.__dict__["category_label"] = "文档间不一致"
+            new_items.append(item)
+    return new_items
+
+
+def filter_diffs(diff_items, llm_config: dict = None, judge_config: dict = None,
+                 on_batch=None):
     """
     一致性判断流水线
 
@@ -336,6 +314,8 @@ def filter_diffs(diff_items, llm_config: dict = None, judge_config: dict = None)
         diff_items: 字级 diff 结果列表
         llm_config: LLM 配置字典。如果为 None，使用默认配置。
         judge_config: 判断配置字典。可选。
+        on_batch: 增量回调 fn(batch_idx: int, total_batches: int, new_inconsistent_items: list)
+                  每批 LLM 完成后调用，用于前端增量展示。
 
     Returns:
         JudgeResult 包含:
@@ -366,15 +346,13 @@ def filter_diffs(diff_items, llm_config: dict = None, judge_config: dict = None)
     log.info(f"  规则预过滤: {len(pre_classified)} 项排除 ({pre_counts})")
     log.info(f"  待 LLM 判断: {len(uncertain)} pairs")
 
-    # ========== 阶段2：LLM 判断 ==========
+    # ========== 阶段2：LLM 判断（支持增量回调）==========
     inconsistent_items = []
 
     if uncertain:
-        # 动态计算 batch_size（根据 context_window 或使用显式配置）
         batch_size = _calculate_batch_size(llm_config, uncertain)
         concurrency = llm_config.get("concurrency", 1) or 1
 
-        # 构建批次列表
         num_batches = math.ceil(len(uncertain) / batch_size)
         batches = []
         for batch_idx in range(num_batches):
@@ -387,53 +365,31 @@ def filter_diffs(diff_items, llm_config: dict = None, judge_config: dict = None)
             f"batch_size={batch_size}, concurrency={concurrency}）..."
         )
 
-        # 选择执行策略
-        if concurrency > 1:
+        # 有回调 → 逐批串行处理（保证顺序 + 每批完成后回调）
+        # 无回调且并发 > 1 → 并发执行（旧行为）
+        if on_batch is not None:
+            for batch_idx, batch in enumerate(batches):
+                log.info(f"    batch {batch_idx + 1}/{num_batches} ({len(batch)} pairs)...")
+                batch_results = _judge_batch(batch, llm_config, prompt_template)
+                new_items = _process_batch_results(batch, results=batch_results)
+                inconsistent_items.extend(new_items)
+                log.info(
+                    f"    batch {batch_idx + 1}/{num_batches} 完成 "
+                    f"(+{len(new_items)} 矛盾, 累计 {len(inconsistent_items)})"
+                )
+                on_batch(batch_idx, num_batches, new_items)
+        elif concurrency > 1:
             batch_results = _run_batches_concurrent(
                 batches, llm_config, prompt_template, num_batches, concurrency
             )
+            for batch_idx, batch, results in batch_results:
+                inconsistent_items.extend(_process_batch_results(batch, results))
         else:
             batch_results = _run_batches_sequential(
                 batches, llm_config, prompt_template, num_batches
             )
-
-        # 处理结果
-        for batch_idx, batch, results in batch_results:
-            if not results:
-                continue
-            for r in results:
-                # LLM 偶发返回非结构化条目（如裸 true/false 或字符串）；
-                # 只处理 dict 类型，静默跳过其它形态。
-                if not isinstance(r, dict):
-                    log.warning(f"    ↪ 跳过非结构化 judge 输出项: {r!r}")
-                    continue
-                try:
-                    idx = int(r.get("index", 0)) - 1
-                except (ValueError, TypeError):
-                    log.warning(f"    ↪ 非法 index 字段: {r.get('index')!r}")
-                    continue
-                if 0 <= idx < len(batch) and r.get("inconsistent", False):
-                    item = batch[idx]
-                    point = r.get("point", "")
-                    doc_a_says = r.get("doc_a_says", "")
-                    doc_b_says = r.get("doc_b_says", "")
-                    # 直接填充结构化字段
-                    item.llm_point = point
-                    item.llm_doc_a_says = doc_a_says
-                    item.llm_doc_b_says = doc_b_says
-                    # 兼容性：同时填充 llm_reason
-                    if point and doc_a_says and doc_b_says:
-                        item.llm_reason = (
-                            f"{point}：A称「{doc_a_says}」，B称「{doc_b_says}」"
-                        )
-                    elif point:
-                        item.llm_reason = point
-                    else:
-                        item.llm_reason = _generate_specific_summary(item)
-                        item.llm_point = item.llm_reason
-                    item.__dict__["category"] = "inconsistency"
-                    item.__dict__["category_label"] = "文档间不一致"
-                    inconsistent_items.append(item)
+            for batch_idx, batch, results in batch_results:
+                inconsistent_items.extend(_process_batch_results(batch, results))
 
     log.info(f"  ✅ 确认不一致: {len(inconsistent_items)} 处")
     log.info(
@@ -445,3 +401,59 @@ def filter_diffs(diff_items, llm_config: dict = None, judge_config: dict = None)
         rule_filtered=len(pre_classified),
         llm_judged=len(uncertain),
     )
+
+
+# ============================================================
+# 公共接口
+# ============================================================
+
+
+def judge_pairs(pairs, llm_config: dict, judge_config: dict = None):
+    """
+    判断若干段落对（dict 形式）是否存在矛盾。
+
+    公共接口，供 RAG 问答冲突检测等外部调用，避免外部依赖 judge 模块
+    的内部私有函数与数据结构（鸭子类型）。
+
+    Args:
+        pairs: list[dict]，每个元素:
+            {
+              "a": {"text": str, "source_file": str, "location": str},
+              "b": {"text": str, "source_file": str, "location": str},
+            }
+        llm_config: LLM 配置字典（model / region / api_key_env / api_key / ...），
+            直接透传给底层 ask_once。
+        judge_config: 可选，prompt 覆盖配置（prompt_file / prompt_template）。
+
+    Returns:
+        list[dict] — LLM 结构化结果，每项含
+            {"index", "inconsistent", "point", "doc_a_says", "doc_b_says"}
+        或 None — LLM 不可用 / 调用失败
+    """
+    if not pairs:
+        return []
+
+    from types import SimpleNamespace
+
+    # 构造 judge 内部兼容的 item（鸭子类型），细节封装在 version_diff 内部，
+    # 外部调用方无需感知 TextDiffItem 结构。
+    items = []
+    for pair in pairs:
+        a, b = pair["a"], pair["b"]
+        items.append(
+            SimpleNamespace(
+                para_a=SimpleNamespace(
+                    text=a.get("text", ""),
+                    source_file=a.get("source_file", ""),
+                    location=a.get("location", ""),
+                ),
+                para_b=SimpleNamespace(
+                    text=b.get("text", ""),
+                    source_file=b.get("source_file", ""),
+                    location=b.get("location", ""),
+                ),
+            )
+        )
+
+    prompt_template = _resolve_prompt_template(judge_config or {})
+    return _judge_batch(items, llm_config, prompt_template)

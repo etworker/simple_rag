@@ -116,22 +116,6 @@ class VectorStore:
             os.makedirs(self.cache_dir)
             log.info("  🗑️ 向量缓存已清除")
 
-    def cache_stats(self):
-        """返回缓存统计信息"""
-        if not os.path.exists(self.cache_dir):
-            return {"count": 0, "size_mb": 0}
-
-        count = 0
-        total_size = 0
-        for entry in os.listdir(self.cache_dir):
-            entry_path = os.path.join(self.cache_dir, entry)
-            if os.path.isdir(entry_path):
-                count += 1
-                for f in os.listdir(entry_path):
-                    total_size += os.path.getsize(os.path.join(entry_path, f))
-
-        return {"count": count, "size_mb": round(total_size / 1024 / 1024, 2)}
-
     # ================================================================
     # 内部方法
     # ================================================================

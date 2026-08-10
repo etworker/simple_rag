@@ -224,163 +224,196 @@ def _has_section_context(context: str, old_num: str, new_num: str) -> bool:
 
 
 # ============================================================
-# 预分类规则
+# 预分类规则（规则表驱动）
 # ============================================================
 
+# 每条规则接收 (text_a, text_b, annotated, fragments)，
+# 命中则返回 PreClassifyResult，否则返回 None（继续下一条规则）。
+# 列表顺序即判定优先级：靠前的规则先判定。
 
-def pre_classify(diff_item) -> PreClassifyResult:
-    """
-    基于规则的快速预分类
 
-    只在高置信度场景下给出判断，否则返回 None（交 LLM）
-    """
-    fragments = diff_item.diff_fragments
-    text_a = diff_item.para_a.text
-    text_b = diff_item.para_b.text
-
-    # 标注所有片段
-    annotated = annotate_fragments(diff_item)
-
-    # ---- 规则1：所有差异片段都是 section_ref → numbering ----
+def _rule_all_section_ref(text_a, text_b, annotated, fragments):
+    """规则1：所有差异片段都是 section_ref → numbering"""
     if annotated and all(a.annotation == "section_ref" for a in annotated):
         return PreClassifyResult(
-            category="numbering",
-            confidence=0.9,
+            category="numbering", confidence=0.9,
             reason="所有差异均为章节编号/引用号变化",
         )
+    return None
 
-    # ---- 规则2：绝大部分(>80%)是 section_ref + 少量 ambiguous_number → numbering ----
-    if annotated:
-        ref_count = sum(
-            1 for a in annotated if a.annotation in ("section_ref", "ambiguous_number")
-        )
-        if ref_count >= len(annotated) * 0.8 and len(annotated) >= 2:
-            # 进一步验证：去掉所有 X.Y.Z 格式的数字后，剩余文本是否高度相似
-            stripped_a = re.sub(r"\d+(?:\.\d+)*(?:\-\d+)?", "", text_a)
-            stripped_b = re.sub(r"\d+(?:\.\d+)*(?:\-\d+)?", "", text_b)
-            import difflib
 
-            text_sim = difflib.SequenceMatcher(None, stripped_a, stripped_b).ratio()
-            if text_sim > 0.85:
-                return PreClassifyResult(
-                    category="numbering",
-                    confidence=0.85,
-                    reason=f"差异 {ref_count}/{len(annotated)} 为编号类，去掉数字后文本相似度 {text_sim:.0%}",
-                )
+def _rule_mostly_section_ref(text_a, text_b, annotated, fragments):
+    """规则2：绝大部分(>80%)是 section_ref/ambiguous_number → numbering"""
+    if not annotated:
+        return None
+    ref_count = sum(
+        1 for a in annotated if a.annotation in ("section_ref", "ambiguous_number")
+    )
+    if ref_count >= len(annotated) * 0.8 and len(annotated) >= 2:
+        # 进一步验证：去掉所有 X.Y.Z 格式的数字后，剩余文本是否高度相似
+        stripped_a = re.sub(r"\d+(?:\.\d+)*(?:\-\d+)?", "", text_a)
+        stripped_b = re.sub(r"\d+(?:\.\d+)*(?:\-\d+)?", "", text_b)
+        import difflib
 
-    # ---- 规则3：段落在管理信息区域 ----
-    mgmt_keyword_count = sum(1 for w in _MGMT_CONTEXT_WORDS if w in (text_a + text_b))
-    if mgmt_keyword_count >= 3:
-        # 段落含大量管理关键词
-        if annotated and all(
-            a.annotation
-            in ("date", "version", "section_ref", "mgmt_info", "ambiguous_number")
-            for a in annotated
-        ):
+        text_sim = difflib.SequenceMatcher(None, stripped_a, stripped_b).ratio()
+        if text_sim > 0.85:
             return PreClassifyResult(
-                category="metadata",
-                confidence=0.9,
-                reason=f"段落含{mgmt_keyword_count}个管理信息关键词，差异均为日期/版本/编号类",
+                category="numbering", confidence=0.85,
+                reason=f"差异 {ref_count}/{len(annotated)} 为编号类，去掉数字后文本相似度 {text_sim:.0%}",
             )
+    return None
 
-    # ---- 规则4：差异率极低且仅标点/格式 ----
+
+def _rule_mgmt_context(text_a, text_b, annotated, fragments):
+    """规则3：段落含大量管理信息关键词且差异均为日期/版本/编号类 → metadata"""
+    mgmt_keyword_count = sum(1 for w in _MGMT_CONTEXT_WORDS if w in (text_a + text_b))
+    if mgmt_keyword_count >= 3 and annotated and all(
+        a.annotation in ("date", "version", "section_ref", "mgmt_info", "ambiguous_number")
+        for a in annotated
+    ):
+        return PreClassifyResult(
+            category="metadata", confidence=0.9,
+            reason=f"段落含{mgmt_keyword_count}个管理信息关键词，差异均为日期/版本/编号类",
+        )
+    return None
+
+
+def _rule_low_diff_punct(text_a, text_b, annotated, fragments):
+    """规则4：差异率极低且仅标点/格式 → wording"""
     total_diff = sum(len(f[1]) + len(f[2]) for f in fragments)
     total_text = max(len(text_a), len(text_b), 1)
     if total_diff / total_text < 0.02:
         punct = set('，。；：！？、,.:;!? \t\n（）()【】[]「」""《》<>—─-·•…')
         all_punct = all(
             all(c in punct for c in (f[1] + f[2]).replace(" ", ""))
-            for f in fragments
-            if f[1] or f[2]
+            for f in fragments if f[1] or f[2]
         )
         if all_punct:
             return PreClassifyResult(
                 category="wording", confidence=0.9, reason="差异仅为标点/格式变化"
             )
+    return None
 
-    # ---- 规则5：封面页/下载信息/受控状态差异 ----
+
+def _rule_cover_page(text_a, text_b, annotated, fragments):
+    """规则5：封面页/受控页区域差异 → metadata"""
     cover_words_found = sum(1 for w in _COVER_PAGE_WORDS if w in (text_a + text_b))
-    if cover_words_found >= 3:
-        # 封面区域的差异（手册编号、版次、受控状态、下载时间等）
-        if len(text_a) < 600 and len(text_b) < 600:
-            return PreClassifyResult(
-                category="metadata",
-                confidence=0.92,
-                reason=f"封面/受控页区域（含{cover_words_found}个封面关键词），差异为管理信息",
-            )
+    if cover_words_found >= 3 and len(text_a) < 600 and len(text_b) < 600:
+        return PreClassifyResult(
+            category="metadata", confidence=0.92,
+            reason=f"封面/受控页区域（含{cover_words_found}个封面关键词），差异为管理信息",
+        )
+    return None
 
-    # ---- 规则6：有效页清单 ----
+
+def _rule_valid_page(text_a, text_b, annotated, fragments):
+    """规则6：有效页清单区域 → structural"""
     valid_page_found = sum(1 for w in _VALID_PAGE_WORDS if w in (text_a + text_b))
     if valid_page_found >= 2:
         return PreClassifyResult(
-            category="structural",
-            confidence=0.9,
+            category="structural", confidence=0.9,
             reason="有效页清单区域，差异为文档结构管理信息",
         )
+    return None
 
-    # ---- 规则7：修订记录表 ----
+
+def _rule_revision_table(text_a, text_b, annotated, fragments):
+    """规则7：修订记录区域 → metadata"""
     revision_found = sum(1 for w in _REVISION_TABLE_WORDS if w in (text_a + text_b))
     if revision_found >= 2:
         return PreClassifyResult(
-            category="metadata",
-            confidence=0.92,
+            category="metadata", confidence=0.92,
             reason="修订记录区域，差异为版本管理信息",
         )
+    return None
 
-    # ---- 规则8a：大部分差异是章节引用号 + 少量层级名称差异 → numbering ----
-    # 在 consistency 模式下，"管理"→"部工作" + 章节号差异的组合很常见
-    if annotated and len(annotated) >= 2:
-        section_frags = sum(
-            1 for a in annotated if a.annotation in ("section_ref", "ambiguous_number")
+
+def _rule_section_plus_hierarchy(text_a, text_b, annotated, fragments):
+    """规则8a：章节引用号 + 少量层级名称差异 → numbering"""
+    if not annotated or len(annotated) < 2:
+        return None
+    section_frags = sum(
+        1 for a in annotated if a.annotation in ("section_ref", "ambiguous_number")
+    )
+    hier_frags = 0
+    for a in annotated:
+        if a.annotation == "text_content":
+            combined = a.old_text + a.new_text
+            if any(kw in combined for kw in ("手册", "管理", "工作", "部")):
+                hier_frags += 1
+    if (section_frags + hier_frags) >= len(annotated) * 0.8 and section_frags >= 2:
+        return PreClassifyResult(
+            category="numbering", confidence=0.82,
+            reason=f"章节引用号{section_frags}处 + 层级名称差异{hier_frags}处，非实质变更",
         )
-        hier_frags = 0
-        for a in annotated:
-            if a.annotation == "text_content":
-                combined = a.old_text + a.new_text
-                if any(kw in combined for kw in ("手册", "管理", "工作", "部")):
-                    hier_frags += 1
-        if (section_frags + hier_frags) >= len(annotated) * 0.8 and section_frags >= 2:
-            return PreClassifyResult(
-                category="numbering",
-                confidence=0.82,
-                reason=f"章节引用号{section_frags}处 + 层级名称差异{hier_frags}处，非实质变更",
-            )
+    return None
 
-    # ---- 规则8：层级名称差异（consistency 模式下天然存在） ----
-    # 当两段文本高度相似但只是"管理手册"→"工作手册"、"分管领导"→"总经理"这类差异
-    if annotated:
-        text_frags = [a for a in annotated if a.annotation == "text_content"]
-        if text_frags and len(text_frags) <= 5:
-            all_hierarchy = True
-            for frag in text_frags:
-                is_hier = False
-                for pat_a, pat_b in _HIERARCHY_PATTERNS:
-                    if (
-                        pat_a.search(frag.old_text) and pat_b.search(frag.new_text)
-                    ) or (pat_b.search(frag.old_text) and pat_a.search(frag.new_text)):
-                        is_hier = True
-                        break
-                # 短文本片段（<6字）中仅含手册/部门名的差异也视为层级差异
-                if (
-                    not is_hier
-                    and len(frag.old_text.strip()) < 6
-                    and len(frag.new_text.strip()) < 6
-                ):
-                    combined = frag.old_text + frag.new_text
-                    if any(
-                        kw in combined
-                        for kw in ("手册", "部", "管理", "工作", "领导", "经理")
-                    ):
-                        is_hier = True
-                if not is_hier:
-                    all_hierarchy = False
-                    break
-            if all_hierarchy:
-                return PreClassifyResult(
-                    category="wording",
-                    confidence=0.85,
-                    reason="层级名称差异（管理手册↔工作手册/分管领导↔总经理），非实质变更",
-                )
+
+def _rule_hierarchy_names(text_a, text_b, annotated, fragments):
+    """规则8：层级名称差异（管理手册↔工作手册等） → wording"""
+    if not annotated:
+        return None
+    text_frags = [a for a in annotated if a.annotation == "text_content"]
+    if not text_frags or len(text_frags) > 5:
+        return None
+    all_hierarchy = True
+    for frag in text_frags:
+        is_hier = False
+        for pat_a, pat_b in _HIERARCHY_PATTERNS:
+            if (
+                pat_a.search(frag.old_text) and pat_b.search(frag.new_text)
+            ) or (pat_b.search(frag.old_text) and pat_a.search(frag.new_text)):
+                is_hier = True
+                break
+        # 短文本片段（<6字）中仅含手册/部门名的差异也视为层级差异
+        if (
+            not is_hier
+            and len(frag.old_text.strip()) < 6
+            and len(frag.new_text.strip()) < 6
+        ):
+            combined = frag.old_text + frag.new_text
+            if any(kw in combined for kw in ("手册", "部", "管理", "工作", "领导", "经理")):
+                is_hier = True
+        if not is_hier:
+            all_hierarchy = False
+            break
+    if all_hierarchy:
+        return PreClassifyResult(
+            category="wording", confidence=0.85,
+            reason="层级名称差异（管理手册↔工作手册/分管领导↔总经理），非实质变更",
+        )
+    return None
+
+
+# 规则优先级：靠前的规则先判定
+_PRECLASSIFY_RULES = [
+    _rule_all_section_ref,
+    _rule_mostly_section_ref,
+    _rule_mgmt_context,
+    _rule_low_diff_punct,
+    _rule_cover_page,
+    _rule_valid_page,
+    _rule_revision_table,
+    _rule_section_plus_hierarchy,
+    _rule_hierarchy_names,
+]
+
+
+def pre_classify(diff_item) -> PreClassifyResult:
+    """
+    基于规则的快速预分类（规则表驱动）
+
+    只在高置信度场景下给出判断，否则返回 None（交 LLM）
+    """
+    fragments = diff_item.diff_fragments
+    text_a = diff_item.para_a.text
+    text_b = diff_item.para_b.text
+    annotated = annotate_fragments(diff_item)
+
+    for rule in _PRECLASSIFY_RULES:
+        result = rule(text_a, text_b, annotated, fragments)
+        if result is not None:
+            return result
 
     # 不确定，交 LLM
     return PreClassifyResult(category=None, confidence=0, reason="")
@@ -389,41 +422,6 @@ def pre_classify(diff_item) -> PreClassifyResult:
 # ============================================================
 # 差异描述增强（给 LLM 提供标注后的 context）
 # ============================================================
-
-
-def format_annotated_diff(diff_item) -> str:
-    """
-    格式化差异描述（带标注），用于 LLM prompt
-
-    例如：
-      "2.3" → "4.5" [章节引用号]
-      "30天" → "15天" [业务数值]
-      "信息技术部" → "系统研发处" [文本内容]
-    """
-    annotated = annotate_fragments(diff_item)
-    parts = []
-
-    LABEL_MAP = {
-        "section_ref": "章节引用号",
-        "numeric_value": "业务数值",
-        "date": "日期",
-        "version": "版本号",
-        "mgmt_info": "管理信息",
-        "ambiguous_number": "数字(可能是编号)",
-        "text_content": "文本内容",
-        "mixed": "混合",
-    }
-
-    for a in annotated[:5]:  # 最多展示5个片段
-        label = LABEL_MAP.get(a.annotation, a.annotation)
-        if a.ftype == "replace":
-            parts.append(f'"{a.old_text}" → "{a.new_text}" [{label}]')
-        elif a.ftype == "delete":
-            parts.append(f'删除 "{a.old_text}" [{label}]')
-        elif a.ftype == "insert":
-            parts.append(f'新增 "{a.new_text}" [{label}]')
-
-    return "; ".join(parts)
 
 
 # ============================================================
