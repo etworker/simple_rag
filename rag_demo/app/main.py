@@ -46,7 +46,7 @@ from fastapi.websockets import WebSocket, WebSocketDisconnect
 
 from app.routes import _state, documents, qa, review
 from app.services.chat_history import ChatHistoryStore
-from app.services.config_store import ConfigStore
+from app.services.config_store import CONFIG_DESCRIPTIONS, ConfigStore
 from app.services.doc_store import DocStore
 from app.services.qa_engine import QAEngine
 
@@ -93,7 +93,10 @@ config_store = ConfigStore(config_path=CONFIG_PATH)
 # 注意：配置值可能为空字符串，需回退默认，避免 os.makedirs("") 崩溃
 CACHE_DIR = config_store.get("cache.base_dir", _CACHE_ROOT) or _CACHE_ROOT
 os.makedirs(CACHE_DIR, exist_ok=True)
-UPLOAD_DIR = config_store.get("cache.upload_dir", os.path.join(CACHE_DIR, "uploads")) or os.path.join(CACHE_DIR, "uploads")
+UPLOAD_DIR = (
+    config_store.get("cache.upload_dir", os.path.join(CACHE_DIR, "uploads"))
+    or os.path.join(CACHE_DIR, "uploads")
+)
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 log.info(f"缓存目录: {CACHE_DIR}")
 log.info(f"上传目录: {UPLOAD_DIR}")
@@ -132,6 +135,12 @@ async def get_config():
     return config_store.to_dict()
 
 
+@app.get("/api/config/schema")
+async def get_config_schema():
+    """获取配置项描述（用于前端 UI 展示每项配置的中文说明）"""
+    return CONFIG_DESCRIPTIONS
+
+
 @app.post("/api/config")
 async def update_config(updates: dict):
     """更新配置"""
@@ -146,7 +155,7 @@ async def index():
     """返回主页面（禁用缓存，确保始终加载最新版本）"""
     html_path = os.path.join(STATIC_DIR, "index.html")
     if os.path.exists(html_path):
-        with open(html_path, "r", encoding="utf-8") as f:
+        with open(html_path, encoding="utf-8") as f:
             content = f.read()
         # 加版本号注释，方便确认是否加载了最新版本
         return HTMLResponse(
@@ -225,7 +234,7 @@ async def tail_logs(lines: int = 100):
         # 如果不是从头开始读，第一行可能不完整，去掉
         if read_pos > 0:
             result_lines = result_lines[1:]
-        return {"lines": [l.rstrip() for l in result_lines[-lines:] if l.strip()]}
+        return {"lines": [line.rstrip() for line in result_lines[-lines:] if line.strip()]}
     except Exception as e:
         return {"lines": [f"读取日志失败: {e}"]}
 

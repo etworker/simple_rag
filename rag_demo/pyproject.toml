@@ -34,3 +34,12 @@ packages = ["app"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 120
+select = ["E", "F", "I", "UP", "B", "C4", "SIM", "FURB", "RUF"]
+ignore = ["BLE001", "S110", "ASYNC230", "RUF001", "RUF002", "RUF003", "E402"]
+
+[tool.ruff.lint.per-file-ignores]
+# config_store.py 的 CONFIG_DESCRIPTIONS 含长中文说明字符串，无法合理拆行
+"app/services/config_store.py" = ["E501"]
