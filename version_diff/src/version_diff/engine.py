@@ -19,6 +19,7 @@ DiffEngine — 文档差异检测引擎主入口
 import logging
 import os
 import re
+import unicodedata
 import time
 from collections.abc import Callable
 from difflib import SequenceMatcher
@@ -111,6 +112,32 @@ def _is_tracking_table_row(change) -> bool:
     if text_to_check and _TABLE_ROW_RE.search(text_to_check):
         return True
     return False
+
+
+def _normalize_text(text: str) -> str:
+    """文本归一化：NFKC 标准化 + 去除零宽字符 + 统一空白 + 全角字母数字转半角
+
+    用于 cross-doc 预过滤，消除 PDF 解析引入的不可见差异，
+    把"肉眼相同但字节不同"的段落对排除在 LLM 判断之外。
+    """
+    if not text:
+        return ""
+    # NFKC 归一化（全角字母数字 → 半角，兼容分解形态）
+    t = unicodedata.normalize("NFKC", text)
+    # 去除零宽字符（BOM、零宽空格、零宽连字、零宽非断字、软连字符等）
+    t = re.sub(r"[\u200b\u200c\u200d\ufeff\u00ad\u2060\ufe0f\ufe0e]", "", t)
+    # 全角英文标点（，：；！？）→ 半角（仅在汉字语境下无法区分的场景）
+    # 注意：unicodedata NFKC 已处理大部分，但以下个别符号仍需映射
+    trans = {
+        "\uff08": "(", "\uff09": ")", "\uff1a": ":", "\uff1b": ";",
+        "\u300a": "<", "\u300b": ">", "\u3001": ",",  # 顿号 → 半角逗号
+        "\u201c": '"', "\u201d": '"', "\u2018": "'", "\u2019": "'",
+    }
+    for k, v in trans.items():
+        t = t.replace(k, v)
+    # 空白统一：多种不间断空格、全角空格 → 单个普通空格
+    t = re.split(r"[\s\u00a0\u2000-\u200a\u202f\u205f\u3000]+", t)
+    return " ".join(filter(None, t))
 
 
 def _classify_change(category: str, change):
@@ -478,7 +505,11 @@ class DiffEngine:
         t3 = time.time()
         diff_items = []
         for para_a, para_b, sim in candidates:
+            # 路径 1：strip 后完全相同 → 直接跳过
             if para_a.text.strip() == para_b.text.strip():
+                continue
+            # 路径 2：归一化后相同（消除 PDF 解析差异）→ 跳过，避免浪费 LLM
+            if _normalize_text(para_a.text) == _normalize_text(para_b.text):
                 continue
             item = compute_diff(para_a, para_b, sim)
             if item.has_changes:
