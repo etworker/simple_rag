@@ -40,9 +40,14 @@ uploads/
 .vector_cache/
 *.npy
 
+# ===== 测试运行时生成的夹具 =====
+# FAISS 向量缓存（cache_key 命名，运行时自动重建）
+version_diff/src/_mock_vc/
+
 # ===== IDE =====
 .idea/
 .vscode/
+.workbuddy/
 *.swp
 *.swo
 

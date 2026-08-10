@@ -1,0 +1,23 @@
+# 依赖与缓存
+**/__pycache__
+**/*.pyc
+**/.venv
+**/node_modules
+**/.git
+**/.cache
+
+# 运行时数据与日志
+data
+temp
+**/*.log
+uv.out
+uv.err
+uvicorn_out.log
+uvicorn_err.log
+**/.simple_rag
+
+# 密钥：禁止打进镜像（运行时由 Secrets Manager 注入）
+**/config.json
+
+# 本地工具目录
+.workbuddy
