@@ -145,7 +145,7 @@ incons: list[Inconsistency] = engine.check_conflicts(retrieved_passages: list[di
 # 对 version_compare 的 added/removed 段落，剥离下列正则后为空 → 判为纯元数据噪声，
 # 归入 VersionDiffResult.minor_changes（而非 changes）。默认值通用、可被覆盖。
 cfg = Config.from_dict({
-    "embedding": {"model": "BAAI/bge-base-zh-v1.5"},
+    "embedding": {"model": "BAAI/bge-small-zh-v1.5"},
     "llm": {"provider": "bedrock", "model": "zai.glm-4.7-flash"},
     "diff": {
         "similarity_threshold": 0.80, "top_k": 3, "batch_size": 5,

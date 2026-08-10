@@ -23,7 +23,7 @@ def version_diff_result():
     from version_diff import DiffEngine
 
     engine = DiffEngine(config={
-        "embedding": {"model": "BAAI/bge-base-zh-v1.5"},
+        "embedding": {"model": "BAAI/bge-small-zh-v1.5"},
         "diff": {"similarity_threshold": 0.80},
     })
     result = engine.version_compare(V1_PATH, V2_PATH)

@@ -15,7 +15,7 @@ class Config:
 
     Example:
         config = Config(
-            embedding={"model": "BAAI/bge-base-zh-v1.5"},
+            embedding={"model": "BAAI/bge-small-zh-v1.5"},
             llm={"provider": "bedrock_converse", "model": "zai.glm-4.7-flash"},
             diff={"similarity_threshold": 0.80, "batch_size": 5},
         )
@@ -23,7 +23,7 @@ class Config:
 
     embedding: dict[str, Any] = field(
         default_factory=lambda: {
-            "model": os.environ.get("EMBEDDING_MODEL", "BAAI/bge-base-zh-v1.5"),
+            "model": os.environ.get("EMBEDDING_MODEL", "BAAI/bge-small-zh-v1.5"),
             "device": os.environ.get("SIMPLE_RAG_EMBEDDING_DEVICE", "auto"),
             # dtype: "auto" / "float16" / "bfloat16" / "float32"，仅在 device 非 cpu 时生效
             "dtype": os.environ.get("SIMPLE_RAG_EMBEDDING_DTYPE", ""),

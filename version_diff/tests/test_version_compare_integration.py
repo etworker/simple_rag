@@ -38,7 +38,7 @@ def _mock_filter(prompt, llm_config, max_retries=2, retry_backoff=1.0):
 @pytest.fixture
 def engine():
     cfg = {
-        "embedding": {"model": "BAAI/bge-base-zh-v1.5", "device": "cpu"},
+        "embedding": {"model": "BAAI/bge-small-zh-v1.5", "device": "cpu"},
         "llm": {
             "provider": "bedrock_converse",
             "model": "zai.glm-4.7-flash",

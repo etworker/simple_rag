@@ -28,7 +28,7 @@ except ImportError as e:
 # 测试 2: Config 创建
 print("\n--- 测试2: Config ---")
 config = Config.from_dict({
-    "embedding": {"model": "BAAI/bge-base-zh-v1.5"},
+    "embedding": {"model": "BAAI/bge-small-zh-v1.5"},
     "llm": {"provider": "bedrock_converse", "model": "zai.glm-4.7-flash"},
     "diff": {"similarity_threshold": 0.80, "batch_size": 5},
 })
@@ -69,7 +69,7 @@ print("   ✅ DiffResult 模型正确")
 print("\n--- 测试4: DiffEngine 初始化 ---")
 try:
     engine = DiffEngine(config={
-        "embedding": {"model": "BAAI/bge-base-zh-v1.5"},
+        "embedding": {"model": "BAAI/bge-small-zh-v1.5"},
         "llm": {"provider": "bedrock_converse", "model": "zai.glm-4.7-flash",
                 "region": "us-east-1", "api_key_env": "AWS_BEARER_TOKEN_BEDROCK"},
         "diff": {"similarity_threshold": 0.80, "batch_size": 5},

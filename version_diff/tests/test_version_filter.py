@@ -40,7 +40,7 @@ def filtered_result():
         pytest.skip("未配置 LLM，跳过需要在线 LLM 的测试")
 
     engine = DiffEngine(config={
-        "embedding": {"model": "BAAI/bge-base-zh-v1.5"},
+        "embedding": {"model": "BAAI/bge-small-zh-v1.5"},
         "diff": {"similarity_threshold": 0.80, "batch_size": 10},
         "llm": llm_config,
     })

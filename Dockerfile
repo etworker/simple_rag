@@ -2,7 +2,7 @@
 #
 # Simple-RAG 容器化构建（用于 AWS ECR / ECS Fargate / EKS）
 # 关键约定：
-#   - 依赖 + embedding 模型(BAAI/bge-base-zh-v1.5) 在 build 阶段预置
+#   - 依赖 + embedding 模型(BAAI/bge-small-zh-v1.5) 在 build 阶段预置
 #   - 运行时 HF_HUB_OFFLINE=1，不联网
 #   - ~/.simple_rag -> /build/.simple_rag（持久化卷挂载点）
 #   - config.json 由 Secrets Manager 注入，镜像内仅留 example 作为兜底
@@ -29,7 +29,7 @@ COPY llm_chat /build/llm_chat
 ENV HF_HUB_OFFLINE=0 TRANSFORMERS_OFFLINE=0 HF_HOME=/build/.cache/huggingface
 RUN cd /build/rag_demo && (uv sync --frozen --no-dev || uv sync --no-dev)
 RUN cd /build/rag_demo && uv run python -c \
-        "from sentence_transformers import SentenceTransformer; SentenceTransformer('BAAI/bge-base-zh-v1.5')"
+        "from sentence_transformers import SentenceTransformer; SentenceTransformer('BAAI/bge-small-zh-v1.5')"
 
 # ---------- runtime ----------
 FROM python:3.12-slim AS runtime

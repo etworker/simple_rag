@@ -359,7 +359,7 @@ class DiffEngine:
         from version_diff import DiffEngine
 
         engine = DiffEngine(config={
-            "embedding": {"model": "BAAI/bge-base-zh-v1.5"},
+            "embedding": {"model": "BAAI/bge-small-zh-v1.5"},
             "llm": {"provider": "bedrock_converse", "model": "zai.glm-4.7-flash"},
             "diff": {"similarity_threshold": 0.80},
         })
