@@ -1565,24 +1565,31 @@ function selectLlmProfile(name){
 function renderProfileOverview(){
   const container=document.getElementById('profileOverviewList');
   if(!container)return;
-  container.innerHTML='';
   const names=Object.keys(_settingsProfiles);
   if(names.length===0){
     container.innerHTML='<div class="hint">暂无 Profile，请先「+ 从模板新增」或到「Profile 管理」添加。</div>';
     return;
   }
+  // 表格风格：表头 + 数据行，行间分隔线，与整个设置页风格统一
   const list=document.createElement('div');
   list.className='profile-overview';
+  list.innerHTML=
+    `<div class="po-head">`+
+      `<span class="po-col po-name">Profile</span>`+
+      `<span class="po-col po-provider">服务商</span>`+
+      `<span class="po-col po-model">模型</span>`+
+      `<span class="po-col po-action"></span>`+
+    `</div>`;
   for(const name of names){
     const p=_settingsProfiles[name]||{};
     const row=document.createElement('div');
-    row.className='profile-overview-item';
+    row.className='po-row';
     row.dataset.name=name;
     row.innerHTML=
-      `<span class="po-name">${esc(name)}</span>`+
-      `<span class="po-provider">${esc(p.provider||'')}</span>`+
-      `<span class="po-model">${esc(p.model||'')}</span>`+
-      `<button class="mini-btn">管理</button>`;
+      `<span class="po-col po-name">${esc(name)}</span>`+
+      `<span class="po-col po-provider">${esc(p.provider||'—')}</span>`+
+      `<span class="po-col po-model">${esc(p.model||'—')}</span>`+
+      `<span class="po-col po-action"><button class="mini-btn">管理</button></span>`;
     // 点击整行进入该 Profile 的管理子页
     row.addEventListener('click',()=>{
       _settingsSelectedProfile=name;
