@@ -1513,6 +1513,7 @@ function renderSettingsForm(){
   renderProfileSelect();
   renderLlmProfile();
   renderRouting();
+  renderProfileOverview();
   // Embedding
   const emb=_settingsConfig.embedding||{};
   document.getElementById('emb-model').value=emb.model||'';
@@ -1551,6 +1552,47 @@ function renderProfileSelect(){
     if(name===_settingsSelectedProfile)opt.selected=true;
     sel.appendChild(opt);
   }
+}
+
+// 切换 Profile：更新选中名并刷新该 Profile 的字段（修复切换不生效的 bug）
+function selectLlmProfile(name){
+  _settingsSelectedProfile=name;
+  renderProfileSelect();
+  renderLlmProfile();
+}
+
+// LLM 路由页的 Profile 概览列表：每个 Profile 一行（名字 + 服务商 + 模型），点击进入管理
+function renderProfileOverview(){
+  const container=document.getElementById('profileOverviewList');
+  if(!container)return;
+  container.innerHTML='';
+  const names=Object.keys(_settingsProfiles);
+  if(names.length===0){
+    container.innerHTML='<div class="hint">暂无 Profile，请先「+ 从模板新增」或到「Profile 管理」添加。</div>';
+    return;
+  }
+  const list=document.createElement('div');
+  list.className='profile-overview';
+  for(const name of names){
+    const p=_settingsProfiles[name]||{};
+    const row=document.createElement('div');
+    row.className='profile-overview-item';
+    row.dataset.name=name;
+    row.innerHTML=
+      `<span class="po-name">${esc(name)}</span>`+
+      `<span class="po-provider">${esc(p.provider||'')}</span>`+
+      `<span class="po-model">${esc(p.model||'')}</span>`+
+      `<button class="mini-btn">管理</button>`;
+    // 点击整行进入该 Profile 的管理子页
+    row.addEventListener('click',()=>{
+      _settingsSelectedProfile=name;
+      renderProfileSelect();
+      renderLlmProfile();
+      switchSettingsTab('profiles',document.querySelector('.sn:nth-child(2)'));
+    });
+    list.appendChild(row);
+  }
+  container.appendChild(list);
 }
 
 function renderLlmProfile(){
@@ -1605,6 +1647,7 @@ function addLlmProfile(){
   renderProfileSelect();
   renderLlmProfile();
   renderRouting();
+  renderProfileOverview();
 }
 
 function delLlmProfile(){
@@ -1614,6 +1657,7 @@ function delLlmProfile(){
   renderProfileSelect();
   renderLlmProfile();
   renderRouting();
+  renderProfileOverview();
 }
 
 async function saveSettings(){

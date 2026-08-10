@@ -122,7 +122,8 @@
     <!-- ============ 设置页 ============ -->
     <div class="page settings-page" id="pageSettings">
         <div class="settings-nav">
-            <button class="sn active" onclick="switchSettingsTab('llm',this)">LLM 模型</button>
+            <button class="sn active" onclick="switchSettingsTab('llm',this)">LLM 路由</button>
+            <button class="sn" onclick="switchSettingsTab('profiles',this)">Profile 管理</button>
             <button class="sn" onclick="switchSettingsTab('emb',this)">向量模型</button>
             <button class="sn" onclick="switchSettingsTab('ret',this)">检索/审核</button>
             <button class="sn" onclick="switchSettingsTab('prompt',this)">Prompt</button>
@@ -132,14 +133,30 @@
             <button class="mini-btn primary" onclick="saveSettings()">💾 保存</button>
         </div>
         <div class="settings-content">
-            <!-- LLM -->
+            <!-- LLM 路由（总页：只做场景选择，不展示复杂参数） -->
             <div class="sp active" id="sp-llm">
-                <div class="setting-row"><label>Profile</label><select id="llmProfileSelect" onchange="renderLlmProfile()"></select><button class="mini-btn" onclick="addLlmProfile()">+ 新增</button><button class="mini-btn danger" onclick="delLlmProfile()">删除</button></div>
-                <div id="llmProfileFields"></div>
-                <div class="setting-section-title">场景路由</div>
+                <div class="setting-section-title">场景路由 —— 选择每个场景使用的 LLM Profile</div>
                 <div class="setting-row"><label>问答</label><select id="route-qa"></select></div>
                 <div class="setting-row"><label>预审核</label><select id="route-pre_review"></select></div>
                 <div class="setting-row"><label>冲突检测</label><select id="route-conflict_detection"></select></div>
+                <div class="setting-section-title">Profile 概览</div>
+                <div id="profileOverviewList"></div>
+                <div class="setting-row" style="margin-top:8px">
+                    <button class="mini-btn primary" onclick="switchSettingsTab('profiles',document.querySelector('.sn:nth-child(2)'))">管理 Profile（连接/模型/重试参数）</button>
+                    <button class="mini-btn" onclick="addLlmProfile()">+ 从模板新增</button>
+                </div>
+            </div>
+            <!-- Profile 管理（子页：集中配置每个 LLM 的完整参数） -->
+            <div class="sp" id="sp-profiles">
+                <div class="setting-row">
+                    <label>Profile</label>
+                    <select id="llmProfileSelect" onchange="selectLlmProfile(this.value)"></select>
+                    <button class="mini-btn danger" onclick="delLlmProfile()">删除</button>
+                </div>
+                <div id="llmProfileFields"></div>
+                <div class="setting-row" style="margin-top:8px">
+                    <span class="hint">参数按 Profile 独立保存，选择名字即加载该 Profile 的对应配置。</span>
+                </div>
             </div>
             <!-- Embedding -->
             <div class="sp" id="sp-emb">
