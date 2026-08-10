@@ -37,6 +37,18 @@ DEFAULT_CONFIG = {
     "noise_patterns": [
         r"^\s*$",
     ],
+    # 元数据行剥离：独立成行的版本管理元数据（修订日期/发布日期/独立日期/版次等）
+    # 整行匹配时从段落流中剥离（不进正文段落），避免被并入相邻正文造成句子拼接。
+    # 通用文档元数据模式，可被用户 config['extract']['noise_line_patterns'] 覆盖。
+    "noise_line_patterns": [
+        r"^修订日期\s*[：:]\s*\S+$",
+        r"^发布日期\s*[：:]\s*\S+$",
+        r"^修订时间\s*[：:]\s*\S+$",
+        r"^\d{4}[-./]\s*\d{1,2}[-./]\s*\d{1,2}$",
+        r"^版\s*次\s*[：:]\s*\S+$",
+        r"^版本号\s*[：:]\s*\S+$",
+        r"^(?:R\d{2,}|版本\s*\S+)\s*$",
+    ],
 }
 
 def get_extract_config(config=None):
@@ -269,6 +281,7 @@ def _split_stream(full_text, cfg):
     4. 长度上限强制断开
     """
     max_len = cfg['max_paragraph_length']
+    noise_line_re = [re.compile(p) for p in cfg.get('noise_line_patterns', [])]
     paragraphs = []
     lines = full_text.split('\n')
     current_lines = []
@@ -283,6 +296,17 @@ def _split_stream(full_text, cfg):
 
         # 空行 → 断开
         if not stripped:
+            if current_lines:
+                para_text = ' '.join(current_lines)
+                if len(para_text.strip()) > 0:
+                    paragraphs.append((para_text, current_start, line_start))
+                current_lines = []
+            current_start = char_pos
+            continue
+
+        # 元数据行剥离：整行匹配配置的版本管理元数据模式 → 跳过（不进正文段落）
+        # 避免"修订日期：2026-05-08"这类独立行被并入相邻正文造成句子拼接。
+        if noise_line_re and any(p.match(stripped) for p in noise_line_re):
             if current_lines:
                 para_text = ' '.join(current_lines)
                 if len(para_text.strip()) > 0:
