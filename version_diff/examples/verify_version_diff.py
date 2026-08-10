@@ -133,7 +133,7 @@ def main(old_path, new_path, model, do_summary):
     print(f"新版: {new_path}")
 
     cfg = {
-        "embedding": {"model": "BAAI/bge-base-zh-v1.5", "device": "cpu"},
+        "embedding": {"model": "BAAI/bge-small-zh-v1.5", "device": "cpu"},
         "llm": {
             "provider": "bedrock_converse",
             "model": model,

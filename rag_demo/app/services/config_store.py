@@ -27,7 +27,7 @@ DEFAULT_CONFIG = {
         "upload_dir": "",  # 空=默认 ~/.simple_rag/uploads/
     },
     "embedding": {
-        "model": "BAAI/bge-base-zh-v1.5",
+        "model": "BAAI/bge-small-zh-v1.5",
         "cache_dir": "",
         # device: "auto" / "cpu" / "cuda" / "cuda:0" / "mps"
         "device": "auto",
