@@ -1445,12 +1445,47 @@ let _settingsConfig=null;       // 打开时的配置快照
 let _settingsProfiles={};       // llm_profiles 的本地可编辑副本
 let _settingsSelectedProfile=''; // 当前选中的 profile 名
 
-const LLM_PROFILE_FIELDS=[
-  ['provider','provider'],['model','模型'],['base_url','base_url'],['api_key','api_key'],
-  ['api_key_env','api_key_env'],['endpoint','endpoint'],['region','region'],
-  ['max_tokens','max_tokens'],['timeout','timeout'],['max_retries','max_retries'],
-  ['retry_backoff','retry_backoff'],['context_window','context_window'],['concurrency','concurrency'],
+// 每个 LLM Profile 独立的字段组（分组 + 中文标签，选择名字即展示该 Profile 对应的完整配置）
+const LLM_PROFILE_GROUPS=[
+  {
+    title:'连接',
+    fields:[
+      ['provider','服务商'],
+      ['base_url','Base URL'],
+      ['api_key','API Key'],
+      ['api_key_env','API Key 环境变量'],
+      ['region','区域(region)'],
+      ['endpoint','接口(endpoint)'],
+    ],
+  },
+  {
+    title:'模型',
+    fields:[
+      ['model','模型(model)'],
+      ['max_tokens','max_tokens'],
+      ['context_window','上下文窗口'],
+    ],
+  },
+  {
+    title:'重试与并发',
+    fields:[
+      ['timeout','超时(秒)'],
+      ['max_retries','最大重试'],
+      ['retry_backoff','重试间隔'],
+      ['concurrency','并发数'],
+    ],
+  },
 ];
+// 扁平 key 列表，供保存逻辑遍历
+const LLM_PROFILE_FIELDS=LLM_PROFILE_GROUPS.flatMap(g=>g.fields);
+// 数字型字段
+const LLM_NUM_FIELDS=['max_tokens','timeout','max_retries','context_window','concurrency'];
+// 新建 Profile 的常用模板（预填，选模板名即得一组完整参数）
+const LLM_PROFILE_TEMPLATES={
+  'OpenAI 兼容':{provider:'openai',model:'',base_url:'',api_key:'',api_key_env:'',endpoint:'chat',region:'',max_tokens:2048,timeout:120,max_retries:3,retry_backoff:2.0,context_window:8192,concurrency:1},
+  'Bedrock (Glm flash)':{provider:'bedrock',model:'zai.glm-4.7-flash',region:'us-east-1',api_key_env:'AWS_BEARER_TOKEN_BEDROCK',endpoint:'',max_tokens:2048,timeout:120,max_retries:3,retry_backoff:2.0,context_window:8192,concurrency:1},
+  'Bedrock (Kimi thinking)':{provider:'bedrock',model:'moonshot.kimi-k2-thinking',region:'us-east-1',api_key_env:'AWS_BEARER_TOKEN_BEDROCK',endpoint:'',max_tokens:4096,timeout:180,max_retries:2,retry_backoff:3.0,context_window:128000,concurrency:1},
+};
 
 async function loadSettings(){
   document.getElementById('settingsStatus').textContent='加载中...';
@@ -1522,11 +1557,17 @@ function renderLlmProfile(){
   const p=_settingsProfiles[_settingsSelectedProfile]||{};
   const container=document.getElementById('llmProfileFields');
   container.innerHTML='';
-  for(const [key,label] of LLM_PROFILE_FIELDS){
-    const row=document.createElement('div');
-    row.className='setting-row';
-    row.innerHTML=`<label>${label}</label><input id="lp-${key}" class="long" value="${esc(p[key]??'')}" ${key==='api_key'?'type="password"':''}>`;
-    container.appendChild(row);
+  for(const group of LLM_PROFILE_GROUPS){
+    const sec=document.createElement('div');
+    sec.className='setting-section-title';
+    sec.textContent=group.title;
+    container.appendChild(sec);
+    for(const [key,label] of group.fields){
+      const row=document.createElement('div');
+      row.className='setting-row';
+      row.innerHTML=`<label>${label}</label><input id="lp-${key}" class="long" value="${esc(p[key]??'')}" ${key==='api_key'?'type="password"':''}>`;
+      container.appendChild(row);
+    }
   }
 }
 
@@ -1546,12 +1587,24 @@ function renderRouting(){
 }
 
 function addLlmProfile(){
+  // 从常用模板中选择，选模板名即预填一组完整参数；也可自定义
+  const templateNames=Object.keys(LLM_PROFILE_TEMPLATES);
+  const template=prompt('选择模板（或留空自定义）：\n'+templateNames.join('\n'));
+  let base={};
+  if(template&&template in LLM_PROFILE_TEMPLATES){
+    base=JSON.parse(JSON.stringify(LLM_PROFILE_TEMPLATES[template]));
+  }else if(template&&template!==''){
+    alert('模板名无效，使用空模板');base={provider:'openai',model:'',base_url:'',api_key:'',endpoint:'chat',max_tokens:2048,timeout:120,max_retries:3,retry_backoff:2.0,context_window:8192,concurrency:1};
+  }else{
+    base={provider:'openai',model:'',base_url:'',api_key:'',endpoint:'chat',max_tokens:2048,timeout:120,max_retries:3,retry_backoff:2.0,context_window:8192,concurrency:1};
+  }
   const name=prompt('新 Profile 名称:');
   if(!name||name in _settingsProfiles){alert('名称为空或已存在');return;}
-  _settingsProfiles[name]={provider:'openai',model:'',base_url:'',api_key:'',endpoint:'chat',max_tokens:2048,timeout:120,max_retries:3,retry_backoff:2.0,context_window:8192,concurrency:1};
+  _settingsProfiles[name]=base;
   _settingsSelectedProfile=name;
   renderProfileSelect();
   renderLlmProfile();
+  renderRouting();
 }
 
 function delLlmProfile(){
@@ -1571,7 +1624,7 @@ async function saveSettings(){
       const el=document.getElementById('lp-'+key);
       if(el){
         const v=el.value.trim();
-        if(['max_tokens','timeout','max_retries','context_window','concurrency'].includes(key))
+        if(LLM_NUM_FIELDS.includes(key))
           p[key]=parseInt(v)||0;
         else if(key==='retry_backoff')
           p[key]=parseFloat(v)||0;
