@@ -12,7 +12,6 @@
 
 import os
 import re
-import hashlib
 from pathlib import Path
 from collections import Counter
 
