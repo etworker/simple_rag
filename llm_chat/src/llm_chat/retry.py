@@ -6,9 +6,26 @@
 """
 
 import logging
+import re
 import time
 
 log = logging.getLogger("llm_chat.retry")
+
+# 从异常信息中提取 HTTP 状态码，例如 "服务端错误 (503): ..." 或 "HTTP 503: ..."
+_STATUS_RE = re.compile(r"\((\d{3})\)|\b(\d{3})\b")
+
+
+def _extract_status_code(msg: str) -> int | None:
+    """从 RuntimeError 信息中提取 HTTP 状态码（若有）"""
+    m = _STATUS_RE.search(msg)
+    if not m:
+        return None
+    code = int(m.group(1) or m.group(2))
+    # 仅当数字落在合法 HTTP 状态码区间时才认作状态码，
+    # 避免把正文里出现的 3 位数误判为状态码
+    if 100 <= code <= 599:
+        return code
+    return None
 
 
 def retry_http(fn, max_retries: int = 3, backoff: float = 2.0):
@@ -33,15 +50,12 @@ def retry_http(fn, max_retries: int = 3, backoff: float = 2.0):
         except RuntimeError as e:
             last_err = e
             msg = str(e)
-            # 429 或 5xx 才重试
-            should_retry = (
-                "429" in msg
-                or "500" in msg
-                or "502" in msg
-                or "503" in msg
-                or "504" in msg
-                or "网络请求失败" in msg
-            )
+            # 429（限流）或 5xx（服务端错误）才重试；
+            # 从异常信息提取真实状态码，避免把正文里的 "500" 等数字误判为重试条件
+            status = _extract_status_code(msg)
+            should_retry = status in (429,) or (status is not None and 500 <= status < 600)
+            if not should_retry and "网络请求失败" in msg:
+                should_retry = True
             if not should_retry or attempt == max_retries:
                 raise
             wait = backoff**attempt

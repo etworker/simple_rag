@@ -4,17 +4,16 @@ Bedrock Converse API 后端
 
 import json
 import logging
-import os
-import urllib.error
 import urllib.request
 
+from llm_chat.backends.base import BaseHTTPBackend
 from llm_chat.defaults import BEDROCK_DEFAULTS
 from llm_chat.retry import retry_http
 
 log = logging.getLogger("llm_chat.bedrock")
 
 
-class BedrockBackend:
+class BedrockBackend(BaseHTTPBackend):
     """
     AWS Bedrock Converse API 后端
 
@@ -88,35 +87,18 @@ class BedrockBackend:
         data = json.dumps(payload).encode("utf-8")
         req = urllib.request.Request(url, data=data, headers=headers)
 
+        return self._do_request(req)
+
+    def _do_request(self, req) -> str:
+        """发送 HTTP 请求并解析响应（含重试）"""
         return retry_http(
-            lambda: self._do_request(req),
+            lambda: self._send(req, self._parse_response),
             max_retries=self.max_retries,
             backoff=self.retry_backoff,
         )
 
-    def _do_request(self, req) -> str:
-        """执行单个 HTTP 请求（不含重试逻辑）"""
-        try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-                result = json.loads(resp.read().decode("utf-8"))
-        except urllib.error.HTTPError as e:
-            body = ""
-            try:
-                body = e.read().decode("utf-8")[:300]
-            except Exception:
-                pass
-            if e.code == 401:
-                raise RuntimeError(f"API Key 无效或已过期 (401): {body}") from e
-            elif e.code == 429:
-                raise RuntimeError(f"请求频率超限 (429)，请稍后重试: {body}") from e
-            elif e.code >= 500:
-                raise RuntimeError(f"服务端错误 ({e.code}): {body}") from e
-            else:
-                raise RuntimeError(f"HTTP {e.code}: {body}") from e
-        except urllib.error.URLError as e:
-            raise RuntimeError(f"网络请求失败: {e.reason}") from e
-
-        # 解析响应
+    def _parse_response(self, result) -> str:
+        """解析 Bedrock Converse 响应"""
         output = result.get("output", {})
         if output:
             message = output.get("message", {})
@@ -125,10 +107,3 @@ class BedrockBackend:
                     return block["text"]
 
         raise RuntimeError("LLM 返回为空")
-
-    def _resolve_key(self) -> str:
-        """分级获取 API Key: 环境变量 > 直传 > 空"""
-        val = os.environ.get(self.api_key_env, "")
-        if val:
-            return val
-        return self.api_key
