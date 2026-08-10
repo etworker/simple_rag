@@ -1580,10 +1580,25 @@ async function saveSettings(){
       }
     }
   }
+  // 检测 embedding 模型是否变更：切换模型会改变向量空间/维度，已入库文档与向量缓存全部失效，
+  // 必须重置知识库并重建向量缓存，否则检索会维度不匹配或结果失真。
+  const embOld=(_settingsConfig&&_settingsConfig.embedding)||{};
+  const embNewModel=document.getElementById('emb-model').value.trim();
+  if(embOld.model&&embNewModel&&embOld.model!==embNewModel){
+    const ok=await customConfirm(
+      '⚠️ 检测到 embedding 模型变更：\n\n'+
+      '当前：'+embOld.model+'\n'+
+      '新值：'+embNewModel+'\n\n'+
+      '切换 embedding 模型会使已入库文档的向量全部失效（向量维度/分布改变），'+
+      '必须重置知识库（删除所有文档并重建向量缓存），否则检索会报错或结果失真。\n\n'+
+      '是否继续保存？（保存后请手动"重置知识库"再重新上传文档）'
+    );
+    if(!ok) return; // 用户取消，不保存
+  }
   // 构造更新
   const updates={
     embedding:{
-      model:document.getElementById('emb-model').value.trim(),
+      model:embNewModel,
       device:document.getElementById('emb-device').value,
       dtype:document.getElementById('emb-dtype').value,
       gpu_id:parseInt(document.getElementById('emb-gpu_id').value)||0,
