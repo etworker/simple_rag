@@ -640,8 +640,20 @@ if(phase!=='done'){
         infoText+=(infoText?'，':'');
         infoText+=`${mChanges.length} 处细微变更已自动过滤`;
     }
-    if(!infoText) infoText='✅ 未发现内容矛盾，可安全入库';
-    infoText+=`　（新文档: ${esc(newDocFile||'')}${oldDocName?` vs 旧版 ${esc(oldDocName)}`:''})`;
+    if(!infoText){
+        if(r.kb_empty){
+            infoText='📭 知识库为空，无需对比';
+        } else if(r.no_candidates){
+            infoText='📭 未检索到相似候选段落，无需 LLM 判定';
+        } else {
+            infoText='✅ 未发现内容矛盾，可安全入库';
+        }
+    }
+    // 在括号里追加诊断信息：总候选数、过滤数、版本对比结果
+    const diag=[];
+    if(r.total_candidates>0) diag.push(`检索到 ${r.total_candidates} 个候选`);
+    if(r.rule_filtered>0) diag.push(`规则预过滤 ${r.rule_filtered} 个`);
+    infoText+=`　（新文档: ${esc(newDocFile||'')}${oldDocName?` vs 旧版 ${esc(oldDocName)}`:''}${diag.length?` · ${diag.join('，')}`:''})`;
 }
 document.getElementById('reviewInfo').textContent=infoText;
 
@@ -728,9 +740,15 @@ if(vChanges.length>0){
     }
 }
 
-// 无任何结果时的提示
+// 无任何结果时的提示（区分库空 vs 真正通过）
 if(items.length===0&&vChanges.length===0&&mChanges.length===0){
-    html='<div style="padding:30px;text-align:center;color:var(--text3);">✅ 预审核通过，未发现矛盾或版本差异</div>';
+    if(r.kb_empty){
+        html='<div style="padding:30px;text-align:center;color:var(--text3);">📭 知识库为空，暂无可比文档。可直接入库。</div>';
+    } else if(r.no_candidates){
+        html='<div style="padding:30px;text-align:center;color:var(--text3);">📭 未在知识库中找到相似文档。建议确认该文档是否已入库。</div>';
+    } else {
+        html='<div style="padding:30px;text-align:center;color:var(--text3);">✅ 预审核通过，未发现矛盾或版本差异</div>';
+    }
 }
 
 document.getElementById('conflictList').innerHTML=html;

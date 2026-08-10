@@ -281,6 +281,10 @@ async def run_pre_review(task_id: str):
             on_judge_batch=on_judge_batch,
         )
 
+        # 标记知识库是否为空（无任何已有文档可供对比）
+        kb_empty = (result.total_candidates == 0 and result.llm_judged == 0
+                    and len(result.inconsistencies) == 0)
+
         # ====== 3. 版本对比（如果存在旧版本文档）======
         old_version_filepath = task.get("old_version_filepath", "")
         version_compare_result = _run_version_compare(engine, old_version_filepath, filepath)
@@ -314,6 +318,8 @@ async def run_pre_review(task_id: str):
             "minor_changes": version_compare_result["minor_changes"],
             "has_version_changes": len(version_compare_result["changes"]) > 0,
             "has_minor_changes": len(version_compare_result["minor_changes"]) > 0,
+            "kb_empty": kb_empty,
+            "no_candidates": (not kb_empty and result.total_candidates == 0 and result.llm_judged == 0),
         }
         _state.app.save_review_cache()
 
