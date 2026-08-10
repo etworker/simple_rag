@@ -1,7 +1,7 @@
 // ============================================================
 // PDF.js 初始化
 // ============================================================
-pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+if(typeof pdfjsLib!=='undefined'){pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';}
 
 // ============================================================
 // 工具函数
@@ -1443,9 +1443,9 @@ refreshQaSessionList();
 // ============================================================
 let _settingsConfig=null;       // 打开时的配置快照
 let _settingsProfiles={};       // llm_profiles 的本地可编辑副本
-let _settingsSelectedProfile=''; // 当前选中的 profile 名
+let _settingsSelectedProfile=''; // 当前选中的 LLM 名
 
-// 每个 LLM Profile 独立的字段组（分组 + 中文标签，选择名字即展示该 Profile 对应的完整配置）
+// 每个 LLM 独立的字段组（分组 + 中文标签，选择名字即展示该 LLM 对应的完整配置）
 const LLM_PROFILE_GROUPS=[
   {
     title:'连接',
@@ -1480,7 +1480,7 @@ const LLM_PROFILE_GROUPS=[
 const LLM_PROFILE_FIELDS=LLM_PROFILE_GROUPS.flatMap(g=>g.fields);
 // 数字型字段
 const LLM_NUM_FIELDS=['max_tokens','timeout','max_retries','context_window','concurrency'];
-// 新建 Profile 的常用模板（预填，选模板名即得一组完整参数）
+// 新建 LLM 的常用模板（预填，选模板名即得一组完整参数）
 const LLM_PROFILE_TEMPLATES={
   'OpenAI 兼容':{provider:'openai',model:'',base_url:'',api_key:'',api_key_env:'',endpoint:'chat',region:'',max_tokens:2048,timeout:120,max_retries:3,retry_backoff:2.0,context_window:8192,concurrency:1},
   'Bedrock (Glm flash)':{provider:'bedrock',model:'zai.glm-4.7-flash',region:'us-east-1',api_key_env:'AWS_BEARER_TOKEN_BEDROCK',endpoint:'',max_tokens:2048,timeout:120,max_retries:3,retry_backoff:2.0,context_window:8192,concurrency:1},
@@ -1554,20 +1554,20 @@ function renderProfileSelect(){
   }
 }
 
-// 切换 Profile：更新选中名并刷新该 Profile 的字段（修复切换不生效的 bug）
+// 切换 LLM：更新选中名并刷新该 LLM 的字段（修复切换不生效的 bug）
 function selectLlmProfile(name){
   _settingsSelectedProfile=name;
   renderProfileSelect();
   renderLlmProfile();
 }
 
-// LLM 路由页的 Profile 概览列表：每个 Profile 一行（名字 + 服务商 + 模型），点击进入管理
+// LLM 路由页的 LLM 概览列表：每个 LLM 一行（名字 + 服务商 + 模型），点击进入管理
 function renderProfileOverview(){
   const container=document.getElementById('profileOverviewList');
   if(!container)return;
   const names=Object.keys(_settingsProfiles);
   if(names.length===0){
-    container.innerHTML='<div class="hint">暂无 Profile，请先「+ 从模板新增」或到「Profile 管理」添加。</div>';
+    container.innerHTML='<div class="hint">暂无 LLM，请先「+ 新增 LLM」或到「LLM 管理」添加。</div>';
     return;
   }
   // 表格风格：表头 + 数据行，行间分隔线，与整个设置页风格统一
@@ -1575,7 +1575,7 @@ function renderProfileOverview(){
   list.className='profile-overview';
   list.innerHTML=
     `<div class="po-head">`+
-      `<span class="po-col po-name">Profile</span>`+
+      `<span class="po-col po-name">LLM</span>`+
       `<span class="po-col po-provider">服务商</span>`+
       `<span class="po-col po-model">模型</span>`+
       `<span class="po-col po-action"></span>`+
@@ -1590,7 +1590,7 @@ function renderProfileOverview(){
       `<span class="po-col po-provider">${esc(p.provider||'—')}</span>`+
       `<span class="po-col po-model">${esc(p.model||'—')}</span>`+
       `<span class="po-col po-action"><button class="mini-btn">管理</button></span>`;
-    // 点击整行进入该 Profile 的管理子页
+    // 点击整行进入该 LLM 的管理子页
     row.addEventListener('click',()=>{
       _settingsSelectedProfile=name;
       renderProfileSelect();
@@ -1638,7 +1638,7 @@ function renderRouting(){
 function addLlmProfile(){
   // 从常用模板中选择，选模板名即预填一组完整参数；也可自定义
   const templateNames=Object.keys(LLM_PROFILE_TEMPLATES);
-  const template=prompt('选择模板（或留空自定义）：\n'+templateNames.join('\n'));
+  const template=prompt('选择模板（可选）：\n'+templateNames.join('\n'));
   let base={};
   if(template&&template in LLM_PROFILE_TEMPLATES){
     base=JSON.parse(JSON.stringify(LLM_PROFILE_TEMPLATES[template]));
@@ -1647,7 +1647,7 @@ function addLlmProfile(){
   }else{
     base={provider:'openai',model:'',base_url:'',api_key:'',endpoint:'chat',max_tokens:2048,timeout:120,max_retries:3,retry_backoff:2.0,context_window:8192,concurrency:1};
   }
-  const name=prompt('新 Profile 名称:');
+  const name=prompt('新 LLM 名称:');
   if(!name||name in _settingsProfiles){alert('名称为空或已存在');return;}
   _settingsProfiles[name]=base;
   _settingsSelectedProfile=name;
@@ -1658,7 +1658,7 @@ function addLlmProfile(){
 }
 
 function delLlmProfile(){
-  if(!confirm(`删除 Profile "${_settingsSelectedProfile}"？`))return;
+  if(!confirm(`删除 LLM "${_settingsSelectedProfile}"？`))return;
   delete _settingsProfiles[_settingsSelectedProfile];
   _settingsSelectedProfile=Object.keys(_settingsProfiles)[0]||'';
   renderProfileSelect();
