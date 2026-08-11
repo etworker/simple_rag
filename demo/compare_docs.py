@@ -17,7 +17,14 @@
 - 输出报告 + 控制台摘要
 
 用法:
-    uv run --project version_diff python demo/compare_docs.py <文档A> <文档B> [--out 报告] [--llm]
+    uv run --project version_diff python demo/compare_docs.py <文档A> <文档B> [--out 报告] [--llm] [阈值参数...]
+
+可配置阈值（均有缺省值）:
+    --same-threshold <float>   内容重叠度>=此值判定「同一文档不同版本」（缺省 0.5）
+    --overlap-sample <int>     重叠度估算采样段数（缺省 100）
+    --min-sim <float>          跨文档相似度下限（缺省 0.4）
+    --max-sim <float>          跨文档相似度上限（缺省 0.95）
+    --top <int>                跨文档模式列出前 N 条（缺省 20）
 
 示例:
     # 同一文档不同版本（自动用版本对比）
@@ -25,11 +32,11 @@
         "data/pdf/(二级)(司批)网络与信息安全管理手册/R5-21/(二级)(司批)网络与信息安全管理手册.pdf" \
         "data/pdf/(二级)(司批)网络与信息安全管理手册/R5-22/(二级)(司批)网络与信息安全管理手册.pdf" \
         --out demo/reports/compare_r5_21_22.md
-    # 不同级别（自动用相似度聚类）
+    # 不同级别（自动用相似度聚类；自定义阈值）
     uv run --project version_diff python demo/compare_docs.py \
         "data/pdf/(二级)(司批)信息技术管理手册/R3-3/(二级)(司批)信息技术管理手册.pdf" \
         "data/pdf/(三级)(司批)信息技术部工作手册/R6-7/(三级)(司批)信息技术部工作手册.pdf" \
-        --out demo/reports/compare_2_3.md
+        --same-threshold 0.5 --min-sim 0.4 --max-sim 0.95 --out demo/reports/compare_2_3.md
 """
 import argparse
 import os
@@ -40,12 +47,6 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT / "doc_parser"))
 sys.path.insert(0, str(PROJECT_ROOT / "version_diff"))
-
-# 识别阈值：重叠度 >= 此值 → 视为「同一文档不同版本」
-SAME_DOC_THRESHOLD = 0.5
-# 重叠度估算采样段数（够区分 90% vs <10% 即可）
-OVERLAP_SAMPLE = 100
-
 
 def load_dotenv():
     dotenv = PROJECT_ROOT / ".env"
@@ -74,11 +75,16 @@ def load_paragraphs(path: str) -> list[str]:
     return [(p.text or "").strip() for p in doc.paragraphs if (p.text or "").strip() and len((p.text or "").strip()) >= 6]
 
 
-def compute_overlap(A: list[str], B: list[str], thresh: float = 0.5) -> float:
-    """估算 A 能在 B 找到相似段的比例（采样，够区分类型即可）。"""
+def compute_overlap(A: list[str], B: list[str], sample: int = 100, thresh: float = 0.5) -> float:
+    """估算 A 能在 B 找到相似段的比例（采样，够区分类型即可）。
+
+    Args:
+        sample: 采样段数（重叠度 90% vs <10% 界限清晰，采样即可可靠判断）
+        thresh: 单段相似度阈值，>= 此值视为在另一文档找到相似内容
+    """
     Bg = [grams(t) for t in B]
     hit, total = 0, 0
-    for ta in A[: OVERLAP_SAMPLE]:
+    for ta in A[:sample]:
         total += 1
         ga = grams(ta)
         best = max((jaccard(ga, gb) for gb in Bg), default=0.0)
@@ -135,14 +141,14 @@ def run_similarity_cluster(a, b, args, engine):
             s = jaccard(ga, gb)
             if s > best_s:
                 best_s, best_j = s, j
-        if 0.4 <= best_s <= 0.95:
+        if args.min_sim <= best_s <= args.max_sim:
             found.append((best_s, A[i], B[best_j]))
     found.sort(key=lambda x: -x[0])
     lines = [
         "# 文档内容差异（识别为：不同文档 / 不同级别）",
         "",
         f"- 文档A: `{a}`", f"- 文档B: `{b}`",
-        f"- 找到「同一主题但表述不一致」**{len(found)}** 处（相似度区间 [0.4, 0.95]）", "",
+        f"- 找到「同一主题但表述不一致」**{len(found)}** 处（相似度区间 [{args.min_sim}, {args.max_sim}]）", "",
     ]
     for i, (s, ta, tb) in enumerate(found[: args.top], 1):
         lines.append(f"### [{i}] 相似度 {s:.2f}")
@@ -160,6 +166,15 @@ def main():
     parser.add_argument("--llm", action="store_true", help="启用 LLM 摘要（需 .env 有效 token）")
     parser.add_argument("--top", type=int, default=20, help="跨文档模式列出前 N 条")
     parser.add_argument("--embedding", default="BAAI/bge-small-zh-v1.5")
+    # 可配置阈值（均有缺省值）
+    parser.add_argument("--same-threshold", type=float, default=0.5,
+                        help="内容重叠度 >= 此值判定为「同一文档不同版本」（缺省 0.5）")
+    parser.add_argument("--overlap-sample", type=int, default=100,
+                        help="重叠度估算采样段数（缺省 100）")
+    parser.add_argument("--min-sim", type=float, default=0.4,
+                        help="跨文档相似度下限（缺省 0.4）")
+    parser.add_argument("--max-sim", type=float, default=0.95,
+                        help="跨文档相似度上限（缺省 0.95）")
     args = parser.parse_args()
 
     for p in (args.doc_a, args.doc_b):
@@ -169,11 +184,11 @@ def main():
 
     load_dotenv()
 
-    # 自动识别类型
+    # 自动识别类型（阈值可配置，缺省 0.5）
     print("解析文档并评估内容重叠度 ...")
     A, B = load_paragraphs(args.doc_a), load_paragraphs(args.doc_b)
-    overlap = compute_overlap(A, B)
-    same_doc = overlap >= SAME_DOC_THRESHOLD
+    overlap = compute_overlap(A, B, sample=args.overlap_sample, thresh=args.same_threshold)
+    same_doc = overlap >= args.same_threshold
     print(f"A={len(A)} 段, B={len(B)} 段, 内容重叠度={overlap:.1%} → "
           f"{'同一文档不同版本' if same_doc else '不同文档/不同级别'}")
 
