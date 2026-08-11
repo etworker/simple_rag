@@ -8,8 +8,17 @@
 **一个脚本，自动识别两份文档是「同一文档不同版本」还是「不同文档/不同级别」，并自适应选择方法**：
 
 ```bash
-uv run --project version_diff python demo/compare_docs.py <文档A> <文档B> [--out 报告] [--llm] [阈值参数...]
+uv run --project version_diff python demo/compare_docs.py <文档A> <文档B> [--out 报告] [阈值参数...]
 ```
+
+**LLM（默认启用，用自建 OpenAI 兼容端点对「修改」类差异生成摘要）**：
+| 参数 | 作用 | 缺省 |
+|---|---|---|
+| `--no-llm` | 关闭 LLM（纯规则模式） | 启用 |
+| `--llm-provider` | 服务商 | openai |
+| `--llm-model` | 模型 | GLM-4.7-Flash-Q4_K_M.gguf |
+| `--llm-base-url` | base_url（自建端点） | http://a10bj.etworker.tech:8731/v1 |
+| `--llm-key` | api_key | dummy |
 
 识别依据：**内容重叠度**（较小文档中能在另一文档找到相似段的比例）。
 - 同文档不同版本：重叠度通常 >90%
@@ -63,5 +72,5 @@ uv run --project version_diff python demo/batch_verify.py --out demo/reports/bat
 
 - **方法选择已自动**：`compare_docs.py` 自动识别类型，无需手动区分。
 - 同文档版本对比用 `version_compare`；跨文件对比用相似度聚类（找同主题不同表述，如生效日期/编号/适用范围/签发主体不一致）。
-- 默认纯规则模式（无需 LLM）；加 `--llm` 并对修改类差异生成摘要（需 `.env` 配置有效的 `AWS_BEARER_TOKEN_BEDROCK`）。
+- **LLM 默认启用**：`compare_docs.py` 默认用自建 OpenAI 兼容端点（GLM-4.7-Flash）对「修改」类差异生成摘要；`--no-llm` 可关闭。`batch_verify.py` 为批量验证默认纯规则（避免多次 LLM 调用变慢）。
 - 运行时生成的报告在 `demo/reports/`（已被 `demo/.gitignore` 忽略）。

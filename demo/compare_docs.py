@@ -17,7 +17,14 @@
 - 输出报告 + 控制台摘要
 
 用法:
-    uv run --project version_diff python demo/compare_docs.py <文档A> <文档B> [--out 报告] [--llm] [阈值参数...]
+    uv run --project version_diff python demo/compare_docs.py <文档A> <文档B> [--out 报告] [阈值参数...]
+
+LLM（默认启用，用自建 OpenAI 兼容端点对「修改」类差异生成摘要）:
+    --no-llm                  关闭 LLM（纯规则模式）
+    --llm-provider <name>     LLM 服务商（缺省 openai）
+    --llm-model <name>        LLM 模型名（缺省自建 GLM-4.7-Flash-Q4_K_M.gguf）
+    --llm-base-url <url>      LLM base_url（缺省自建端点 http://a10bj.etworker.tech:8731/v1）
+    --llm-key <key>           LLM api_key（缺省 dummy）
 
 可配置阈值（均有缺省值）:
     --same-threshold <float>   内容重叠度>=此值判定「同一文档不同版本」（缺省 0.5）
@@ -163,7 +170,11 @@ def main():
     parser.add_argument("doc_a")
     parser.add_argument("doc_b")
     parser.add_argument("--out", default="")
-    parser.add_argument("--llm", action="store_true", help="启用 LLM 摘要（需 .env 有效 token）")
+    parser.add_argument("--no-llm", action="store_true", help="关闭 LLM（默认启用，用自建 LLM 生成修改类摘要）")
+    parser.add_argument("--llm-provider", default="openai", help="LLM 服务商（缺省 openai）")
+    parser.add_argument("--llm-model", default="GLM-4.7-Flash-Q4_K_M.gguf", help="LLM 模型名")
+    parser.add_argument("--llm-base-url", default="http://a10bj.etworker.tech:8731/v1", help="LLM base_url（自建 OpenAI 兼容端点）")
+    parser.add_argument("--llm-key", default="dummy", help="LLM api_key")
     parser.add_argument("--top", type=int, default=20, help="跨文档模式列出前 N 条")
     parser.add_argument("--embedding", default="BAAI/bge-small-zh-v1.5")
     # 可配置阈值（均有缺省值）
@@ -194,9 +205,26 @@ def main():
 
     t0 = time.time()
     if same_doc:
+        # LLM 配置：默认用自建 OpenAI 兼容端点（对修改类差异生成摘要），--no-llm 关闭
+        if args.no_llm:
+            llm_config = {"provider": "noop", "model": "", "api_key": ""}
+            import logging
+            logging.getLogger("version_diff.llm_util").setLevel(logging.CRITICAL)
+        else:
+            llm_config = {
+                "provider": args.llm_provider,
+                "model": args.llm_model,
+                "base_url": args.llm_base_url,
+                "api_key": args.llm_key,
+                "endpoint": "chat",
+                "max_tokens": 2048,
+                "timeout": 180,
+                "max_retries": 2,
+                "retry_backoff": 2.0,
+            }
         config = {
             "embedding": {"model": args.embedding, "device": "cpu"},
-            "llm": {"provider": "noop", "model": "", "api_key": ""},
+            "llm": llm_config,
             "diff": {"similarity_threshold": 0.80, "top_k": 3, "batch_size": 5,
                      "noise_filter": {"enabled": True}},
         }
