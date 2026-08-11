@@ -4,7 +4,7 @@
       "provider": "openai",
       "model": "/home/ec2-user/models/GLM-4.7-Flash-Q4_K_M.gguf",
       "base_url": "http://a10bj.etworker.tech:8731/v1",
-      "api_key": "dummy",
+      "api_key_env": "SELF_HOSTED_LLM_API_KEY",
       "endpoint": "chat",
       "max_tokens": 2048,
       "timeout": 120,
