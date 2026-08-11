@@ -55,18 +55,11 @@ from app.services.qa_engine import QAEngine
 log = logger
 # 缓存根目录（可配置，默认 ~/.simple_rag/）
 _CACHE_ROOT = os.path.join(os.path.expanduser("~"), ".simple_rag")
-# 日志统一用 loguru，写到 ~/.cache/simple_rag/log/simple_rag.log（可配置）
-from version_diff.logging_setup import default_log_path, set_stdlib_level, setup_logging
+# 日志统一用 loguru，写到 ~/.cache/simple_rag/log/simple_rag.log
+from version_diff.logging_setup import DEFAULT_LOG_PATH, setup_logging
 
 setup_logging()
-LOG_FILE = default_log_path()
-# 调节过吵的第三方库日志级别
-set_stdlib_level("httpx", "WARNING")
-set_stdlib_level("httpcore", "WARNING")
-set_stdlib_level("uvicorn", "INFO")
-set_stdlib_level("uvicorn.access", "WARNING")
-set_stdlib_level("pdfminer", "WARNING")
-set_stdlib_level("sentence_transformers", "WARNING")
+LOG_FILE = DEFAULT_LOG_PATH
 
 # 每次启动打印分隔线，方便区分不同运行会话
 import time as _time

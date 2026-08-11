@@ -263,9 +263,7 @@ async def run_pre_review(task_id: str):
             r["judge_current_batch"] = batch_idx + 1
             r["judge_total_batches"] = total_batches
             r["last_batch_new_count"] = len(new_dicts)
-            r["llm_judged"] = r.get("llm_judged", 0) + sum(
-                1 for _ in range(len(new_dicts))  # simplify: add new item counts
-            )
+            r["llm_judged"] = r.get("llm_judged", 0) + len(new_dicts)
             cur_count = len(r["inconsistencies"])
             if cur_count > 0:
                 r["message"] = f"LLM 判定中... 已发现 {cur_count} 处矛盾（batch {batch_idx + 1}/{total_batches}）"

@@ -253,8 +253,6 @@ def main():
         # LLM 配置：优先从共享 llm_profiles 文件解析，否则用兜底单配置；--no-llm 关闭
         if args.no_llm:
             llm_config = {"provider": "noop", "model": "", "api_key": ""}
-            import logging
-            logging.getLogger("version_diff.llm_util").setLevel(logging.CRITICAL)
         else:
             llm_config = build_llm_config(args)
         config = {

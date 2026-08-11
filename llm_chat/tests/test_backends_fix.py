@@ -191,3 +191,75 @@ class TestBedrockErrorHandling:
         with patch("urllib.request.urlopen", side_effect=error):
             with pytest.raises(RuntimeError, match="网络请求失败"):
                 backend.chat([{"role": "user", "content": "hi"}])
+
+
+class TestOpenAIResponsesInstructions:
+    """测试 Responses API 端点把 system_prompt 放入 instructions 字段"""
+
+    def test_system_prompt_goes_to_instructions(self, monkeypatch):
+        monkeypatch.setenv("TEST_KEY", "sk-test")
+        backend = OpenAIBackend(api_key_env="TEST_KEY", model="gpt-4o", endpoint="responses")
+
+        captured = {}
+
+        class FakeResp:
+            def read(self):
+                return json.dumps({
+                    "output": [{
+                        "type": "message",
+                        "content": [{"type": "output_text", "text": "OK"}],
+                    }]
+                }).encode()
+
+        class FakeUlopen:
+            def __init__(self, req, timeout=None):
+                captured['data'] = json.loads(req.data.decode())
+
+            def __enter__(self):
+                return FakeResp()
+
+            def __exit__(self, *a):
+                pass
+
+        with patch("urllib.request.urlopen", FakeUlopen):
+            result = backend.chat(
+                [{"role": "user", "content": "你好"}],
+                system_prompt="你是助手",
+            )
+
+        assert result == "OK"
+        # system_prompt 应进入 instructions（Responses API 标准字段）
+        assert captured['data'].get("instructions") == "你是助手"
+        # input 中不应出现 system 角色（否则该端点会拒绝）
+        for item in captured['data']["input"]:
+            assert item["role"] != "system"
+
+    def test_no_system_prompt_omits_instructions(self, monkeypatch):
+        monkeypatch.setenv("TEST_KEY", "sk-test")
+        backend = OpenAIBackend(api_key_env="TEST_KEY", model="gpt-4o", endpoint="responses")
+
+        captured = {}
+
+        class FakeResp:
+            def read(self):
+                return json.dumps({
+                    "output": [{
+                        "type": "message",
+                        "content": [{"type": "output_text", "text": "OK"}],
+                    }]
+                }).encode()
+
+        class FakeUlopen:
+            def __init__(self, req, timeout=None):
+                captured['data'] = json.loads(req.data.decode())
+
+            def __enter__(self):
+                return FakeResp()
+
+            def __exit__(self, *a):
+                pass
+
+        with patch("urllib.request.urlopen", FakeUlopen):
+            backend.chat([{"role": "user", "content": "hi"}])
+
+        assert "instructions" not in captured['data']

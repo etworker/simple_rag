@@ -94,14 +94,21 @@ class OpenAIBackend(BaseHTTPBackend):
     def _call_responses(self, messages: list, key: str) -> str:
         """OpenAI Responses API /responses 端点"""
         url = f"{self.base_url}/responses"
+        instructions = None
         input_items = []
         for msg in messages:
-            input_items.append({"role": msg["role"], "content": msg["content"]})
+            if msg["role"] == "system":
+                # Responses API 用 instructions 字段承载系统提示，而非 input 里的 system 角色
+                instructions = msg["content"]
+            else:
+                input_items.append({"role": msg["role"], "content": msg["content"]})
         payload = {
             "model": self.model,
             "input": input_items,
-            "max_output_tokens": max(self.max_tokens, 16),
+            "max_output_tokens": self.max_tokens,
         }
+        if instructions:
+            payload["instructions"] = instructions
         return self._do_request(url, payload, key)
 
     def _do_request(self, url: str, payload: dict, key: str) -> str:

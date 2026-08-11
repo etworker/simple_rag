@@ -764,10 +764,10 @@ class DiffEngine:
         # 旧版有但新版没有的（removed）
         for i, para in enumerate(old_doc.paragraphs):
             if i not in paired_old:
-                new_ref = new_doc.paragraphs[0] if new_doc.paragraphs else None
+                old_section = para.chapter_title or para.chapter or ""
                 changes.append(VersionChange(
                     change_type="removed",
-                    section=(new_ref.chapter_title or new_ref.chapter or "") if new_ref else "",
+                    section=old_section,
                     location=para.location,
                     old_section=para.chapter_title or para.chapter or "",
                     old_location=para.location,
@@ -1009,10 +1009,9 @@ class DiffEngine:
                             c = _classify_change("metadata", c)
                             minor.append(c)
             else:
-                # LLM 失败全部保留
+                # LLM 失败全部保留（保守策略）
                 for c in batch:
-                    c = _classify_change("content", c)
-                keep.extend(batch)
+                    keep.append(_classify_change("content", c))
 
         log.info(
             f"  版本diff过滤完成: {len(changes)} → "

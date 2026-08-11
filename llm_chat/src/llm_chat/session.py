@@ -82,9 +82,9 @@ class ChatSession:
             raise  # API Key 缺失等严重错误，让上层处理
         except Exception as e:
             log.error(f"LLM 调用失败: {e}")
-            answer = f"[错误] LLM 调用失败: {e}"
+            return f"[错误] LLM 调用失败: {e}"
 
-        # 记录助手回复
+        # 记录助手回复（失败时不写入历史，避免错误文本污染多轮上下文）
         self.messages.append(Message(role="assistant", content=answer))
 
         # 截断历史
