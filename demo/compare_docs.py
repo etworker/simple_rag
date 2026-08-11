@@ -19,12 +19,12 @@
 用法:
     uv run --project version_diff python demo/compare_docs.py <文档A> <文档B> [--out 报告] [阈值参数...]
 
-LLM（默认启用，用自建 OpenAI 兼容端点对「修改」类差异生成摘要）:
+LLM（默认启用，从共享 llm_profiles 文件按名字选择，对「修改」类差异生成摘要）:
     --no-llm                  关闭 LLM（纯规则模式）
-    --llm-provider <name>     LLM 服务商（缺省 openai）
-    --llm-model <name>        LLM 模型名（缺省自建 GLM-4.7-Flash-Q4_K_M.gguf）
-    --llm-base-url <url>      LLM base_url（缺省自建端点 http://a10bj.etworker.tech:8731/v1）
-    --llm-key <key>           LLM api_key（缺省 dummy）
+    --llm-profiles <file>     llm_profiles+routing JSON 文件（缺省 demo/llm_profiles.json）
+    --profile <name>          要使用的 LLM profile 名（缺省 self_hosted_glm）
+    --llm-provider/model/     兜底单配置（仅当无 profile 文件时用）
+    --llm-base-url/--llm-key
 
 可配置阈值（均有缺省值）:
     --same-threshold <float>   内容重叠度>=此值判定「同一文档不同版本」（缺省 0.5）
@@ -46,6 +46,7 @@ LLM（默认启用，用自建 OpenAI 兼容端点对「修改」类差异生成
         --same-threshold 0.5 --min-sim 0.4 --max-sim 0.95 --out demo/reports/compare_2_3.md
 """
 import argparse
+import json
 import os
 import sys
 import time
@@ -63,6 +64,40 @@ def load_dotenv():
             if line and not line.startswith("#") and "=" in line:
                 k, _, v = line.partition("=")
                 os.environ.setdefault(k.strip(), v.strip().strip('"').strip("'"))
+
+
+def build_llm_config(args) -> dict:
+    """构造 LLM 配置。
+
+    优先从共享 llm_profiles 文件（--llm-profiles）按 --profile 解析；
+    无文件时用命令行兜底单配置。
+    """
+    profile_file = args.llm_profiles or str(PROJECT_ROOT / "demo" / "llm_profiles.json")
+    if os.path.exists(profile_file):
+        from llm_chat import resolve_llm_config
+
+        with open(profile_file, encoding="utf-8") as f:
+            data = json.load(f)
+        llm_profiles = data.get("llm_profiles", {})
+        llm = resolve_llm_config({
+            "profile": args.profile,
+            "llm_profiles": llm_profiles,
+            "routing": data.get("llm_routing", {}),
+        })
+        if llm:
+            return llm
+        print(f"[提示] 未在 {profile_file} 找到 profile「{args.profile}」，使用兜底配置")
+    return {
+        "provider": args.llm_provider,
+        "model": args.llm_model,
+        "base_url": args.llm_base_url,
+        "api_key": args.llm_key,
+        "endpoint": "chat",
+        "max_tokens": 2048,
+        "timeout": 180,
+        "max_retries": 2,
+        "retry_backoff": 2.0,
+    }
 
 
 def grams(text: str) -> set:
@@ -170,11 +205,17 @@ def main():
     parser.add_argument("doc_a")
     parser.add_argument("doc_b")
     parser.add_argument("--out", default="")
-    parser.add_argument("--no-llm", action="store_true", help="关闭 LLM（默认启用，用自建 LLM 生成修改类摘要）")
-    parser.add_argument("--llm-provider", default="openai", help="LLM 服务商（缺省 openai）")
-    parser.add_argument("--llm-model", default="GLM-4.7-Flash-Q4_K_M.gguf", help="LLM 模型名")
-    parser.add_argument("--llm-base-url", default="http://a10bj.etworker.tech:8731/v1", help="LLM base_url（自建 OpenAI 兼容端点）")
-    parser.add_argument("--llm-key", default="dummy", help="LLM api_key")
+    parser.add_argument("--no-llm", action="store_true", help="关闭 LLM（默认启用，用共享 profile 的 LLM 生成修改类摘要）")
+    # LLM 共享 profile：从 llm_profiles + llm_routing 文件解析（默认 demo/llm_profiles.json）
+    parser.add_argument("--llm-profiles", default="",
+                        help="LLM profiles+routing JSON 文件路径（缺省 demo/llm_profiles.json）")
+    parser.add_argument("--profile", default="self_hosted_glm",
+                        help="要使用的 LLM profile 名（缺省 self_hosted_glm）")
+    # 兜底单配置（仅在无 --llm-profiles 时用）
+    parser.add_argument("--llm-provider", default="openai", help="LLM 服务商（无 profile 文件时兜底）")
+    parser.add_argument("--llm-model", default="GLM-4.7-Flash-Q4_K_M.gguf", help="LLM 模型名（无 profile 文件时兜底）")
+    parser.add_argument("--llm-base-url", default="http://a10bj.etworker.tech:8731/v1", help="LLM base_url（无 profile 文件时兜底）")
+    parser.add_argument("--llm-key", default="dummy", help="LLM api_key（无 profile 文件时兜底）")
     parser.add_argument("--top", type=int, default=20, help="跨文档模式列出前 N 条")
     parser.add_argument("--embedding", default="BAAI/bge-small-zh-v1.5")
     # 可配置阈值（均有缺省值）
@@ -205,23 +246,13 @@ def main():
 
     t0 = time.time()
     if same_doc:
-        # LLM 配置：默认用自建 OpenAI 兼容端点（对修改类差异生成摘要），--no-llm 关闭
+        # LLM 配置：优先从共享 llm_profiles 文件解析，否则用兜底单配置；--no-llm 关闭
         if args.no_llm:
             llm_config = {"provider": "noop", "model": "", "api_key": ""}
             import logging
             logging.getLogger("version_diff.llm_util").setLevel(logging.CRITICAL)
         else:
-            llm_config = {
-                "provider": args.llm_provider,
-                "model": args.llm_model,
-                "base_url": args.llm_base_url,
-                "api_key": args.llm_key,
-                "endpoint": "chat",
-                "max_tokens": 2048,
-                "timeout": 180,
-                "max_retries": 2,
-                "retry_backoff": 2.0,
-            }
+            llm_config = build_llm_config(args)
         config = {
             "embedding": {"model": args.embedding, "device": "cpu"},
             "llm": llm_config,

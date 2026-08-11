@@ -34,6 +34,7 @@ from llm_chat.defaults import (
     SESSION_DEFAULTS,
 )
 from llm_chat.oneshot import ask_once
+from llm_chat.profile import resolve_llm_config, resolve_llm_profile
 from llm_chat.session import ChatSession, Message
 
 __all__ = [
@@ -45,4 +46,6 @@ __all__ = [
     "ChatSession",
     "Message",
     "ask_once",
+    "resolve_llm_config",
+    "resolve_llm_profile",
 ]

@@ -97,12 +97,23 @@ class Config:
 
         diff 段做浅合并：调用方只传部分键时，缺失键用默认值兜底
         （保证 noise_filter 等默认项在部分配置下仍生效）。
+
+        llm 段支持两种形态（经 llm_chat.resolve_llm_config 归一化）：
+            - 单配置：{"provider": "openai", "model": "..."}
+            - profile 引用：{"profile": "glm", "llm_profiles": {...}, "routing": {...}}
+              从 llm_profiles 共享配置中解析出单个 profile，实现各模块共用一套 LLM profile。
         """
         diff = d.get("diff", {})
         diff_default = {**cls().diff, **diff}
+        llm = d.get("llm", {})
+        try:
+            from llm_chat import resolve_llm_config
+            llm = resolve_llm_config(llm)
+        except Exception:
+            pass  # 解析失败则保留原始 llm（交由下游容错）
         return cls(
             embedding=d.get("embedding", {}),
-            llm=d.get("llm", {}),
+            llm=llm,
             diff=diff_default,
             cache=d.get("cache", {}),
             judge=d.get("judge", {}),
