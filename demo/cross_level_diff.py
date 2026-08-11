@@ -28,7 +28,6 @@
 
 import argparse
 import os
-import re
 import sys
 import time
 from pathlib import Path
@@ -59,58 +58,13 @@ def load_dotenv(path: Path | None = None) -> None:
 
 
 # ---------------------------------------------------------------------------
-# 跨级别文档噪声过滤（通用、不依赖具体文档内容）
-# ---------------------------------------------------------------------------
+# 跨级别文档噪声过滤：由 version_diff 内置的 CrossNoiseFilter 提供（可配置超参数）
 # 目录/记录清单/页码占位等「版式」行，跨级文档常因体例不同而整体不同，属噪声。
-_NOISE_PATTERNS = [
-    re.compile(r"^\d+\.\d*\s*手册记录清单\s*$"),          # 手册记录清单
-    re.compile(r"^\d+\.\d*\s*[\u4e00-\u9fa5A-Za-z0-9 ]+\s+\d+-\d+\s+\d+\s*页\s*$"),  # 目录: "1.1 信息化管理内容 8 页"
-    re.compile(r"^\d+(?:\.\d+)*\s+[\u4e00-\u9fa5A-Za-z ]+\s+\d+\s*页\s*$"),  # 目录条目: "1 组织机构及职责 35 页"
-    re.compile(r"^\d+(?:\.\d+)*\s+[\u4e00-\u9fa5A-Za-z ]+\s+\d+\.\d+-\d+\s*$"),  # 目录条目带编号: "1.1 信息技术部职责 1.1-1"
-    re.compile(r"^附录\s+\d+-\d+\s*$"),                    # 附录编号
-    re.compile(r"^\d+\s+附录\s+[\u4e00-\u9fa5A-Za-z0-9 ]+[\u4e00-\u9fa5]+\s+附录\s+\d+-\d+\s*$"),  # "1 附录 XX 附录 1-1"
-    re.compile(r"^\d+-\d+\s+[\u4e00-\u9fa5A-Za-z0-9 ]+\s+[\u4e00-\u9fa5]+.*\d+\s*页\s*$"),
-    re.compile(r"^[A-Z]\s+根据公司下发的各类规范性或程序性文件.*$"),  # 修订说明
-]
-
-# 目录条目启发式：以章节编号开头、含「页」或「x.y-z」目录编号标记、且整体较短
-_DIR_ENTRY_START_RE = re.compile(r"^\d+(?:\.\d+)*\s+\S")
-
-
-def _is_noise(text: str) -> bool:
-    """判断一条差异文本是否属版式噪声（目录/记录清单/页码占位等）。"""
-    if not text:
-        return True
-    stripped = text.strip()
-    if len(stripped) < 6:  # 过短，无实质内容
-        return True
-    for pat in _NOISE_PATTERNS:
-        if pat.match(stripped):
-            return True
-    # 目录条目：章节编号开头 + 含页码「N 页」或目录编号「x.y-z」 + 短文本
-    return (
-        len(stripped) < 40
-        and _DIR_ENTRY_START_RE.match(stripped)
-        and ("页" in stripped or re.search(r"\d+\.\d+-\d+", stripped))
-    )
-
-
-def is_noise_change(c) -> bool:
-    """一条 change 是否属噪声：其「实质文本」（新增看 new、删除看 old）全为噪声。"""
-    if c.change_type == "added":
-        return _is_noise(c.new_text or "")
-    if c.change_type == "removed":
-        return _is_noise(c.old_text or "")
-    # modified：旧新都看，只要有一个是实质内容就保留
-    return _is_noise(c.old_text or "") and _is_noise(c.new_text or "")
-
-
-def filter_noise(changes) -> tuple[list, list]:
-    """过滤噪声差异，返回 (实质差异, 被过滤的噪声差异)。"""
-    real, noise = [], []
-    for c in changes:
-        (noise if is_noise_change(c) else real).append(c)
-    return real, noise
+# 超参数（patterns/min_length/dir_entry_max_length）可在 diff.cross_noise_filter 配置。
+# ---------------------------------------------------------------------------
+def filter_noise(engine, changes) -> tuple[list, list]:
+    """过滤噪声差异，返回 (实质差异, 噪声差异)。复用系统内置机制。"""
+    return engine.filter_cross_noise(changes)
 
 
 # ---------------------------------------------------------------------------
@@ -226,7 +180,7 @@ def main():
     elapsed = time.time() - t0
     print(f"\n对比完成: 耗时 {elapsed:.1f}s")
 
-    real, noise = filter_noise(res.changes)
+    real, noise = filter_noise(engine, res.changes)
     report = build_report(args.doc_a, args.doc_b, real, noise, res.minor_changes, elapsed)
 
     if args.out:

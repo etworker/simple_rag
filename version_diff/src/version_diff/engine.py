@@ -19,9 +19,10 @@ DiffEngine — 文档差异检测引擎主入口
 import logging
 import os
 import re
-import unicodedata
 import time
+import unicodedata
 from collections.abc import Callable
+from contextlib import suppress
 from difflib import SequenceMatcher
 
 # ======================================================================
@@ -109,9 +110,7 @@ def _is_tracking_table_row(change) -> bool:
         return True
     # 两侧文本本身符合跟踪表行格式
     text_to_check = new_t or old_t
-    if text_to_check and _TABLE_ROW_RE.search(text_to_check):
-        return True
-    return False
+    return bool(text_to_check and _TABLE_ROW_RE.search(text_to_check))
 
 
 def _normalize_text(text: str) -> str:
@@ -174,7 +173,7 @@ def _load_version_filter_prompt() -> str:
         "回复 JSON 数组：{{\"index\": N, \"keep\": true/false, \"summary\": \"...\"}}"
     )
     try:
-        with open(_VERSION_FILTER_PROMPT_FILE, "r", encoding="utf-8") as f:
+        with open(_VERSION_FILTER_PROMPT_FILE, encoding="utf-8") as f:
             return f.read().strip()
     except Exception as e:
         log.warning(f"加载版本过滤 prompt 失败，使用兜底: {e}")
@@ -370,7 +369,7 @@ class DiffEngine:
             print(result.report())
     """
 
-    def __init__(self, config: dict = None):
+    def __init__(self, config: dict | None = None):
         self.config = Config.from_dict(config or {})
         self._documents = {}  # {filename: Document}
         self._all_paras = []  # 所有段落（带 source_file）
@@ -407,10 +406,8 @@ class DiffEngine:
     def _notify(self, callback, step, percent, message):
         """发送进度通知"""
         if callback:
-            try:
+            with suppress(Exception):
                 callback(step, percent, message)
-            except Exception:
-                pass
 
     def add(self, filepath: str) -> None:
         """
@@ -428,7 +425,6 @@ class DiffEngine:
         emb, _ = self._vector_store.get_or_compute(doc.filename, doc.paragraphs, model)
 
         # 追加到全局列表
-        start_idx = len(self._all_paras)
         self._all_paras.extend(doc.paragraphs)
 
         if self._all_embeddings is None:
@@ -457,8 +453,6 @@ class DiffEngine:
         Returns:
             DiffResult 包含不一致列表和统计信息
         """
-        import faiss
-
         from doc_parser import parse
 
         threshold = self.config.diff.get("similarity_threshold", 0.80)
@@ -677,6 +671,29 @@ class DiffEngine:
             for o in c["doc_others"]
         ]
 
+    def filter_cross_noise(self, changes: list) -> tuple[list, list]:
+        """
+        跨文档（不同级别/体例）内容差异的版式噪声过滤。
+
+        对比两份体例不同的文档（如《二级…管理手册》与《三级…工作手册》）时，
+        目录 / 记录清单 / 页码占位等版式内容整体不同，会被误判为内容差异。
+        本方法用内置、可配置的 `CrossNoiseFilter` 过滤这些噪声。
+
+        超参数经 ``config.diff.cross_noise_filter`` 配置（enabled / patterns / min_length /
+        dir_entry_max_length），调用方可按需覆盖。
+
+        Args:
+            changes: version_compare 返回的差异列表（``VersionDiffResult.changes``）
+
+        Returns:
+            (实质差异列表, 噪声差异列表)
+        """
+        from version_diff.noise import CrossNoiseFilter
+
+        cfg = (self.config.diff or {}).get("cross_noise_filter", {})
+        nf = CrossNoiseFilter(cfg)
+        return nf.filter_changes(changes)
+
     def version_compare(
         self, old_filepath: str, new_filepath: str, on_progress: Callable | None = None
     ) -> VersionDiffResult:
@@ -695,6 +712,7 @@ class DiffEngine:
             VersionDiffResult 包含所有变更
         """
         from doc_parser import parse
+
         from version_diff.matcher import pair_paragraphs
 
         self._notify(on_progress, "parsing", 0.1, "解析新旧版本...")
@@ -893,7 +911,7 @@ class DiffEngine:
             if c.change_type == "modified":
                 continue
             if noise_enabled:
-                target = c.new_text if c.new_text else c.old_text
+                target = c.new_text or c.old_text
                 stripped = _strip_configured_noise(target, noise_patterns)
                 # 配置剥离后为空 → 纯元数据噪声；内置剥离仅作补充（配置未命中时兜底）
                 if target and stripped == "":
