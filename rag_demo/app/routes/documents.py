@@ -1,16 +1,14 @@
 """文档管理路由 — 列表/删除/清除/PDF/页面预览"""
 
 import asyncio
-import logging
 import os
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
+from loguru import logger as log
 
 from app.routes import _state
 from app.routes._state import init  # noqa: F401 - re-export for main.py
-
-log = logging.getLogger("rag_demo.routes.documents")
 
 router = APIRouter()
 

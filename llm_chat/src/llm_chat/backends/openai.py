@@ -8,14 +8,11 @@ OpenAI 兼容 API 后端
 """
 
 import json
-import logging
 import urllib.request
 
 from llm_chat.backends.base import BaseHTTPBackend
 from llm_chat.defaults import OPENAI_DEFAULTS
 from llm_chat.retry import retry_http
-
-log = logging.getLogger("llm_chat.openai")
 
 
 class OpenAIBackend(BaseHTTPBackend):

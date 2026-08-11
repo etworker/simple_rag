@@ -11,17 +11,15 @@ LLM 一致性判断模块（单次推理版）
   3. 输出：仅保留 LLM 确认为 inconsistent 的项（附带矛盾点说明）
 """
 
-import logging
 import math
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 
+from loguru import logger as log
+
 from version_diff.llm_util import call_llm_json
 from version_diff.prefilter import batch_pre_classify
-
-log = logging.getLogger("version_diff.judge")
-
 
 # ============================================================
 # 判断结果
@@ -62,7 +60,7 @@ _FALLBACK_PROMPT = """请判断以下 {count} 对段落是否存在文档间不�
 def _load_default_prompt() -> str:
     """从随包 .txt 文件加载默认 prompt 模板"""
     try:
-        with open(_DEFAULT_PROMPT_FILE, "r", encoding="utf-8") as f:
+        with open(_DEFAULT_PROMPT_FILE, encoding="utf-8") as f:
             return f.read().strip()
     except Exception as e:
         log.warning(f"加载默认 prompt 文件失败，使用兜底: {e}")
@@ -141,7 +139,7 @@ def _resolve_prompt_template(judge_config: dict) -> str:
     # 优先级 1: 外部文件
     prompt_file = judge_config.get("prompt_file", "")
     if prompt_file and os.path.exists(prompt_file):
-        with open(prompt_file, "r", encoding="utf-8") as f:
+        with open(prompt_file, encoding="utf-8") as f:
             template = f.read().strip()
         if template:
             log.info(f"  使用外部 prompt 文件: {prompt_file}")
@@ -305,7 +303,7 @@ def _process_batch_results(batch, results):
     return new_items
 
 
-def filter_diffs(diff_items, llm_config: dict = None, judge_config: dict = None,
+def filter_diffs(diff_items, llm_config: dict | None = None, judge_config: dict | None = None,
                  on_batch=None):
     """
     一致性判断流水线
@@ -340,7 +338,7 @@ def filter_diffs(diff_items, llm_config: dict = None, judge_config: dict = None,
     pre_classified, uncertain = batch_pre_classify(diff_items)
 
     pre_counts = {}
-    for item, cat, reason in pre_classified:
+    for _, cat, _ in pre_classified:
         pre_counts[cat] = pre_counts.get(cat, 0) + 1
 
     log.info(f"  规则预过滤: {len(pre_classified)} 项排除 ({pre_counts})")
@@ -382,18 +380,19 @@ def filter_diffs(diff_items, llm_config: dict = None, judge_config: dict = None,
             batch_results = _run_batches_concurrent(
                 batches, llm_config, prompt_template, num_batches, concurrency
             )
-            for batch_idx, batch, results in batch_results:
+            for _, batch, results in batch_results:
                 inconsistent_items.extend(_process_batch_results(batch, results))
         else:
             batch_results = _run_batches_sequential(
                 batches, llm_config, prompt_template, num_batches
             )
-            for batch_idx, batch, results in batch_results:
+            for _, batch, results in batch_results:
                 inconsistent_items.extend(_process_batch_results(batch, results))
 
     log.info(f"  ✅ 确认不一致: {len(inconsistent_items)} 处")
     log.info(
-        f"  📊 总计: {len(diff_items)} 候选 → 规则排除 {len(pre_classified)} → LLM判断 {len(uncertain)} → 确认矛盾 {len(inconsistent_items)}"
+        f"  📊 总计: {len(diff_items)} 候选 → 规则排除 {len(pre_classified)} "
+        f"→ LLM判断 {len(uncertain)} → 确认矛盾 {len(inconsistent_items)}"
     )
 
     return JudgeResult(
@@ -408,7 +407,7 @@ def filter_diffs(diff_items, llm_config: dict = None, judge_config: dict = None,
 # ============================================================
 
 
-def judge_pairs(pairs, llm_config: dict, judge_config: dict = None):
+def judge_pairs(pairs, llm_config: dict, judge_config: dict | None = None):
     """
     判断若干段落对（dict 形式）是否存在矛盾。
 

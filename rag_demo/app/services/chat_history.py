@@ -20,11 +20,10 @@
 """
 
 import json
-import logging
 import os
 import time
 
-log = logging.getLogger("rag_demo.chat_history")
+from loguru import logger as log
 
 
 class ChatHistoryStore:
@@ -49,7 +48,7 @@ class ChatHistoryStore:
         session_id: str,
         role: str,
         content: str,
-        sources: list = None,
+        sources: list | None = None,
         title: str = "",
     ) -> dict:
         """
@@ -142,7 +141,7 @@ class ChatHistoryStore:
     @staticmethod
     def _load_file(filepath: str) -> dict | None:
         try:
-            with open(filepath, "r", encoding="utf-8") as f:
+            with open(filepath, encoding="utf-8") as f:
                 return json.load(f)
         except Exception as e:
             log.warning(f"加载历史文件失败: {filepath}: {e}")

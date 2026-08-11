@@ -3,7 +3,6 @@
 """
 
 import asyncio
-import logging
 from urllib.parse import unquote
 
 from fastapi import APIRouter, HTTPException
@@ -11,8 +10,6 @@ from pydantic import BaseModel
 
 from app.routes import _state
 from app.routes._state import init_qa  # noqa: F401 - re-export for main.py
-
-log = logging.getLogger("rag_demo.routes.qa")
 
 router = APIRouter()
 
@@ -44,10 +41,10 @@ async def ask(req: AskRequest):
     except RuntimeError as e:
         # API Key 未配置等运行时错误
         if "API Key" in str(e) or "未配置" in str(e):
-            raise HTTPException(status_code=503, detail=f"LLM 服务不可用: {e}")
-        raise HTTPException(status_code=500, detail=f"问答引擎错误: {e}")
+            raise HTTPException(status_code=503, detail=f"LLM 服务不可用: {e}") from e
+        raise HTTPException(status_code=500, detail=f"问答引擎错误: {e}") from e
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"内部错误: {e}")
+        raise HTTPException(status_code=500, detail=f"内部错误: {e}") from e
     return response.to_dict()
 
 

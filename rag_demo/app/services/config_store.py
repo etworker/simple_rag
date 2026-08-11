@@ -10,12 +10,11 @@
 """
 
 import json
-import logging
 import os
 from copy import deepcopy
 from typing import Any
 
-log = logging.getLogger("rag_demo.config")
+from loguru import logger as log
 
 # 默认缓存根目录
 _DEFAULT_CACHE_DIR = os.path.join(os.path.expanduser("~"), ".simple_rag")

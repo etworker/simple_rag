@@ -5,18 +5,16 @@
 
 import asyncio
 import json
-import logging
 import os
 import uuid
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
+from loguru import logger as log
 
 from app.routes import _state
 from app.services.review_runner import run_pre_review as _run_pre_review
 from app.services.utils import compute_sha256, compute_sha256_bytes
-
-log = logging.getLogger("rag_demo.routes.review")
 
 router = APIRouter()
 
@@ -36,22 +34,21 @@ async def get_active_review():
                 "all_steps": task.get("all_steps", []),
                 "completed_steps": task.get("completed_steps", []),
             }
-        if task["status"] == "done" and task.get("result"):
-            if task_id not in _state.app.confirmed_or_rejected:
-                # 解析旧版文档信息
-                old_vf = task.get("old_version_filepath", "")
-                old_vf_basename = os.path.basename(old_vf) if old_vf else ""
-                old_doc_filename = task.get("old_doc_filename", "")
-                return {
-                    "task_id": task_id,
-                    "status": "done",
-                    "filename": task["filename"],
-                    "file_hash": task.get("file_hash", ""),
-                    "result": task["result"],
-                    "old_version_filepath": old_vf_basename,
-                    "old_doc_filename": old_doc_filename,
-                    "old_version_fullpath": old_vf,  # 完整路径，用于预览旧文档PDF
-                }
+        if task["status"] == "done" and task.get("result") and task_id not in _state.app.confirmed_or_rejected:
+            # 解析旧版文档信息
+            old_vf = task.get("old_version_filepath", "")
+            old_vf_basename = os.path.basename(old_vf) if old_vf else ""
+            old_doc_filename = task.get("old_doc_filename", "")
+            return {
+                "task_id": task_id,
+                "status": "done",
+                "filename": task["filename"],
+                "file_hash": task.get("file_hash", ""),
+                "result": task["result"],
+                "old_version_filepath": old_vf_basename,
+                "old_doc_filename": old_doc_filename,
+                "old_version_fullpath": old_vf,  # 完整路径，用于预览旧文档PDF
+            }
     return {"task_id": None}
 
 
@@ -117,7 +114,7 @@ async def upload_document(file: UploadFile = File(...), choice: str = Form("")):
             old_version_filepath = existing.filepath  # 保存旧版路径用于版本对比
         elif choice == "coexist":
             old_version_filepath = existing.filepath  # coexist 模式也记录旧版路径
-            log.info(f"用户选择并存: 旧文档保留, 新文档将做版本对比")
+            log.info("用户选择并存: 旧文档保留, 新文档将做版本对比")
 
     file_ext = os.path.splitext(filename)[1] or ".bin"
     safe_filename = f"{new_sha}{file_ext}"
@@ -235,7 +232,7 @@ async def confirm_review(task_id: str):
         )
     except Exception as e:
         log.error(f"入库失败: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"入库失败: {e!s}")
+        raise HTTPException(status_code=500, detail=f"入库失败: {e!s}") from e
 
     task["status"] = "confirmed"
     _state.app.confirmed_or_rejected.add(task_id)

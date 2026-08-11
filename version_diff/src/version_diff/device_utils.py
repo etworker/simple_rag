@@ -13,6 +13,8 @@ from __future__ import annotations
 import os
 from typing import Any
 
+from loguru import logger as log
+
 
 def is_cuda_available() -> bool:
     """检测当前环境是否可用 CUDA GPU。"""
@@ -148,9 +150,6 @@ def embedding_model_kwargs(config_embedding: dict | None) -> dict[str, Any]:
 
 def log_device_status(device: str, verbose: bool = True) -> None:
     """输出当前检测到的设备信息日志。"""
-    import logging
-    log = logging.getLogger("version_diff.device")
-
     if not verbose:
         return
 
@@ -180,7 +179,5 @@ def maybe_index_to_gpu(index, gpu_id: int = 0):
         gpu_index = faiss.index_cpu_to_gpu(res, gpu_id, index)
         return gpu_index, True
     except Exception as e:
-        import logging
-        log = logging.getLogger("version_diff.device")
         log.warning(f"⚠️ FAISS GPU 不可用，回退到 CPU: {e}")
         return index, False

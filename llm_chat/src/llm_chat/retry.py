@@ -5,11 +5,10 @@
 401/403 等认证错误不重试，直接抛出。
 """
 
-import logging
 import re
 import time
 
-log = logging.getLogger("llm_chat.retry")
+from loguru import logger as log
 
 # 从异常信息中提取 HTTP 状态码，例如 "服务端错误 (503): ..." 或 "HTTP 503: ..."
 _STATUS_RE = re.compile(r"\((\d{3})\)|\b(\d{3})\b")
@@ -53,7 +52,7 @@ def retry_http(fn, max_retries: int = 3, backoff: float = 2.0):
             # 429（限流）或 5xx（服务端错误）才重试；
             # 从异常信息提取真实状态码，避免把正文里的 "500" 等数字误判为重试条件
             status = _extract_status_code(msg)
-            should_retry = status in (429,) or (status is not None and 500 <= status < 600)
+            should_retry = status == 429 or (status is not None and 500 <= status < 600)
             if not should_retry and "网络请求失败" in msg:
                 should_retry = True
             if not should_retry or attempt == max_retries:

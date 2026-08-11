@@ -29,12 +29,11 @@ import pathlib
 import sys
 import time
 
-import logging
+from loguru import logger as log
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
 )
-log = logging.getLogger("verify_version_diff")
 
 # 脚本位于 version_diff/examples/ → parents[2] 即项目根（simple_rag）
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]

@@ -10,14 +10,11 @@
 
 import hashlib
 import json
-import logging
 import os
 
 import faiss
 import numpy as np
-
-log = logging.getLogger("version_diff.vectorstore")
-
+from loguru import logger as log
 
 # 默认缓存目录（~/.simple_rag/vector_cache/）
 DEFAULT_CACHE_DIR = os.path.join(os.path.expanduser("~"), ".simple_rag", "vector_cache")

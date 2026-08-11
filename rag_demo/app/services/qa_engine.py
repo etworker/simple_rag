@@ -9,17 +9,16 @@
   5. 返回：答案 + 来源列表 + 冲突标记
 """
 
-import logging
 from collections import OrderedDict
 from dataclasses import dataclass, field
+
+from loguru import logger as log
+from version_diff.conflict import detect_conflicts
 
 from app.services.chat import ChatSession
 from app.services.chat_history import ChatHistoryStore
 from app.services.config_store import ConfigStore
 from app.services.doc_store import DocStore, RetrievedChunk
-from version_diff.conflict import detect_conflicts
-
-log = logging.getLogger("rag_demo.qa_engine")
 
 # 会话上限：超过后淘汰最久未使用的会话，避免长运行服务内存无限增长
 MAX_SESSIONS = 500
@@ -67,7 +66,7 @@ class QAEngine:
         self._doc_store = doc_store
         self._config = config_store
         # OrderedDict 保持插入顺序，便于 LRU 淘汰最旧会话
-        self._sessions: "OrderedDict[str, ChatSession]" = OrderedDict()
+        self._sessions: OrderedDict[str, ChatSession] = OrderedDict()
         self._history = history_store or ChatHistoryStore()
 
     def ask(self, question: str, session_id: str = "default") -> QAResponse:

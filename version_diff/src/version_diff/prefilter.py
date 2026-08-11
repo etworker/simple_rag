@@ -182,14 +182,16 @@ def _classify_fragment(old_text: str, new_text: str, context: str) -> str:
     if _VALUE_WITH_UNIT.search(old_clean) or _VALUE_WITH_UNIT.search(new_clean):
         return "numeric_value"
 
-    # 管理信息上下文
-    if any(w in context for w in _MGMT_CONTEXT_WORDS):
-        # 且差异内容较短且含日期/版本格式
-        if len(old_clean) + len(new_clean) < 30:
-            if _DATE_PATTERN.search(old_clean + new_clean) or _VERSION_PATTERN.search(
-                old_clean + new_clean
-            ):
-                return "mgmt_info"
+    # 管理信息上下文（且差异内容较短且含日期/版本格式）
+    if (
+        any(w in context for w in _MGMT_CONTEXT_WORDS)
+        and len(old_clean) + len(new_clean) < 30
+        and (
+            _DATE_PATTERN.search(old_clean + new_clean)
+            or _VERSION_PATTERN.search(old_clean + new_clean)
+        )
+    ):
+        return "mgmt_info"
 
     # 纯数字（无单位）——可能是章节号也可能是数量，标为 ambiguous_number
     if (
@@ -218,9 +220,7 @@ def _has_section_context(context: str, old_num: str, new_num: str) -> bool:
     # 检查数字是否在段落开头作为编号（如 "2.1.3 适用范围"）
     if re.search(rf"^{re.escape(old_num)}\s+\S", context, re.MULTILINE):
         return True
-    if re.search(rf"^{re.escape(new_num)}\s+\S", context, re.MULTILINE):
-        return True
-    return False
+    return bool(re.search(rf"^{re.escape(new_num)}\s+\S", context, re.MULTILINE))
 
 
 # ============================================================

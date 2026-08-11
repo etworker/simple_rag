@@ -7,13 +7,12 @@ ChatSession — 多轮对话管理（后端无关）
   - 将请求分发到具体后端（Bedrock / OpenAI）
 """
 
-import logging
 from dataclasses import dataclass
+
+from loguru import logger as log
 
 from llm_chat.backends import get_backend
 from llm_chat.defaults import DEFAULT_BACKEND, DEFAULT_MODELS, SESSION_DEFAULTS
-
-log = logging.getLogger("llm_chat")
 
 
 @dataclass
@@ -69,10 +68,7 @@ class ChatSession:
             LLM 回答文本
         """
         # 构建用户消息
-        if context:
-            user_content = f"参考资料：\n{context}\n\n用户问题：{question}"
-        else:
-            user_content = question
+        user_content = f"参考资料：\n{context}\n\n用户问题：{question}" if context else question
 
         self.messages.append(Message(role="user", content=user_content))
 

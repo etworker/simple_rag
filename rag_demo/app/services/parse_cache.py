@@ -8,20 +8,19 @@ SHA-256 不变则直接读缓存，跳过耗时的 PDF 解析。
 """
 
 import json
-import logging
 import os
 
-from app.services.utils import compute_sha256
 from doc_parser import Document, Paragraph, Table
 from doc_parser import parse as _raw_parse
+from loguru import logger as log
 
-log = logging.getLogger("rag_demo.parse_cache")
+from app.services.utils import compute_sha256
 
 # 默认缓存目录（~/.simple_rag/parse_cache/）
 _CACHE_DIR = os.path.join(os.path.expanduser("~"), ".simple_rag", "parse_cache")
 
 
-def cached_parse(filepath: str, config: dict = None, cache_dir: str = None) -> Document:
+def cached_parse(filepath: str, config: dict | None = None, cache_dir: str | None = None) -> Document:
     """
     带缓存的文档解析
 
@@ -77,7 +76,7 @@ def _save_cache(cache_path: str, doc: Document):
 
 def _load_cache(cache_path: str) -> Document:
     """从 JSON 反序列化 Document"""
-    with open(cache_path, "r", encoding="utf-8") as f:
+    with open(cache_path, encoding="utf-8") as f:
         data = json.load(f)
 
     paragraphs = [Paragraph.from_dict(p) for p in data["paragraphs"]]

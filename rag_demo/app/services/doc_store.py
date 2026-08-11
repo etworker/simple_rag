@@ -9,21 +9,19 @@
 """
 
 import json
-import logging
 import os
 import time
 from dataclasses import asdict, dataclass
 
 import faiss
 import numpy as np
+from doc_parser import Paragraph
+from loguru import logger as log
 from sentence_transformers import SentenceTransformer
 from version_diff.vectorstore import VectorStore
 
 from app.services.parse_cache import cached_parse as parse
 from app.services.utils import compute_sha256
-from doc_parser import Paragraph
-
-log = logging.getLogger("rag_demo.doc_store")
 
 
 @dataclass
@@ -248,7 +246,7 @@ class DocStore:
         log.info(f"🗑️ 知识库已清空: 移除 {count} 篇文档")
         return count
 
-    def search(self, query: str, top_k: int = None) -> list[RetrievedChunk]:
+    def search(self, query: str, top_k: int | None = None) -> list[RetrievedChunk]:
         """
         语义检索
 
@@ -305,7 +303,7 @@ class DocStore:
         if doc_id in self._documents:
             return self._documents[doc_id]
         # 兼容：尝试用 filename 匹配
-        for k, v in self._documents.items():
+        for _k, v in self._documents.items():
             if v.filename == doc_id:
                 return v
         return None
@@ -368,13 +366,13 @@ class DocStore:
 
         try:
             # 1. 元数据
-            with open(meta_path, "r", encoding="utf-8") as f:
+            with open(meta_path, encoding="utf-8") as f:
                 meta_dict = json.load(f)
             self._documents = {k: DocMeta(**v) for k, v in meta_dict.items()}
 
             # 2. 段落
             if os.path.exists(paras_path):
-                with open(paras_path, "r", encoding="utf-8") as f:
+                with open(paras_path, encoding="utf-8") as f:
                     paras_data = json.load(f)
                 self._paragraphs = [Paragraph.from_dict(p) for p in paras_data]
 

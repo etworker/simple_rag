@@ -10,12 +10,10 @@ LLM HTTP 后端公共基类
   - chat()：构造请求并调用 self._send(req, self._parse_response)
 """
 import json
-import logging
 import os
 import urllib.error
 import urllib.request
-
-log = logging.getLogger("llm_chat.backends.base")
+from contextlib import suppress
 
 
 class BaseHTTPBackend:
@@ -55,10 +53,8 @@ class BaseHTTPBackend:
                 result = json.loads(resp.read().decode("utf-8"))
         except urllib.error.HTTPError as e:
             body = ""
-            try:
+            with suppress(Exception):
                 body = e.read().decode("utf-8")[:300]
-            except Exception:
-                pass
             if e.code == 401:
                 raise RuntimeError(f"API Key 无效或已过期 (401): {body}") from e
             elif e.code == 429:

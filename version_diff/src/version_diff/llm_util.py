@@ -6,11 +6,10 @@ LLM 调用 + JSON 数组解析的公共工具
 """
 
 import json
-import logging
 import re
 import time
 
-log = logging.getLogger("version_diff.llm_util")
+from loguru import logger as log
 
 
 def call_llm_json(

@@ -6,8 +6,9 @@ RAG 文档问答系统 — FastAPI 主入口
     uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 """
 
-import logging
 import os
+
+from loguru import logger
 
 # 禁用 HuggingFace 联网检查（必须在任何 HF/transformers 导入前设置）
 os.environ.setdefault("HF_HUB_OFFLINE", "1")
@@ -51,26 +52,21 @@ from app.services.doc_store import DocStore
 from app.services.qa_engine import QAEngine
 
 # 日志
-log = logging.getLogger("rag_demo")
+log = logger
 # 缓存根目录（可配置，默认 ~/.simple_rag/）
 _CACHE_ROOT = os.path.join(os.path.expanduser("~"), ".simple_rag")
-# 日志同时输出到文件和控制台（追加模式，保留历史）
-LOG_FILE = os.path.join(_CACHE_ROOT, "logs", "app.log")
-os.makedirs(os.path.dirname(LOG_FILE), exist_ok=True)
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s | %(name)s | %(message)s",
-    handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler(LOG_FILE, mode="a", encoding="utf-8"),
-    ],
-)
-logging.getLogger("httpx").setLevel(logging.WARNING)
-logging.getLogger("httpcore").setLevel(logging.WARNING)
-logging.getLogger("uvicorn").setLevel(logging.INFO)
-logging.getLogger("uvicorn.access").setLevel(logging.WARNING)  # 访问日志太多
-logging.getLogger("pdfminer").setLevel(logging.WARNING)  # pdfminer 解析日志极多
-logging.getLogger("sentence_transformers").setLevel(logging.WARNING)
+# 日志统一用 loguru，写到 ~/.cache/simple_rag/log/simple_rag.log（可配置）
+from version_diff.logging_setup import default_log_path, set_stdlib_level, setup_logging
+
+setup_logging()
+LOG_FILE = default_log_path()
+# 调节过吵的第三方库日志级别
+set_stdlib_level("httpx", "WARNING")
+set_stdlib_level("httpcore", "WARNING")
+set_stdlib_level("uvicorn", "INFO")
+set_stdlib_level("uvicorn.access", "WARNING")
+set_stdlib_level("pdfminer", "WARNING")
+set_stdlib_level("sentence_transformers", "WARNING")
 
 # 每次启动打印分隔线，方便区分不同运行会话
 import time as _time
@@ -180,15 +176,15 @@ async def index():
 # ============================================================
 
 
-class WebSocketLogHandler(logging.Handler):
-    """将日志推送到所有已连接的 WebSocket 客户端"""
+class WebSocketLogHandler:
+    """loguru 自定义 sink：将日志推送到所有已连接的 WebSocket 客户端"""
 
     clients: list = []  # noqa: RUF012
     # 保留最近 200 条日志，新连接时回放
     history: list = []  # noqa: RUF012
 
-    def emit(self, record):
-        msg = self.format(record)
+    def __call__(self, message: str):
+        msg = str(message)
         # 缓存历史
         WebSocketLogHandler.history.append(msg)
         if len(WebSocketLogHandler.history) > 200:
@@ -207,13 +203,13 @@ class WebSocketLogHandler(logging.Handler):
                 pass
 
 
+# 通过 setup_logging 的 extra_sink 挂到 loguru（WebSocket 实时推送）
 _ws_handler = WebSocketLogHandler()
-_ws_handler.setLevel(logging.DEBUG)
-_ws_handler.setFormatter(
-    logging.Formatter("%(asctime)s | %(name)s | %(message)s", datefmt="%H:%M:%S")
+logger.add(
+    _ws_handler,
+    level="DEBUG",
+    format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | {name}:{line} | {message}",
 )
-# 挂到 root logger
-logging.getLogger().addHandler(_ws_handler)
 
 
 @app.get("/api/logs/tail")

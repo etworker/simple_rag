@@ -4,13 +4,10 @@
 保持原有接口不变，内部委托给 llm_chat.ChatSession
 """
 
-import logging
 from dataclasses import dataclass, field
 
 from llm_chat import ChatSession as _ChatSession
 from llm_chat import Message  # noqa: F401 - re-export for tests
-
-log = logging.getLogger("rag_demo.chat")
 
 
 @dataclass
@@ -34,7 +31,7 @@ class ChatSession:
         backend = self.llm_config.get("provider", "bedrock")
 
         # 透传所有 llm_config 参数给 llm_chat，由其内部 defaults 统一管理默认值
-        kwargs = {k: v for k, v in self.llm_config.items() if k not in ("provider",)}
+        kwargs = {k: v for k, v in self.llm_config.items() if k != "provider"}
 
         self._session = _ChatSession(
             system_prompt=self.system_prompt,

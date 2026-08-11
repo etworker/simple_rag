@@ -7,10 +7,9 @@ PDF 页面渲染缓存服务
 """
 
 import hashlib
-import logging
 import os
 
-log = logging.getLogger("rag_demo.page_renderer")
+from loguru import logger as log
 
 
 class PageRenderer:

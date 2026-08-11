@@ -9,13 +9,12 @@
 """
 
 import difflib
-import logging
 import re
 from dataclasses import dataclass, field
 
-from version_diff.vectorstore import VectorStore
+from loguru import logger as log
 
-log = logging.getLogger("version_diff.matcher")
+from version_diff.vectorstore import VectorStore
 
 
 @dataclass
@@ -70,7 +69,7 @@ def pair_paragraphs(
     emb_a, _ = vs.get_or_compute(file_a, paras_a, model)
 
     log.info("  📄 文档B:")
-    emb_b, index_b = vs.get_or_compute(file_b, paras_b, model)
+    _emb_b, index_b = vs.get_or_compute(file_b, paras_b, model)
 
     # 用 FAISS 检索：对 A 中每段，在 B 中找 top-3 最相似
     top_k = min(3, len(paras_b))

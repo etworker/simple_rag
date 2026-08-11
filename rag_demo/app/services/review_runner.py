@@ -8,14 +8,13 @@
 import asyncio
 import copy
 import json
-import logging
 import os
 import time
 
+from loguru import logger as log
+
 from app.routes import _state
 from app.services.utils import compute_sha256
-
-log = logging.getLogger("rag_demo.review_runner")
 
 
 def load_existing_docs(engine):
@@ -124,7 +123,7 @@ async def run_pre_review(task_id: str):
 
     if os.path.exists(cached_result_path):
         try:
-            with open(cached_result_path, "r", encoding="utf-8") as _f:
+            with open(cached_result_path, encoding="utf-8") as _f:
                 cached = json.load(_f)
             doc_sig = _compute_doc_signature()
             cache_doc_sig = cached.get("doc_signature", "")

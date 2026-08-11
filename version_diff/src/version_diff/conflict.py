@@ -25,8 +25,8 @@ def _text_similarity(text_a: str, text_b: str) -> float:
     """简单文本相似度（Jaccard on char 2-grams）"""
     if not text_a or not text_b:
         return 0.0
-    grams_a = set(text_a[i : i + 2] for i in range(len(text_a) - 1))
-    grams_b = set(text_b[i : i + 2] for i in range(len(text_b) - 1))
+    grams_a = {text_a[i : i + 2] for i in range(len(text_a) - 1)}
+    grams_b = {text_b[i : i + 2] for i in range(len(text_b) - 1)}
     if not grams_a or not grams_b:
         return 0.0
     return len(grams_a & grams_b) / len(grams_a | grams_b)

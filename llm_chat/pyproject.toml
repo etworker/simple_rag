@@ -3,7 +3,9 @@ name = "llm-chat"
 version = "0.1.0"
 description = "轻量多后端 LLM 多轮对话管理 — 支持 Bedrock Converse / OpenAI 兼容接口"
 requires-python = ">=3.10"
-dependencies = []
+dependencies = [
+    "loguru>=0.7.3",
+]
 
 [project.optional-dependencies]
 dev = ["pytest>=7.0"]

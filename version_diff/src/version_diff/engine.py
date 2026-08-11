@@ -16,7 +16,6 @@ DiffEngine — 文档差异检测引擎主入口
     engine.check_conflicts(chunks)  # 问答时冲突检测
 """
 
-import logging
 import os
 import re
 import time
@@ -24,6 +23,8 @@ import unicodedata
 from collections.abc import Callable
 from contextlib import suppress
 from difflib import SequenceMatcher
+
+from loguru import logger as log
 
 # ======================================================================
 # 通用「版本管理噪声」模式：文档版本迭代中常见的非内容变化
@@ -156,9 +157,6 @@ from version_diff.llm_util import call_llm_json
 from version_diff.matcher import compute_diff
 from version_diff.models import DiffResult, Inconsistency, VersionChange, VersionDiffResult
 from version_diff.vectorstore import VectorStore
-
-log = logging.getLogger("version_diff.engine")
-
 
 # 版本过滤 prompt（随包发布，外部文件优先）
 _VERSION_FILTER_PROMPT_FILE = os.path.join(

@@ -1,10 +1,9 @@
 """路由共享状态 — 由 main.py 通过 init() 注入到 AppState 单例"""
 
 import json
-import logging
 import os
 
-log = logging.getLogger("rag_demo.routes")
+from loguru import logger as log
 
 
 class AppState:
@@ -61,7 +60,7 @@ class AppState:
         """启动时恢复已完成的 review task"""
         if os.path.exists(self.review_cache_path):
             try:
-                with open(self.review_cache_path, "r", encoding="utf-8") as f:
+                with open(self.review_cache_path, encoding="utf-8") as f:
                     data = json.load(f)
                 for tid, task in data.items():
                     self.review_tasks[tid] = task
