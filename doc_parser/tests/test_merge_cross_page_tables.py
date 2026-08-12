@@ -9,8 +9,8 @@
 5. 列数差异 > 1 → 不合并
 """
 
-import sys
 import os
+import sys
 
 # 把 src 加入 import path，使 from doc_parser import ... 可用
 sys.path.insert(
@@ -21,9 +21,8 @@ sys.path.insert(
 from doc_parser.models import Table
 from doc_parser.parser import (
     _merge_cross_page_tables,
-    _should_merge_tables,
     _row_token_jaccard,
-    _append_rows_skip_dup_header,
+    _should_merge_tables,
 )
 
 

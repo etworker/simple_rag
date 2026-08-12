@@ -19,9 +19,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 # 临时目录隔离测试用全局缓存根
-_TMP_CACHE = tempfile.mkstemp(prefix="rag_test_")[1]
-os.unlink(_TMP_CACHE)
-os.makedirs(_TMP_CACHE)
+_TMP_CACHE = tempfile.mkdtemp(prefix="rag_test_")
 os.environ["CACHE_DIR"] = _TMP_CACHE
 
 
@@ -62,9 +60,7 @@ def _make_small_pdf(name: str = "test_regression.pdf") -> bytes:
         doc = fitz.open()
         page = doc.new_page()
         page.insert_text((72, 700), "测试文档内容，足够让 pdfplumber 识别", fontsize=14)
-        page.insert_text(
-            (72, 660), "总则部分：本文档包含通用技术要求。", fontsize=12
-        )
+        page.insert_text((72, 660), "总则部分：本文档包含通用技术要求。", fontsize=12)
         data = doc.tobytes()
         doc.close()
         return data
@@ -102,15 +98,15 @@ def test_upload_confirm_survives_restart(client: TestClient):
     # 确认入库
     r = client.post(f"/api/documents/review/{task_id}/confirm")
     assert r.status_code == 200, f"确认失败: {r.text}"
-    filename = r.json()["filename"]
+    r.json()["filename"]
     paragraphs = r.json()["paragraphs"]
     assert paragraphs >= 1
 
     # === 阶段 2: 模拟服务重启 ===
-    from app.routes import _state, review, documents
+    from app.routes import _state
 
     # 备份当前的 doc_store（模拟进程退出前内存状态）
-    old_doc_count = len(_state.app.doc_store._documents)
+    len(_state.app.doc_store._documents)
 
     # 重新加载路由状态（相当于 FastAPI 启动时的 init() 流程）
     _state.app._load_review_cache()  # 复位内存任务
@@ -124,12 +120,12 @@ def test_upload_confirm_survives_restart(client: TestClient):
     assert r.status_code == 200
     docs = r.json()["documents"]
     active_docs = [d for d in docs if d["status"] == "active"]
-    assert any(
-        d["filename"] == "manual.pdf" for d in active_docs
-    ), f"重启后找不到新文档。active={[d['filename'] for d in active_docs]}"
+    assert any(d["filename"] == "manual.pdf" for d in active_docs), (
+        f"重启后找不到新文档。active={[d['filename'] for d in active_docs]}"
+    )
 
     # (b) PDF 文件实际可访问（FileNotFound 不会再发生）
-    r = client.get(f"/api/documents/pdf?name=manual.pdf")
+    r = client.get("/api/documents/pdf?name=manual.pdf")
     assert r.status_code == 200, f"PDF 下载失败: {r.text}"
     assert len(r.content) > 0, "PDF 文件为空"
 

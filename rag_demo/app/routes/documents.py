@@ -73,8 +73,13 @@ async def get_document_paragraphs(name: str):
     return {
         "file": filename,
         "paragraphs": [
-            {"text": p.text, "page": p.page, "chapter": p.chapter,
-             "chapter_title": p.chapter_title, "location": p.location}
+            {
+                "text": p.text,
+                "page": p.page,
+                "chapter": p.chapter,
+                "chapter_title": p.chapter_title,
+                "location": p.location,
+            }
             for p in paras
         ],
     }
@@ -129,9 +134,7 @@ async def get_document_page(name: str, page: int = 1, highlight: str = ""):
     if not os.path.exists(meta.filepath):
         raise HTTPException(status_code=404, detail="文件不存在")
     renderer = PageRenderer(cache_dir=os.path.join(s.cache_dir, "page_cache"))
-    png_path = await asyncio.to_thread(
-        renderer.get_page, meta.filepath, page, unquote(highlight)
-    )
+    png_path = await asyncio.to_thread(renderer.get_page, meta.filepath, page, unquote(highlight))
     return FileResponse(png_path, media_type="image/png")
 
 

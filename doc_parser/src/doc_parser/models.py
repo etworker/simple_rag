@@ -1,11 +1,12 @@
 """数据模型"""
+
 from dataclasses import dataclass, field
-from typing import List
 
 
 @dataclass
 class Paragraph:
     """带定位信息的段落"""
+
     text: str
     page: int = 0
     page_end: int = 0
@@ -70,6 +71,7 @@ class Paragraph:
 @dataclass
 class Table:
     """文档中的表格"""
+
     rows: list = field(default_factory=list)
     headers: list = field(default_factory=list)
     page: int = 0
@@ -136,7 +138,7 @@ class Table:
         if not self.rows:
             return ""
 
-        header = self.headers if self.headers else self.rows[0]
+        header = self.headers or self.rows[0]
         data_rows = self.rows if self.headers else self.rows[1:]
         if not header:
             return ""
@@ -155,7 +157,7 @@ class Table:
         for row in data_rows:
             # 列数对齐
             cells = list(row) + [""] * (len(header) - len(row))
-            cells = cells[:len(header)]
+            cells = cells[: len(header)]
             lines.append("| " + " | ".join(_escape(c) for c in cells) + " |")
 
         result = "\n".join(lines)
@@ -170,9 +172,10 @@ class Table:
 @dataclass
 class Document:
     """文档解析结果"""
+
     filename: str
-    paragraphs: List[Paragraph] = field(default_factory=list)
-    tables: List[Table] = field(default_factory=list)
+    paragraphs: list[Paragraph] = field(default_factory=list)
+    tables: list[Table] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         """序列化为 JSON 友好的 dict（字段单一来源，避免各处手抄）"""
@@ -206,24 +209,24 @@ class Document:
         import re
 
         # 目录条目特征：末尾跟章节页码引用（如 0.1-1、1.3-12）或页数（如 35 页）
-        _toc_re = re.compile(r'\d+\.\d+-\d+\s*$|\s+\d+\s*页\s*$')
+        _toc_re = re.compile(r"\d+\.\d+-\d+\s*$|\s+\d+\s*页\s*$")
         # 页数后缀剥离（如 "35 页"）
-        _page_suffix_re = re.compile(r'\s+\d+\s*页\s*$')
+        _page_suffix_re = re.compile(r"\s+\d+\s*页\s*$")
         # TOC 页码引用剥离（如 "0.1-1"、"1.3-12"）
-        _toc_ref_re = re.compile(r'\s+\d+\.\d+-\d+\s*$')
+        _toc_ref_re = re.compile(r"\s+\d+\.\d+-\d+\s*$")
 
         def _heading_level(chapter: str) -> int:
             return min(chapter.count(".") + 1, 6)
 
         def _clean_title(title: str) -> str:
             """剥离页数后缀和 TOC 页码引用"""
-            title = _page_suffix_re.sub('', title)
-            title = _toc_ref_re.sub('', title)
+            title = _page_suffix_re.sub("", title)
+            title = _toc_ref_re.sub("", title)
             return title.strip()
 
         def _norm(s: str) -> str:
-            """归一化空白用于比较"""
-            return re.sub(r'\s+', '', s)
+            """归一化用于标题比较：去空白 + 去标题分隔符"""
+            return re.sub(r"[\s、（）()]+", "", s)
 
         # 合并段落和表格，按 (page, index) 排序
         items = []
@@ -234,8 +237,8 @@ class Document:
         items.sort(key=lambda x: (x[0], x[1]))
 
         lines = []
-        rendered_chapters = set()   # 已输出过标题的章节号
-        chapter_titles = {}         # 章节号 → 清洁标题（从 TOC 条目收集）
+        rendered_chapters = set()  # 已输出过标题的章节号
+        chapter_titles = {}  # 章节号 → 清洁标题（从 TOC 条目收集）
 
         # 第一遍：从 TOC 条目收集章节标题信息
         for _, _, kind, item in items:
@@ -268,7 +271,11 @@ class Document:
                         continue
 
                     # 文本与标题一致 → 渲染为 Markdown 标题
-                    if _norm(text) == _norm(heading_text) or _norm(text) == _norm(item.chapter_title) or _norm(text) == _norm(clean_heading):
+                    if (
+                        _norm(text) == _norm(heading_text)
+                        or _norm(text) == _norm(item.chapter_title)
+                        or _norm(text) == _norm(clean_heading)
+                    ):
                         _ensure_parent_chapters(item.chapter)
                         level = _heading_level(item.chapter)
                         lines.append(f"\n{'#' * level} {clean_heading}\n")
@@ -283,13 +290,22 @@ class Document:
                         lines.append(f"\n{'#' * level} {clean_heading}\n")
                         rendered_chapters.add(item.chapter)
                         # 找到标题在原文中的结束位置，提取剩余正文
+                        remaining = None
                         for prefix in (heading_text, clean_heading):
                             if text.startswith(prefix):
-                                remaining = text[len(prefix):].strip()
+                                remaining = text[len(prefix) :].strip()
                                 break
-                        else:
-                            # 归一化匹配但前缀不完全一致 → 按长度切分
-                            remaining = text[len(heading_text):].strip()
+                        if remaining is None:
+                            # 归一化匹配但前缀不完全一致（如 "（一）标题．正文" vs "一 标题"）
+                            # 在原文中搜索标题末尾，从标题之后切分
+                            title_end = text.find(item.chapter_title)
+                            if title_end >= 0:
+                                remaining = text[title_end + len(item.chapter_title) :].strip()
+                                # 去除开头可能残留的终止符（．。：:）
+                                if remaining and remaining[0] in "．。：:":
+                                    remaining = remaining[1:].strip()
+                            else:
+                                remaining = text[len(heading_text) :].strip()
                         if remaining:
                             lines.append(remaining)
                         lines.append("")

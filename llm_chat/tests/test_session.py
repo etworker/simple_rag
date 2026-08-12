@@ -5,14 +5,17 @@ ChatSession 单元测试
   - Mock 后端，不实际调用 LLM
   - 验证会话管理、历史截断、context 拼接等核心逻辑
 """
-import pytest
-from unittest.mock import patch, MagicMock
 
-from llm_chat import ChatSession, Message
+from unittest.mock import MagicMock, patch
+
+import pytest
+
+from llm_chat import ChatSession
 
 
 class FakeBackend:
     """测试用假后端"""
+
     def __init__(self, **kwargs):
         self.calls = []
 
@@ -97,8 +100,11 @@ class TestChatSession:
 
     def test_backend_error_handling(self):
         """后端异常时返回错误信息"""
+
         class ErrorBackend:
-            def __init__(self, **kw): pass
+            def __init__(self, **kw):
+                pass
+
             def chat(self, messages, system_prompt=""):
                 raise ConnectionError("网络超时")
 
@@ -116,12 +122,14 @@ class TestBackendRegistry:
     def test_unknown_backend_raises(self):
         """未知后端报错"""
         from llm_chat.backends import get_backend
+
         with pytest.raises(ValueError, match="未知后端"):
             get_backend("不存在的后端")
 
     def test_bedrock_backend_instantiation(self):
         """Bedrock 后端可正常实例化"""
         from llm_chat.backends import get_backend
+
         backend = get_backend("bedrock", model="test-model", region="us-west-2")
         assert backend.model == "test-model"
         assert backend.region == "us-west-2"
@@ -129,6 +137,7 @@ class TestBackendRegistry:
     def test_openai_backend_instantiation(self):
         """OpenAI 后端可正常实例化"""
         from llm_chat.backends import get_backend
+
         backend = get_backend("openai", model="gpt-4o", base_url="http://localhost:8080/v1")
         assert backend.model == "gpt-4o"
         assert "localhost" in backend.base_url
@@ -136,6 +145,7 @@ class TestBackendRegistry:
     def test_bedrock_alias(self):
         """bedrock_converse 是 bedrock 的别名"""
         from llm_chat.backends import get_backend
+
         backend = get_backend("bedrock_converse", model="x")
         assert backend.__class__.__name__ == "BedrockBackend"
 
@@ -146,6 +156,7 @@ class TestBedrockBackend:
     def test_resolve_key_from_env(self, monkeypatch):
         """从环境变量获取 key"""
         from llm_chat.backends.bedrock import BedrockBackend
+
         monkeypatch.setenv("TEST_KEY_ENV", "my-secret-key")
         backend = BedrockBackend(api_key_env="TEST_KEY_ENV")
         assert backend._resolve_key() == "my-secret-key"
@@ -153,6 +164,7 @@ class TestBedrockBackend:
     def test_resolve_key_fallback(self, monkeypatch):
         """环境变量为空时 fallback 到直传"""
         from llm_chat.backends.bedrock import BedrockBackend
+
         monkeypatch.delenv("NONEXISTENT_ENV", raising=False)
         backend = BedrockBackend(api_key_env="NONEXISTENT_ENV", api_key="direct-key")
         assert backend._resolve_key() == "direct-key"
@@ -160,6 +172,7 @@ class TestBedrockBackend:
     def test_no_key_raises(self, monkeypatch):
         """无 key 时报错"""
         from llm_chat.backends.bedrock import BedrockBackend
+
         monkeypatch.delenv("NONEXISTENT", raising=False)
         backend = BedrockBackend(api_key_env="NONEXISTENT", api_key="")
         with pytest.raises(RuntimeError, match="未配置"):
@@ -172,6 +185,7 @@ class TestOpenAIBackend:
     def test_resolve_key_from_env(self, monkeypatch):
         """从环境变量获取 key"""
         from llm_chat.backends.openai import OpenAIBackend
+
         monkeypatch.setenv("MY_OPENAI_KEY", "sk-test123")
         backend = OpenAIBackend(api_key_env="MY_OPENAI_KEY")
         assert backend._resolve_key() == "sk-test123"
@@ -179,6 +193,7 @@ class TestOpenAIBackend:
     def test_endpoint_selection(self):
         """endpoint 参数正确存储"""
         from llm_chat.backends.openai import OpenAIBackend
+
         b1 = OpenAIBackend(endpoint="chat")
         b2 = OpenAIBackend(endpoint="responses")
         assert b1.endpoint == "chat"
@@ -187,6 +202,7 @@ class TestOpenAIBackend:
     def test_base_url_strip_trailing_slash(self):
         """base_url 去尾部斜杠"""
         from llm_chat.backends.openai import OpenAIBackend
+
         backend = OpenAIBackend(base_url="http://localhost/v1/")
         assert backend.base_url == "http://localhost/v1"
 
@@ -196,7 +212,8 @@ class TestAskOnce:
 
     def test_ask_once_basic(self):
         """基本调用（mock 后端）"""
-        from unittest.mock import patch, MagicMock
+        from unittest.mock import patch
+
         from llm_chat import ask_once
 
         mock_backend = MagicMock()
@@ -212,7 +229,8 @@ class TestAskOnce:
 
     def test_ask_once_with_system_prompt(self):
         """带 system_prompt"""
-        from unittest.mock import patch, MagicMock
+        from unittest.mock import patch
+
         from llm_chat import ask_once
 
         mock_backend = MagicMock()

@@ -29,9 +29,7 @@ class QAResponse:
     """问答结果"""
 
     answer: str
-    sources: list[dict] = field(
-        default_factory=list
-    )  # [{text, source_file, location, score}]
+    sources: list[dict] = field(default_factory=list)  # [{text, source_file, location, score}]
     conflicts: list[dict] = field(default_factory=list)  # [{point, doc_a, doc_b}]
     has_conflicts: bool = False
 
@@ -97,13 +95,9 @@ class QAEngine:
 
         # 追问时：如果检索结果质量太低，不注入 context，依赖对话历史
         if is_followup and chunks and chunks[0].score < min_score:
-            log.info(
-                f"追问检索质量低 (top={chunks[0].score:.3f} < {min_score})，使用对话历史"
-            )
+            log.info(f"追问检索质量低 (top={chunks[0].score:.3f} < {min_score})，使用对话历史")
             answer = session.ask(question, context="")
-            return QAResponse(
-                answer=answer, sources=[], conflicts=[], has_conflicts=False
-            )
+            return QAResponse(answer=answer, sources=[], conflicts=[], has_conflicts=False)
 
         # 2. 冲突检测（仅对高质量检索结果）
         conflicts = self._detect_conflicts(chunks)
@@ -127,9 +121,7 @@ class QAEngine:
 
         # 7. 持久化问答历史
         self._history.save_message(session_id, "user", question)
-        self._history.save_message(
-            session_id, "assistant", answer, sources=source_list, title=question[:30]
-        )
+        self._history.save_message(session_id, "assistant", answer, sources=source_list, title=question[:30])
 
         return QAResponse(
             answer=answer,
@@ -164,17 +156,13 @@ class QAEngine:
             self._sessions.move_to_end(session_id)
         return self._sessions[session_id]
 
-    def _build_context(
-        self, chunks: list[RetrievedChunk], conflicts: list[dict]
-    ) -> str:
+    def _build_context(self, chunks: list[RetrievedChunk], conflicts: list[dict]) -> str:
         """构建发送给 LLM 的上下文文本
 
         格式带编号 [1] [2] ...，便于 LLM 输出时用简短编号引用而非长文件名。
         """
         # 给每个 chunk 编号
-        template = self._config.get(
-            "prompts.context_template", "[{idx}] {source} | {location}\n{text}\n"
-        )
+        template = self._config.get("prompts.context_template", "[{idx}] {source} | {location}\n{text}\n")
 
         parts = []
         for i, chunk in enumerate(chunks, start=1):
@@ -204,12 +192,8 @@ class QAEngine:
             conflict_template = self._config.get("prompts.conflict_warning", "")
             lines = []
             for c in conflicts:
-                others_desc = "；".join(
-                    f"{o['file']}称「{o['says']}」" for o in c["doc_others"]
-                )
-                lines.append(
-                    f"  - {c['point']}：{c['doc_a_file']}称「{c['doc_a_says']}」，{others_desc}"
-                )
+                others_desc = "；".join(f"{o['file']}称「{o['says']}」" for o in c["doc_others"])
+                lines.append(f"  - {c['point']}：{c['doc_a_file']}称「{c['doc_a_says']}」，{others_desc}")
             conflict_desc = "\n".join(lines)
             if conflict_template:
                 context += conflict_template.format(conflicts=conflict_desc)
@@ -246,4 +230,3 @@ class QAEngine:
             judge_config=judge_config,
             cd_config=cd_config,
         )
-

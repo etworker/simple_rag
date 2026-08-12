@@ -67,12 +67,8 @@ class DiffResult:
             lines.append(f"### 不一致 #{i}: {inc.point}\n")
             lines.append("| | 描述 |")
             lines.append("|---|------|")
-            lines.append(
-                f"| **{inc.doc_a_file}** {inc.doc_a_location} | {inc.doc_a_says} |"
-            )
-            lines.append(
-                f"| **{inc.doc_b_file}** {inc.doc_b_location} | {inc.doc_b_says} |"
-            )
+            lines.append(f"| **{inc.doc_a_file}** {inc.doc_a_location} | {inc.doc_a_says} |")
+            lines.append(f"| **{inc.doc_b_file}** {inc.doc_b_location} | {inc.doc_b_says} |")
             lines.append("")
         return "\n".join(lines)
 

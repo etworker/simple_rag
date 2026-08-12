@@ -8,7 +8,6 @@
 
 import os
 import sys
-import tempfile
 
 import pytest
 
@@ -25,12 +24,13 @@ class TestCrossPageTableMergeLogic:
 
     def _mk_table(self, rows, page, page_end=None, source="f.pdf"):
         from doc_parser.models import Table
-        return Table(rows=list(rows), page=page, page_end=page_end or page,
-                     source_file=source, index=0)
+
+        return Table(rows=list(rows), page=page, page_end=page_end or page, source_file=source, index=0)
 
     def test_merge_called_during_parse(self):
         """验证 _merge_cross_page_tables 函数可被正常导入和调用"""
         from doc_parser.parser import _merge_cross_page_tables
+
         tables = [self._mk_table([["h"], ["a"]], page=1)]
         result = _merge_cross_page_tables(tables)
         assert len(result) == 1
@@ -38,6 +38,7 @@ class TestCrossPageTableMergeLogic:
     def test_adjacent_same_header_skip_dup(self):
         """相邻页且续页首部与表头重复 → 合并 + 跳过重复表头"""
         from doc_parser.parser import _merge_cross_page_tables
+
         tables = [
             self._mk_table([["姓名", "年龄"], ["张三", "25"], ["李四", "30"]], page=1),
             self._mk_table([["姓名", "年龄"], ["王五", "28"]], page=2),
@@ -51,6 +52,7 @@ class TestCrossPageTableMergeLogic:
 
     def test_different_files_not_merged(self):
         from doc_parser.parser import _merge_cross_page_tables
+
         tables = [
             self._mk_table([["h"], ["a"]], page=1, source="A.pdf"),
             self._mk_table([["h"], ["b"]], page=2, source="B.pdf"),
@@ -60,6 +62,7 @@ class TestCrossPageTableMergeLogic:
 
     def test_column_mismatch_gt1_not_merged(self):
         from doc_parser.parser import _merge_cross_page_tables
+
         tables = [
             self._mk_table([["A", "B"], ["1", "2"]], page=1),
             self._mk_table([["A", "B", "C", "D"], ["x", "y", "z", "w"]], page=2),
@@ -70,6 +73,7 @@ class TestCrossPageTableMergeLogic:
     def test_continuation_without_repeated_header_keeps_all_rows(self):
         """续页不重复表头: 全行保留"""
         from doc_parser.parser import _merge_cross_page_tables
+
         tables = [
             self._mk_table([["H"], ["a"]], page=1),
             self._mk_table([["b"], ["c"]], page=2),
@@ -100,7 +104,7 @@ class TestCrossPageTableMergeInParse:
         for i in range(2):
             page = doc.new_page(width=595, height=842)  # A4
             text = (
-                f"这是第 {i+1} 页\n\n"
+                f"这是第 {i + 1} 页\n\n"
                 "姓名 部门 工号\n"
                 "张三 研发 1001\n"
                 "李四 产品 1002\n"
@@ -119,6 +123,7 @@ class TestCrossPageTableMergeInParse:
     def test_parse_real_pdf_extracts_tables(self, two_page_pdf):
         """解析真实 PDF 应能提取表格 (具体数量取决于 pdfplumber 识别)"""
         from doc_parser import parse
+
         doc = parse(two_page_pdf)
         assert doc is not None
         assert doc.filename
@@ -131,6 +136,7 @@ class TestCrossPageTableMergeInParse:
     def test_parse_pipeline_no_exception(self, two_page_pdf):
         """验证解析管线在跨页场景下不抛异常"""
         from doc_parser import parse
+
         doc = parse(two_page_pdf)
         # 不崩溃 + 至少提取出一些段落
         assert doc is not None
@@ -139,6 +145,7 @@ class TestCrossPageTableMergeInParse:
     def test_tables_have_page_info(self, two_page_pdf):
         """表格结果应包含页码信息"""
         from doc_parser import parse
+
         doc = parse(two_page_pdf)
         for t in doc.tables:
             assert t.page >= 1, f"表格页码应 >= 1, 实际 {t.page}"

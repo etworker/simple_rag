@@ -8,11 +8,12 @@ GPU 加速 — rag_demo 集成测试
 """
 
 import gc
+import logging
 import os
 import shutil
 import sys
-import logging
 import tempfile
+from typing import ClassVar
 
 import pytest
 
@@ -35,6 +36,7 @@ class TestDeviceUtilsReal:
 
         # 从真实 config 读取
         from app.services.config_store import ConfigStore
+
         store = ConfigStore()
         emb_cfg = store.get_section("embedding")
         device = resolve_embedding_device(emb_cfg)
@@ -63,14 +65,17 @@ class TestDeviceUtilsReal:
     def test_embedding_model_kwargs_auto(self):
         """dtype=auto 应返回 {'model_kwargs': {'torch_dtype': 'auto'}}"""
         from version_diff.device_utils import embedding_model_kwargs
+
         result = embedding_model_kwargs({"dtype": "auto"})
         assert result == {"model_kwargs": {"torch_dtype": "auto"}}
 
     def test_embedding_model_kwargs_real_torch_dtype(self):
         """dtype=float16 应映射到真实 torch.float16 枚举 (包裹在 model_kwargs 内)"""
         from version_diff.device_utils import embedding_model_kwargs
+
         result = embedding_model_kwargs({"dtype": "float16"})
         import torch
+
         assert result == {"model_kwargs": {"torch_dtype": torch.float16}}
 
     def test_model_loads_on_resolved_device(self):
@@ -83,6 +88,7 @@ class TestDeviceUtilsReal:
         )
 
         from app.services.config_store import ConfigStore
+
         emb_cfg = ConfigStore().get_section("embedding")
         device = resolve_embedding_device(emb_cfg)
         kwargs = embedding_model_kwargs(emb_cfg)
@@ -93,6 +99,7 @@ class TestDeviceUtilsReal:
 
         try:
             from sentence_transformers import SentenceTransformer
+
             # 设置超时常量，避免无网络时挂起
             os.environ.setdefault("HF_HUB_DOWNLOAD_TIMEOUT", "30")
             m = SentenceTransformer(model_name, device=device, **kwargs)
@@ -132,10 +139,9 @@ class TestDeviceUtilsReal:
 
     def test_faiss_maybe_to_gpu_real_fallback(self):
         """在有/无 GPU 环境下 maybe_index_to_gpu 都应正常返回一个可用 index"""
-        from version_diff.device_utils import maybe_index_to_gpu
-
         import faiss
         import numpy as np
+        from version_diff.device_utils import maybe_index_to_gpu
 
         d = 4
         cpu_index = faiss.IndexFlatIP(d)
@@ -145,7 +151,7 @@ class TestDeviceUtilsReal:
         assert gpu_index is not None
         # 返回的 index 必须能正常检索
         q = np.random.random((1, d)).astype("float32")
-        scores, indices = gpu_index.search(q, 2)
+        scores, _indices = gpu_index.search(q, 2)
         assert scores.shape == (1, 2)
         print(f"\n  [INFO] maybe_index_to_gpu → used_gpu={used_gpu}, type={type(gpu_index).__name__}")
 
@@ -158,7 +164,7 @@ class TestDeviceUtilsReal:
 class TestDocStoreDeviceConfig:
     """验证 DocStore 实际应用了 config 中的 device 配置"""
 
-    _tempdirs: list[str] = []
+    _tempdirs: ClassVar[list[str]] = []
 
     @pytest.fixture(autouse=True)
     def _cleanup(self):
@@ -206,18 +212,21 @@ class TestDocStoreDeviceConfig:
             store = self._fresh_store()
             # 模拟 add_document 后的状态
             from doc_parser import Paragraph
+
             store._paragraphs = [
                 Paragraph(text=f"段落{i} 带一些内容来生成 embedding", source_file=f"doc{i}.pdf", page=1)
                 for i in range(3)
             ]
             # 该方法依赖 _get_model, 模型不存在则跳过
-            store._embeddings = store._get_model().encode(
-                [p.text for p in store._paragraphs], show_progress_bar=False
-            ).astype("float32")
+            store._embeddings = (
+                store._get_model()
+                .encode([p.text for p in store._paragraphs], show_progress_bar=False)
+                .astype("float32")
+            )
             store._rebuild_index()
             assert store._index is not None
-        except OSError as e:
-            pytest.skip(f"模型未缓存")
+        except OSError:
+            pytest.skip("模型未缓存")
 
 
 # ---------------------------------------------------------------------------
@@ -230,6 +239,7 @@ class TestConfigHasGPUFields:
 
     def test_embedding_section_has_device(self):
         from app.services.config_store import ConfigStore
+
         store = ConfigStore()
         emb = store.get_section("embedding")
         assert "device" in emb, "embedding 段缺少 'device' 字段"

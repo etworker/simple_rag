@@ -66,9 +66,7 @@ class VectorStore:
         # 缓存未命中，计算 embedding
         texts = [p.text for p in paragraphs]
         log.info(f"  ⏳ 计算 {len(texts)} 段嵌入...")
-        embeddings = model.encode(
-            texts, normalize_embeddings=True, show_progress_bar=False
-        )
+        embeddings = model.encode(texts, normalize_embeddings=True, show_progress_bar=False)
         embeddings = np.array(embeddings, dtype=np.float32)
 
         # 单句 encode 时 model 返回 (dim,) 而非 (1, dim)，统一升维避免下游 shape[1] 报错
@@ -86,9 +84,7 @@ class VectorStore:
 
         return embeddings, index
 
-    def search_similar(
-        self, query_embeddings: np.ndarray, index: faiss.Index, top_k: int = 5
-    ):
+    def search_similar(self, query_embeddings: np.ndarray, index: faiss.Index, top_k: int = 5):
         """
         在 FAISS index 中搜索最相似的 top-K
 
@@ -172,9 +168,7 @@ class VectorStore:
             log.warning(f"  ⚠️ 缓存加载失败: {e}")
             return None
 
-    def _save_cache(
-        self, cache_key: str, embeddings: np.ndarray, index, paragraphs: list
-    ):
+    def _save_cache(self, cache_key: str, embeddings: np.ndarray, index, paragraphs: list):
         """持久化到磁盘"""
         cache_path = self._cache_path(cache_key)
         os.makedirs(cache_path, exist_ok=True)

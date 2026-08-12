@@ -39,11 +39,13 @@ def filtered_result():
     if not llm_config.get("model"):
         pytest.skip("未配置 LLM，跳过需要在线 LLM 的测试")
 
-    engine = DiffEngine(config={
-        "embedding": {"model": "BAAI/bge-small-zh-v1.5"},
-        "diff": {"similarity_threshold": 0.80, "batch_size": 10},
-        "llm": llm_config,
-    })
+    engine = DiffEngine(
+        config={
+            "embedding": {"model": "BAAI/bge-small-zh-v1.5"},
+            "diff": {"similarity_threshold": 0.80, "batch_size": 10},
+            "llm": llm_config,
+        }
+    )
     result = engine.version_compare(V1_PATH, V2_PATH)
     return result
 
@@ -65,9 +67,8 @@ class TestFilterReducesNoise:
         for c in filtered_result.changes:
             # V1.0→V2.0、2025-06-01→2026-03-01 这类不应出现
             if c.change_type == "modified":
-                is_metadata = (
-                    ("V1.0" in c.old_text and "V2.0" in c.new_text) or
-                    ("2025-06-01" in c.old_text and "2026-03-01" in c.new_text)
+                is_metadata = ("V1.0" in c.old_text and "V2.0" in c.new_text) or (
+                    "2025-06-01" in c.old_text and "2026-03-01" in c.new_text
                 )
                 assert not is_metadata, f"版本元数据未被过滤: {c.old_text[:50]} → {c.new_text[:50]}"
 
@@ -79,19 +80,17 @@ class TestFilterKeepsSubstantive:
         """数值变更应保留（P1时间、磁盘阈值等）"""
         modified = [c for c in filtered_result.changes if c.change_type == "modified"]
         # 至少应保留：P1时间、磁盘阈值、备份频率、白班人数、培训学时
-        numeric_found = sum(1 for c in modified if any(
-            kw in c.old_text or kw in c.new_text
-            for kw in ["分钟", "小时", "%", "学时", "人在岗"]
-        ))
+        numeric_found = sum(
+            1
+            for c in modified
+            if any(kw in c.old_text or kw in c.new_text for kw in ["分钟", "小时", "%", "学时", "人在岗"])
+        )
         assert numeric_found >= 3, f"数值变更保留太少: {numeric_found}"
 
     def test_keeps_device_changes(self, filtered_result):
         """设备型号变更应保留"""
         modified = [c for c in filtered_result.changes if c.change_type == "modified"]
-        device_found = any(
-            "PA-850" in c.old_text or "i2600" in c.old_text or "19c" in c.old_text
-            for c in modified
-        )
+        device_found = any("PA-850" in c.old_text or "i2600" in c.old_text or "19c" in c.old_text for c in modified)
         assert device_found, "设备型号变更被错误过滤"
 
     def test_keeps_added_content(self, filtered_result):
@@ -121,12 +120,12 @@ class TestFilterSummary:
     def test_print_final_result(self, filtered_result):
         """打印最终过滤结果"""
         changes = filtered_result.changes
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print(f"版本对比最终结果（LLM 过滤后）: {len(changes)} 处实质性变更")
         print(f"  modified: {sum(1 for c in changes if c.change_type == 'modified')}")
         print(f"  added: {sum(1 for c in changes if c.change_type == 'added')}")
         print(f"  removed: {sum(1 for c in changes if c.change_type == 'removed')}")
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")
         for i, c in enumerate(changes, 1):
             icon = {"modified": "✏️", "added": "➕", "removed": "➖"}[c.change_type]
             summary = f" — {c.summary}" if c.summary else ""
@@ -135,4 +134,4 @@ class TestFilterSummary:
                 print(f"     旧: {c.old_text[:100]}")
             if c.new_text:
                 print(f"     新: {c.new_text[:100]}")
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")

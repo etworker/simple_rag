@@ -139,6 +139,7 @@ def embedding_model_kwargs(config_embedding: dict | None) -> dict[str, Any]:
 
     try:
         import torch as _torch
+
         # "torch.float16" → torch.float16
         attr_name = torch_dtype.split(".")[-1] if "." in torch_dtype else torch_dtype
         resolved = getattr(_torch, attr_name)
@@ -146,6 +147,33 @@ def embedding_model_kwargs(config_embedding: dict | None) -> dict[str, Any]:
         resolved = torch_dtype
 
     return {"model_kwargs": {"torch_dtype": resolved}}
+
+
+def load_embedding_model(emb_config: dict) -> SentenceTransformer:
+    """根据配置加载 SentenceTransformer embedding 模型。
+
+    封装 device 解析、dtype 参数、缓存目录等通用逻辑，
+    供 DiffEngine 和 DocStore 共享，避免两处维护。
+
+    Args:
+        emb_config: embedding 配置 dict，需包含 "model" 键。
+                    可选键: "cache_dir", "device", "dtype", "gpu_id" 等。
+
+    Returns:
+        已加载的 SentenceTransformer 实例。
+    """
+    from sentence_transformers import SentenceTransformer
+
+    model_name = emb_config.get("model", "")
+    cache_dir = emb_config.get("cache_dir") or None
+    device = resolve_embedding_device(emb_config)
+    kwargs = embedding_model_kwargs(emb_config)
+    log.info(f"加载 embedding 模型: {model_name} (device={device})")
+    m_kwargs = {"cache_folder": cache_dir}
+    m_kwargs.update(kwargs)
+    model = SentenceTransformer(model_name, device=device, **m_kwargs)
+    log_device_status(device)
+    return model
 
 
 def log_device_status(device: str, verbose: bool = True) -> None:
@@ -156,9 +184,10 @@ def log_device_status(device: str, verbose: bool = True) -> None:
     if "cuda" in device:
         try:
             import torch
+
             idx = torch.cuda.current_device()
             name = torch.cuda.get_device_name(idx)
-            mem = torch.cuda.get_device_properties(idx).total_mem / (1024 ** 3)
+            mem = torch.cuda.get_device_properties(idx).total_mem / (1024**3)
             log.info(f"🚀 Embedding 加速: GPU ({name}, {mem:.1f} GB), device={device}")
         except Exception:
             log.info(f"🚀 Embedding 加速: GPU, device={device}")
@@ -175,6 +204,7 @@ def maybe_index_to_gpu(index, gpu_id: int = 0):
         return index, False
     try:
         import faiss
+
         res = faiss.StandardGpuResources()
         gpu_index = faiss.index_cpu_to_gpu(res, gpu_id, index)
         return gpu_index, True

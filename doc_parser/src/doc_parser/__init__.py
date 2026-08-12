@@ -16,4 +16,4 @@ doc_parser — 通用文档解析库
 from doc_parser.models import Document, Paragraph, Table
 from doc_parser.parser import parse, parse_to_markdown
 
-__all__ = ["parse", "parse_to_markdown", "Document", "Paragraph", "Table"]
+__all__ = ["Document", "Paragraph", "Table", "parse", "parse_to_markdown"]

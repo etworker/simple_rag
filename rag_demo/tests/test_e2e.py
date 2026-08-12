@@ -4,19 +4,14 @@
 流程: 清空 → 上传 → 预审核 → 确认入库 → 验证列表
 验证: file_hash/doc_id 字段、MD5 后缀显示
 """
-import sys
-import os
-import io
 
-# Force UTF-8 output on Windows
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
-sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
-
-import time
 import glob
 import json
-import urllib.request
+import os
+import sys
+import time
 import urllib.error
+import urllib.request
 
 BASE = "http://127.0.0.1:8000"
 PASS = 0
@@ -66,7 +61,7 @@ def wait_server():
         try:
             urllib.request.urlopen(f"{BASE}/api/documents/list", timeout=2)
             return True
-        except:
+        except Exception:
             time.sleep(1)
     return False
 
@@ -116,7 +111,7 @@ def main():
         print("  [WARN] no test PDF found")
         sys.exit(0)
 
-    filename = os.path.basename(pdf_path)
+    os.path.basename(pdf_path)
     # Use original Chinese filename for upload
     original_name = "(二级)(司批)网络与信息安全管理手册.pdf"
     print(f"  文件: {original_name}")
@@ -125,8 +120,7 @@ def main():
     with open(pdf_path, "rb") as f:
         content = f.read()
 
-    status, data = api("POST", "/api/documents/upload",
-                       files={"file": (original_name, content)})
+    status, data = api("POST", "/api/documents/upload", files={"file": (original_name, content)})
     check("上传返回200", status == 200, f"got {status}, {data}")
     if status != 200:
         print(f"  上传失败: {data}")
@@ -134,8 +128,11 @@ def main():
 
     task_id = data.get("task_id")
     check("返回 task_id", task_id is not None, f"data={data}")
-    check("返回 file_hash", "file_hash" in data and len(data["file_hash"]) > 0,
-          f"file_hash={data.get('file_hash', 'MISSING')}")
+    check(
+        "返回 file_hash",
+        "file_hash" in data and len(data["file_hash"]) > 0,
+        f"file_hash={data.get('file_hash', 'MISSING')}",
+    )
     check("返回 filename", "filename" in data, f"data={data}")
     file_hash = data.get("file_hash", "")
     check("file_hash len=64(SHA256)", len(file_hash) == 64, f"len={len(file_hash)}")
@@ -154,8 +151,11 @@ def main():
             result = data.get("result", {})
             n = len(result.get("inconsistencies", []))
             print(f"  预审核完成! 矛盾数={n}")
-            check("预审核返回 file_hash", "file_hash" in data and len(data.get("file_hash", "")) > 0,
-                  f"file_hash={data.get('file_hash', 'MISSING')}")
+            check(
+                "预审核返回 file_hash",
+                "file_hash" in data and len(data.get("file_hash", "")) > 0,
+                f"file_hash={data.get('file_hash', 'MISSING')}",
+            )
             break
         elif task_status == "error":
             print(f"  [FAIL] pre-review failed: {data}")
@@ -187,15 +187,23 @@ def main():
     if docs:
         d = docs[0]
         check("有 filename 字段", "filename" in d)
-        check("filename 是原始名(非MD5)", not d["filename"].endswith(".pdf") or
-              "(" in d.get("filename", ""), f"filename={d.get('filename')}")
+        check(
+            "filename 是原始名(非MD5)",
+            not d["filename"].endswith(".pdf") or "(" in d.get("filename", ""),
+            f"filename={d.get('filename')}",
+        )
         check("有 doc_id 字段", "doc_id" in d, f"keys={list(d.keys())}")
-        check("有 file_hash 字段", "file_hash" in d and len(d["file_hash"]) > 0,
-              f"file_hash={d.get('file_hash', 'MISSING')}")
-        check("doc_id 格式=filename#hash[:8]", "#" in d.get("doc_id", ""),
-              f"doc_id={d.get('doc_id')}")
-        check("file_hash 与上传一致", d.get("file_hash") == file_hash,
-              f"upload={file_hash[:8]} list={d.get('file_hash', '')[:8]}")
+        check(
+            "有 file_hash 字段",
+            "file_hash" in d and len(d["file_hash"]) > 0,
+            f"file_hash={d.get('file_hash', 'MISSING')}",
+        )
+        check("doc_id 格式=filename#hash[:8]", "#" in d.get("doc_id", ""), f"doc_id={d.get('doc_id')}")
+        check(
+            "file_hash 与上传一致",
+            d.get("file_hash") == file_hash,
+            f"upload={file_hash[:8]} list={d.get('file_hash', '')[:8]}",
+        )
 
     # Step 7: Verify frontend has SHA-256 display code (JS is in app.js after split)
     print("\n[7] Verify frontend has SHA-256 display logic")
@@ -214,8 +222,11 @@ def main():
     # HTTP headers are case-insensitive — normalize keys for lookup
     hdr_lower = {k.lower(): v for k, v in headers.items()}
     cache_hdr = hdr_lower.get("cache-control", "")
-    check("HTTP Cache-Control: no-cache", "no-cache" in cache_hdr.lower() or "no-store" in cache_hdr.lower(),
-          f"Cache-Control={cache_hdr}")
+    check(
+        "HTTP Cache-Control: no-cache",
+        "no-cache" in cache_hdr.lower() or "no-store" in cache_hdr.lower(),
+        f"Cache-Control={cache_hdr}",
+    )
 
     # Summary
     print("\n" + "=" * 60)
@@ -225,4 +236,11 @@ def main():
 
 
 if __name__ == "__main__":
+    # 直接运行（python test_e2e.py）时确保 Windows 控制台 UTF-8 输出；
+    # 不替换 sys.stdout 对象，仅重配置编码，避免破坏 pytest 的 capture 机制。
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass
     main()

@@ -10,7 +10,7 @@ SHA-256 不变则直接读缓存，跳过耗时的 PDF 解析。
 import json
 import os
 
-from doc_parser import Document, Paragraph, Table
+from doc_parser import Document
 from doc_parser import parse as _raw_parse
 from loguru import logger as log
 
@@ -43,18 +43,14 @@ def cached_parse(filepath: str, config: dict | None = None, cache_dir: str | Non
     if os.path.exists(cache_path):
         try:
             doc = _load_cache(cache_path)
-            log.info(
-                f"📦 命中解析缓存: {doc.filename} ({len(doc.paragraphs)} 段, SHA256={file_hash[-8:].upper()})"
-            )
+            log.info(f"📦 命中解析缓存: {doc.filename} ({len(doc.paragraphs)} 段, SHA256={file_hash[-8:].upper()})")
             return doc
         except Exception as e:
             log.warning(f"缓存加载失败，重新解析: {e}")
 
     # 执行解析
     doc = _raw_parse(filepath, config=config)
-    log.info(
-        f"✅ 解析完成: {doc.filename} ({len(doc.paragraphs)} 段, {len(doc.tables)} 表)"
-    )
+    log.info(f"✅ 解析完成: {doc.filename} ({len(doc.paragraphs)} 段, {len(doc.tables)} 表)")
 
     # 写入缓存
     _save_cache(cache_path, doc)
@@ -65,25 +61,12 @@ def cached_parse(filepath: str, config: dict | None = None, cache_dir: str | Non
 
 def _save_cache(cache_path: str, doc: Document):
     """序列化 Document 到 JSON"""
-    data = {
-        "filename": doc.filename,
-        "paragraphs": [p.to_dict() for p in doc.paragraphs],
-        "tables": [t.to_dict() for t in doc.tables],
-    }
     with open(cache_path, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False)
+        json.dump(doc.to_dict(), f, ensure_ascii=False)
 
 
 def _load_cache(cache_path: str) -> Document:
     """从 JSON 反序列化 Document"""
     with open(cache_path, encoding="utf-8") as f:
         data = json.load(f)
-
-    paragraphs = [Paragraph.from_dict(p) for p in data["paragraphs"]]
-    tables = [Table.from_dict(t) for t in data.get("tables", [])]
-
-    return Document(
-        filename=data["filename"],
-        paragraphs=paragraphs,
-        tables=tables,
-    )
+    return Document.from_dict(data)

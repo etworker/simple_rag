@@ -163,9 +163,7 @@ def _heuristic_group(raw_pairs):
     for pair in raw_pairs:
         a = pair["a"]
         sig = (
-            hashlib.sha256(
-                (a.get("source_file", "") + "|" + a.get("text", "")[:50].strip()).encode()
-            )
+            hashlib.sha256((a.get("source_file", "") + "|" + a.get("text", "")[:50].strip()).encode())
             .hexdigest()[-12:]
             .upper()
         )

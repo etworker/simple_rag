@@ -22,10 +22,12 @@ def version_diff_result():
     """执行一次 version_compare（PDF），所有测试共享结果"""
     from version_diff import DiffEngine
 
-    engine = DiffEngine(config={
-        "embedding": {"model": "BAAI/bge-small-zh-v1.5"},
-        "diff": {"similarity_threshold": 0.80},
-    })
+    engine = DiffEngine(
+        config={
+            "embedding": {"model": "BAAI/bge-small-zh-v1.5"},
+            "diff": {"similarity_threshold": 0.80},
+        }
+    )
     result = engine.version_compare(V1_PATH, V2_PATH)
     return result
 
@@ -65,7 +67,10 @@ class TestPdfContentAccuracy:
     def test_shift_staff(self, version_diff_result):
         modified = [c for c in version_diff_result.changes if c.change_type == "modified"]
         # PDF 提取可能在数字和汉字间插入空格："2 人" vs "3 人"
-        found = any(("2人" in c.old_text or "2 人" in c.old_text) and ("3人" in c.new_text or "3 人" in c.new_text) for c in modified)
+        found = any(
+            ("2人" in c.old_text or "2 人" in c.old_text) and ("3人" in c.new_text or "3 人" in c.new_text)
+            for c in modified
+        )
         assert found, "未检测到白班人数 2→3（含PDF空格变体）"
 
     def test_new_chapter_content(self, version_diff_result):
@@ -80,17 +85,13 @@ class TestPdfTableChanges:
     def test_firewall_upgrade(self, version_diff_result):
         all_changes = version_diff_result.changes
         found = any(
-            "PA-850" in c.old_text and "PA-3260" in c.new_text
-            for c in all_changes if c.change_type == "modified"
+            "PA-850" in c.old_text and "PA-3260" in c.new_text for c in all_changes if c.change_type == "modified"
         )
         assert found, "未检测到防火墙 PA-850→PA-3260"
 
     def test_database_upgrade(self, version_diff_result):
         all_changes = version_diff_result.changes
-        found = any(
-            "19c" in c.old_text and "21c" in c.new_text
-            for c in all_changes if c.change_type == "modified"
-        )
+        found = any("19c" in c.old_text and "21c" in c.new_text for c in all_changes if c.change_type == "modified")
         assert found, "未检测到数据库 Oracle 19c→21c"
 
     def test_waf_added(self, version_diff_result):
@@ -103,14 +104,14 @@ class TestPdfSummary:
     def test_print_summary(self, version_diff_result):
         """打印 PDF 版本对比摘要"""
         changes = version_diff_result.changes
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print(f"PDF 版本对比: {len(changes)} 处差异")
         print(f"  旧版段落: {version_diff_result.old_paragraph_count}")
         print(f"  新版段落: {version_diff_result.new_paragraph_count}")
         print(f"  modified: {sum(1 for c in changes if c.change_type == 'modified')}")
         print(f"  added: {sum(1 for c in changes if c.change_type == 'added')}")
         print(f"  removed: {sum(1 for c in changes if c.change_type == 'removed')}")
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")
         for i, c in enumerate(changes[:20], 1):
             icon = {"modified": "✏️", "added": "➕", "removed": "➖"}[c.change_type]
             print(f"  {icon} #{i} [{c.change_type}] {c.location}")

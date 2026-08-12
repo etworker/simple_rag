@@ -30,9 +30,7 @@ from version_diff.prefilter import batch_pre_classify
 class JudgeResult:
     """LLM 判断结果"""
 
-    inconsistent_items: list = field(
-        default_factory=list
-    )  # 确认为不一致的 TextDiffItem
+    inconsistent_items: list = field(default_factory=list)  # 确认为不一致的 TextDiffItem
     rule_filtered: int = 0  # 规则预过滤排除的数量
     llm_judged: int = 0  # 实际送 LLM 判断的数量
 
@@ -121,11 +119,7 @@ def _format_judge_items(items):
         src_b = item.para_b.source_file
         loc_a = item.para_a.location
         loc_b = item.para_b.location
-        parts.append(
-            f"--- 第 {i} 对 ---\n"
-            f"文档A [{src_a}] {loc_a}:\n{text_a}\n\n"
-            f"文档B [{src_b}] {loc_b}:\n{text_b}"
-        )
+        parts.append(f"--- 第 {i} 对 ---\n文档A [{src_a}] {loc_a}:\n{text_a}\n\n文档B [{src_b}] {loc_b}:\n{text_b}")
     return "\n\n".join(parts)
 
 
@@ -212,9 +206,7 @@ def _run_batches_sequential(batches, llm_config, prompt_template, num_batches):
     return results
 
 
-def _run_batches_concurrent(
-    batches, llm_config, prompt_template, num_batches, concurrency
-):
+def _run_batches_concurrent(batches, llm_config, prompt_template, num_batches, concurrency):
     """
     并发执行批次，遇到 429 自动降级
 
@@ -229,9 +221,7 @@ def _run_batches_concurrent(
     with ThreadPoolExecutor(max_workers=effective_concurrency) as executor:
         future_to_batch = {}
         for batch_idx, batch in enumerate(batches):
-            log.info(
-                f"    batch {batch_idx + 1}/{num_batches} ({len(batch)} pairs) submitted"
-            )
+            log.info(f"    batch {batch_idx + 1}/{num_batches} ({len(batch)} pairs) submitted")
             future = executor.submit(_judge_batch, batch, llm_config, prompt_template)
             future_to_batch[future] = (batch_idx, batch)
 
@@ -289,9 +279,7 @@ def _process_batch_results(batch, results):
             item.llm_doc_a_says = doc_a_says
             item.llm_doc_b_says = doc_b_says
             if point and doc_a_says and doc_b_says:
-                item.llm_reason = (
-                    f"{point}：A称「{doc_a_says}」，B称「{doc_b_says}」"
-                )
+                item.llm_reason = f"{point}：A称「{doc_a_says}」，B称「{doc_b_says}」"
             elif point:
                 item.llm_reason = point
             else:
@@ -303,8 +291,7 @@ def _process_batch_results(batch, results):
     return new_items
 
 
-def filter_diffs(diff_items, llm_config: dict | None = None, judge_config: dict | None = None,
-                 on_batch=None):
+def filter_diffs(diff_items, llm_config: dict | None = None, judge_config: dict | None = None, on_batch=None):
     """
     一致性判断流水线
 
@@ -377,15 +364,11 @@ def filter_diffs(diff_items, llm_config: dict | None = None, judge_config: dict 
                 )
                 on_batch(batch_idx, num_batches, new_items)
         elif concurrency > 1:
-            batch_results = _run_batches_concurrent(
-                batches, llm_config, prompt_template, num_batches, concurrency
-            )
+            batch_results = _run_batches_concurrent(batches, llm_config, prompt_template, num_batches, concurrency)
             for _, batch, results in batch_results:
                 inconsistent_items.extend(_process_batch_results(batch, results))
         else:
-            batch_results = _run_batches_sequential(
-                batches, llm_config, prompt_template, num_batches
-            )
+            batch_results = _run_batches_sequential(batches, llm_config, prompt_template, num_batches)
             for _, batch, results in batch_results:
                 inconsistent_items.extend(_process_batch_results(batch, results))
 

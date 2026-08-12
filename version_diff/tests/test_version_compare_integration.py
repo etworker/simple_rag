@@ -13,7 +13,6 @@ LLM 调用被替换为确定性 mock：按 prompt 中的「--- 第 N 处 ---」�
 缺失时自动 skip（CI 可选装数据）。
 """
 
-import os
 import pathlib
 import unittest.mock as mock
 
@@ -29,10 +28,7 @@ NEW_PDF = REPO_ROOT / "data" / "pdf" / "IT运维管理规范" / "v2" / "IT运维
 def _mock_filter(prompt, llm_config, max_retries=2, retry_backoff=1.0):
     """确定性 mock：本批 modified 条数 = prompt 中 '--- 第 ' 的出现次数。"""
     count = prompt.count("--- 第 ")
-    return [
-        {"index": i + 1, "keep": True, "summary": "（离线 mock：保留）"}
-        for i in range(count)
-    ]
+    return [{"index": i + 1, "keep": True, "summary": "（离线 mock：保留）"} for i in range(count)]
 
 
 @pytest.fixture
@@ -56,9 +52,7 @@ def engine():
 )
 def test_version_compare_pipeline(engine):
     """真实 embedding + mock LLM 过滤，应产出非空且结构正确的差异结果。"""
-    with mock.patch(
-        "version_diff.engine.call_llm_json", side_effect=_mock_filter
-    ) as m:
+    with mock.patch("version_diff.engine.call_llm_json", side_effect=_mock_filter) as m:
         result = engine.version_compare(str(OLD_PDF), str(NEW_PDF))
 
     # LLM 过滤路径确实被调用

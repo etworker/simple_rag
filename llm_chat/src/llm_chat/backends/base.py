@@ -9,6 +9,7 @@ LLM HTTP 后端公共基类
   - _parse_response(result) -> str：把 JSON 响应解析为模型输出文本
   - chat()：构造请求并调用 self._send(req, self._parse_response)
 """
+
 import json
 import os
 import urllib.error

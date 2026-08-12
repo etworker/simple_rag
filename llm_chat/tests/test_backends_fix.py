@@ -6,10 +6,12 @@ llm_chat 后端修复验证测试
   - OpenAIBackend HTTP 错误处理（401/429/500/网络错误）
   - BedrockBackend HTTP 错误处理
 """
-import pytest
+
 import json
 import urllib.error
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
+
+import pytest
 
 from llm_chat.backends.bedrock import BedrockBackend
 from llm_chat.backends.openai import OpenAIBackend
@@ -27,14 +29,12 @@ class TestBedrockSystemField:
 
         class FakeResp:
             def read(self):
-                return json.dumps({
-                    "output": {"message": {"content": [{"text": "OK"}]}}
-                }).encode()
+                return json.dumps({"output": {"message": {"content": [{"text": "OK"}]}}}).encode()
 
         class FakeUlopen:
             def __init__(self, req, timeout=None):
-                captured_payload['data'] = json.loads(req.data.decode())
-                captured_payload['headers'] = req.headers
+                captured_payload["data"] = json.loads(req.data.decode())
+                captured_payload["headers"] = req.headers
 
             def __enter__(self):
                 return FakeResp()
@@ -43,23 +43,20 @@ class TestBedrockSystemField:
                 pass
 
         with patch("urllib.request.urlopen", FakeUlopen):
-            result = backend.chat(
-                [{"role": "user", "content": "你好"}],
-                system_prompt="你是助手"
-            )
+            result = backend.chat([{"role": "user", "content": "你好"}], system_prompt="你是助手")
 
         assert result == "OK"
         # system_prompt 应在 system 字段
-        assert "system" in captured_payload['data']
-        assert captured_payload['data']['system'] == [{"text": "你是助手"}]
+        assert "system" in captured_payload["data"]
+        assert captured_payload["data"]["system"] == [{"text": "你是助手"}]
         # messages 中不应包含伪装的 system 对话
-        messages = captured_payload['data']['messages']
+        messages = captured_payload["data"]["messages"]
         assert len(messages) == 1
-        assert messages[0]['role'] == 'user'
+        assert messages[0]["role"] == "user"
         # 不应出现 "明白" 这类假回复
         for msg in messages:
-            for block in msg['content']:
-                assert "明白" not in block.get('text', '')
+            for block in msg["content"]:
+                assert "明白" not in block.get("text", "")
 
     def test_no_system_prompt_omits_field(self, monkeypatch):
         """无 system_prompt 时不应有 system 字段"""
@@ -70,13 +67,11 @@ class TestBedrockSystemField:
 
         class FakeResp:
             def read(self):
-                return json.dumps({
-                    "output": {"message": {"content": [{"text": "OK"}]}}
-                }).encode()
+                return json.dumps({"output": {"message": {"content": [{"text": "OK"}]}}}).encode()
 
         class FakeUlopen:
             def __init__(self, req, timeout=None):
-                captured['data'] = json.loads(req.data.decode())
+                captured["data"] = json.loads(req.data.decode())
 
             def __enter__(self):
                 return FakeResp()
@@ -87,7 +82,7 @@ class TestBedrockSystemField:
         with patch("urllib.request.urlopen", FakeUlopen):
             backend.chat([{"role": "user", "content": "hi"}])
 
-        assert "system" not in captured['data']
+        assert "system" not in captured["data"]
 
 
 class TestOpenAIErrorHandling:
@@ -98,54 +93,59 @@ class TestOpenAIErrorHandling:
         backend = OpenAIBackend(api_key_env="TEST_KEY", model="gpt-4o")
 
         error = urllib.error.HTTPError(
-            url="http://test", code=401,
-            msg="Unauthorized", hdrs=None, fp=None,
+            url="http://test",
+            code=401,
+            msg="Unauthorized",
+            hdrs=None,
+            fp=None,
         )
 
-        with patch("urllib.request.urlopen", side_effect=error):
-            with pytest.raises(RuntimeError, match="API Key 无效或已过期"):
-                backend.chat([{"role": "user", "content": "hi"}])
+        with (
+            patch("urllib.request.urlopen", side_effect=error),
+            pytest.raises(RuntimeError, match="API Key 无效或已过期"),
+        ):
+            backend.chat([{"role": "user", "content": "hi"}])
 
     def test_http_429_raises_runtime_error(self, monkeypatch):
         monkeypatch.setenv("TEST_KEY", "sk-test")
         backend = OpenAIBackend(api_key_env="TEST_KEY", model="gpt-4o")
 
         error = urllib.error.HTTPError(
-            url="http://test", code=429,
-            msg="Too Many Requests", hdrs=None,
+            url="http://test",
+            code=429,
+            msg="Too Many Requests",
+            hdrs=None,
             fp=MagicMock(),
         )
         error.read = MagicMock(return_value=b'{"error": "rate limit"}')
 
-        with patch("urllib.request.urlopen", side_effect=error):
-            with pytest.raises(RuntimeError, match="请求频率超限"):
-                backend.chat([{"role": "user", "content": "hi"}])
+        with patch("urllib.request.urlopen", side_effect=error), pytest.raises(RuntimeError, match="请求频率超限"):
+            backend.chat([{"role": "user", "content": "hi"}])
 
     def test_http_500_raises_runtime_error(self, monkeypatch):
         monkeypatch.setenv("TEST_KEY", "sk-test")
         backend = OpenAIBackend(api_key_env="TEST_KEY", model="gpt-4o")
 
         error = urllib.error.HTTPError(
-            url="http://test", code=500,
-            msg="Internal Server Error", hdrs=None,
+            url="http://test",
+            code=500,
+            msg="Internal Server Error",
+            hdrs=None,
             fp=MagicMock(),
         )
         error.read = MagicMock(return_value=b'{"error": "server"}')
 
-        with patch("urllib.request.urlopen", side_effect=error):
-            with pytest.raises(RuntimeError, match="服务端错误"):
-                backend.chat([{"role": "user", "content": "hi"}])
+        with patch("urllib.request.urlopen", side_effect=error), pytest.raises(RuntimeError, match="服务端错误"):
+            backend.chat([{"role": "user", "content": "hi"}])
 
     def test_url_error_raises_runtime_error(self, monkeypatch):
         monkeypatch.setenv("TEST_KEY", "sk-test")
         backend = OpenAIBackend(api_key_env="TEST_KEY", model="gpt-4o")
 
-        import socket
-        error = urllib.error.URLError(socket.error("Connection refused"))
+        error = urllib.error.URLError(OSError("Connection refused"))
 
-        with patch("urllib.request.urlopen", side_effect=error):
-            with pytest.raises(RuntimeError, match="网络请求失败"):
-                backend.chat([{"role": "user", "content": "hi"}])
+        with patch("urllib.request.urlopen", side_effect=error), pytest.raises(RuntimeError, match="网络请求失败"):
+            backend.chat([{"role": "user", "content": "hi"}])
 
 
 class TestBedrockErrorHandling:
@@ -156,41 +156,44 @@ class TestBedrockErrorHandling:
         backend = BedrockBackend(api_key_env="TEST_KEY", model="test-model")
 
         error = urllib.error.HTTPError(
-            url="http://test", code=401,
-            msg="Unauthorized", hdrs=None,
+            url="http://test",
+            code=401,
+            msg="Unauthorized",
+            hdrs=None,
             fp=MagicMock(),
         )
-        error.read = MagicMock(return_value=b'{}')
+        error.read = MagicMock(return_value=b"{}")
 
-        with patch("urllib.request.urlopen", side_effect=error):
-            with pytest.raises(RuntimeError, match="API Key 无效或已过期"):
-                backend.chat([{"role": "user", "content": "hi"}])
+        with (
+            patch("urllib.request.urlopen", side_effect=error),
+            pytest.raises(RuntimeError, match="API Key 无效或已过期"),
+        ):
+            backend.chat([{"role": "user", "content": "hi"}])
 
     def test_http_429_raises_runtime_error(self, monkeypatch):
         monkeypatch.setenv("TEST_KEY", "secret")
         backend = BedrockBackend(api_key_env="TEST_KEY", model="test-model")
 
         error = urllib.error.HTTPError(
-            url="http://test", code=429,
-            msg="Too Many Requests", hdrs=None,
+            url="http://test",
+            code=429,
+            msg="Too Many Requests",
+            hdrs=None,
             fp=MagicMock(),
         )
-        error.read = MagicMock(return_value=b'{}')
+        error.read = MagicMock(return_value=b"{}")
 
-        with patch("urllib.request.urlopen", side_effect=error):
-            with pytest.raises(RuntimeError, match="请求频率超限"):
-                backend.chat([{"role": "user", "content": "hi"}])
+        with patch("urllib.request.urlopen", side_effect=error), pytest.raises(RuntimeError, match="请求频率超限"):
+            backend.chat([{"role": "user", "content": "hi"}])
 
     def test_url_error_raises_runtime_error(self, monkeypatch):
         monkeypatch.setenv("TEST_KEY", "secret")
         backend = BedrockBackend(api_key_env="TEST_KEY", model="test-model")
 
-        import socket
-        error = urllib.error.URLError(socket.error("timeout"))
+        error = urllib.error.URLError(OSError("timeout"))
 
-        with patch("urllib.request.urlopen", side_effect=error):
-            with pytest.raises(RuntimeError, match="网络请求失败"):
-                backend.chat([{"role": "user", "content": "hi"}])
+        with patch("urllib.request.urlopen", side_effect=error), pytest.raises(RuntimeError, match="网络请求失败"):
+            backend.chat([{"role": "user", "content": "hi"}])
 
 
 class TestOpenAIResponsesInstructions:
@@ -204,16 +207,20 @@ class TestOpenAIResponsesInstructions:
 
         class FakeResp:
             def read(self):
-                return json.dumps({
-                    "output": [{
-                        "type": "message",
-                        "content": [{"type": "output_text", "text": "OK"}],
-                    }]
-                }).encode()
+                return json.dumps(
+                    {
+                        "output": [
+                            {
+                                "type": "message",
+                                "content": [{"type": "output_text", "text": "OK"}],
+                            }
+                        ]
+                    }
+                ).encode()
 
         class FakeUlopen:
             def __init__(self, req, timeout=None):
-                captured['data'] = json.loads(req.data.decode())
+                captured["data"] = json.loads(req.data.decode())
 
             def __enter__(self):
                 return FakeResp()
@@ -229,9 +236,9 @@ class TestOpenAIResponsesInstructions:
 
         assert result == "OK"
         # system_prompt 应进入 instructions（Responses API 标准字段）
-        assert captured['data'].get("instructions") == "你是助手"
+        assert captured["data"].get("instructions") == "你是助手"
         # input 中不应出现 system 角色（否则该端点会拒绝）
-        for item in captured['data']["input"]:
+        for item in captured["data"]["input"]:
             assert item["role"] != "system"
 
     def test_no_system_prompt_omits_instructions(self, monkeypatch):
@@ -242,16 +249,20 @@ class TestOpenAIResponsesInstructions:
 
         class FakeResp:
             def read(self):
-                return json.dumps({
-                    "output": [{
-                        "type": "message",
-                        "content": [{"type": "output_text", "text": "OK"}],
-                    }]
-                }).encode()
+                return json.dumps(
+                    {
+                        "output": [
+                            {
+                                "type": "message",
+                                "content": [{"type": "output_text", "text": "OK"}],
+                            }
+                        ]
+                    }
+                ).encode()
 
         class FakeUlopen:
             def __init__(self, req, timeout=None):
-                captured['data'] = json.loads(req.data.decode())
+                captured["data"] = json.loads(req.data.decode())
 
             def __enter__(self):
                 return FakeResp()
@@ -262,4 +273,4 @@ class TestOpenAIResponsesInstructions:
         with patch("urllib.request.urlopen", FakeUlopen):
             backend.chat([{"role": "user", "content": "hi"}])
 
-        assert "instructions" not in captured['data']
+        assert "instructions" not in captured["data"]

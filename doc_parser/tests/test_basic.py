@@ -6,8 +6,9 @@ doc_parser 包测试脚本
     uv pip install -e .
     python tests/test_basic.py
 """
-import sys
+
 import os
+import sys
 
 # 测试 1: 导入
 print("=" * 50)
@@ -15,7 +16,8 @@ print("测试 doc_parser 包")
 print("=" * 50)
 
 try:
-    from doc_parser import parse, Document, Paragraph, Table
+    from doc_parser import Document, Paragraph, Table, parse
+
     print("\n✅ 测试1: 导入成功")
     print(f"   parse = {parse}")
     print(f"   Document = {Document}")
@@ -66,7 +68,7 @@ for test_file in test_files:
             parsed = True
             break
         except NotImplementedError:
-            print(f"   ⚠️ 解析功能未实现（NotImplementedError）")
+            print("   ⚠️ 解析功能未实现（NotImplementedError）")
             break
         except Exception as e:
             print(f"   ❌ 解析失败: {e}")
@@ -88,7 +90,7 @@ if not parsed:
                 print("   ✅ PDF 解析成功")
                 parsed = True
             except NotImplementedError:
-                print(f"   ⚠️ 解析功能未实现（NotImplementedError）")
+                print("   ⚠️ 解析功能未实现（NotImplementedError）")
             except Exception as e:
                 print(f"   ❌ 解析失败: {e}")
             break

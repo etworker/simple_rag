@@ -16,6 +16,7 @@ DiffEngine — 文档差异检测引擎主入口
     engine.check_conflicts(chunks)  # 问答时冲突检测
 """
 
+import math
 import os
 import re
 import time
@@ -24,6 +25,7 @@ from collections.abc import Callable
 from contextlib import suppress
 from difflib import SequenceMatcher
 
+import numpy as np
 from loguru import logger as log
 
 # ======================================================================
@@ -126,15 +128,8 @@ def _normalize_text(text: str) -> str:
     t = unicodedata.normalize("NFKC", text)
     # 去除零宽字符（BOM、零宽空格、零宽连字、零宽非断字、软连字符等）
     t = re.sub(r"[\u200b\u200c\u200d\ufeff\u00ad\u2060\ufe0f\ufe0e]", "", t)
-    # 全角英文标点（，：；！？）→ 半角（仅在汉字语境下无法区分的场景）
-    # 注意：unicodedata NFKC 已处理大部分，但以下个别符号仍需映射
-    trans = {
-        "\uff08": "(", "\uff09": ")", "\uff1a": ":", "\uff1b": ";",
-        "\u300a": "<", "\u300b": ">", "\u3001": ",",  # 顿号 → 半角逗号
-        "\u201c": '"', "\u201d": '"', "\u2018": "'", "\u2019": "'",
-    }
-    for k, v in trans.items():
-        t = t.replace(k, v)
+    # 全角英文标点 → 半角（NFKC 已处理大部分，以下个别符号仍需映射）
+    t = t.translate(_FULLWIDTH_TRANS)
     # 空白统一：多种不间断空格、全角空格 → 单个普通空格
     t = re.split(r"[\s\u00a0\u2000-\u200a\u202f\u205f\u3000]+", t)
     return " ".join(filter(None, t))
@@ -148,8 +143,23 @@ def _classify_change(category: str, change):
         change.category = category
     return change
 
-import numpy as np
-from sentence_transformers import SentenceTransformer
+
+# 全角标点 → 半角映射（模块级常量，避免每次调用重建）
+_FULLWIDTH_TRANS = str.maketrans(
+    {
+        "\uff08": "(",
+        "\uff09": ")",
+        "\uff1a": ":",
+        "\uff1b": ";",
+        "\u300a": "<",
+        "\u300b": ">",
+        "\u3001": ",",  # 顿号 → 半角逗号
+        "\u201c": '"',
+        "\u201d": '"',
+        "\u2018": "'",
+        "\u2019": "'",
+    }
+)
 
 from version_diff.config import Config
 from version_diff.judge import filter_diffs
@@ -159,16 +169,14 @@ from version_diff.models import DiffResult, Inconsistency, VersionChange, Versio
 from version_diff.vectorstore import VectorStore
 
 # 版本过滤 prompt（随包发布，外部文件优先）
-_VERSION_FILTER_PROMPT_FILE = os.path.join(
-    os.path.dirname(__file__), "prompts", "version_filter.txt"
-)
+_VERSION_FILTER_PROMPT_FILE = os.path.join(os.path.dirname(__file__), "prompts", "version_filter.txt")
 
 
 def _load_version_filter_prompt() -> str:
     """从随包 .txt 文件加载版本过滤 prompt 模板（缺失则用内置兜底）"""
     fallback = (
         "你是文档版本对比专家。请判断以下 {count} 处新旧版本文本差异是否为实质性变更。"
-        "回复 JSON 数组：{{\"index\": N, \"keep\": true/false, \"summary\": \"...\"}}"
+        '回复 JSON 数组：{{"index": N, "keep": true/false, "summary": "..."}}'
     )
     try:
         with open(_VERSION_FILTER_PROMPT_FILE, encoding="utf-8") as f:
@@ -209,12 +217,8 @@ def _aligned_row_text(row, col_map: dict, is_old: bool) -> str:
     """只提取对齐列的内容（忽略新增/删除列的噪音）"""
     ordered = sorted(col_map.keys())
     if is_old:
-        return " | ".join(
-            _normalize_cell(row[oi]) for oi in ordered if oi < len(row)
-        )
-    return " | ".join(
-        _normalize_cell(row[col_map[oi]]) for oi in ordered if col_map[oi] < len(row)
-    )
+        return " | ".join(_normalize_cell(row[oi]) for oi in ordered if oi < len(row))
+    return " | ".join(_normalize_cell(row[col_map[oi]]) for oi in ordered if col_map[oi] < len(row))
 
 
 def _compare_table_pair(old_t, new_t) -> list[VersionChange]:
@@ -237,9 +241,7 @@ def _compare_table_pair(old_t, new_t) -> list[VersionChange]:
     used_new_cols = set()
 
     # 检测新表头是否被截断（PDF 跨页导致表头丢失）
-    new_header_valid = (
-        sum(1 for h in new_header if _normalize_cell(h)) >= len(new_header) * 0.5
-    )
+    new_header_valid = sum(1 for h in new_header if _normalize_cell(h)) >= len(new_header) * 0.5
 
     if new_header_valid and len(old_header) > 0:
         for oi, oh in enumerate(old_header):
@@ -248,9 +250,7 @@ def _compare_table_pair(old_t, new_t) -> list[VersionChange]:
             for ni, nh in enumerate(new_header):
                 if ni in used_new_cols:
                     continue
-                cs = SequenceMatcher(
-                    None, _normalize_cell(oh), _normalize_cell(nh)
-                ).ratio()
+                cs = SequenceMatcher(None, _normalize_cell(oh), _normalize_cell(nh)).ratio()
                 if cs > best_cs and cs >= 0.5:
                     best_cs = cs
                     best_ci = ni
@@ -264,12 +264,8 @@ def _compare_table_pair(old_t, new_t) -> list[VersionChange]:
             used_new_cols.add(ci)
 
     # 报告新增/删除的列
-    added_cols = [
-        new_header[ni] for ni in range(len(new_header)) if ni not in used_new_cols
-    ]
-    removed_cols = [
-        old_header[oi] for oi in range(len(old_header)) if oi not in col_map
-    ]
+    added_cols = [new_header[ni] for ni in range(len(new_header)) if ni not in used_new_cols]
+    removed_cols = [old_header[oi] for oi in range(len(old_header)) if oi not in col_map]
     if added_cols:
         changes.append(
             VersionChange(
@@ -384,21 +380,9 @@ class DiffEngine:
     def _get_model(self):
         """懒加载 embedding 模型"""
         if self._model is None:
-            from version_diff.device_utils import (
-                embedding_model_kwargs,
-                log_device_status,
-                resolve_embedding_device,
-            )
+            from version_diff.device_utils import load_embedding_model
 
-            model_name = self.config.embedding.get("model", "")
-            cache_dir = self.config.embedding.get("cache_dir") or None
-            device = resolve_embedding_device(self.config.embedding)
-            kwargs = embedding_model_kwargs(self.config.embedding)
-            log.info(f"加载 embedding 模型: {model_name} (device={device})")
-            m_kwargs = {"cache_folder": cache_dir}
-            m_kwargs.update(kwargs)
-            self._model = SentenceTransformer(model_name, device=device, **m_kwargs)
-            log_device_status(device)
+            self._model = load_embedding_model(self.config.embedding)
         return self._model
 
     def _notify(self, callback, step, percent, message):
@@ -433,7 +417,10 @@ class DiffEngine:
         log.info(f"已加载到对比引擎: {doc.filename} ({len(doc.paragraphs)} 段落)")
 
     def pre_review(
-        self, filepath: str, on_progress: Callable | None = None, doc_filename: str = "",
+        self,
+        filepath: str,
+        on_progress: Callable | None = None,
+        doc_filename: str = "",
         on_candidates: Callable | None = None,
         on_judge_batch: Callable | None = None,
     ) -> DiffResult:
@@ -467,17 +454,13 @@ class DiffEngine:
                 p.source_file = doc_filename
             for t in new_doc.tables:
                 t.source_file = doc_filename
-        log.info(
-            f"解析完成: {new_doc.filename} ({len(new_doc.paragraphs)} 段落, {time.time() - t0:.1f}s)"
-        )
+        log.info(f"解析完成: {new_doc.filename} ({len(new_doc.paragraphs)} 段落, {time.time() - t0:.1f}s)")
 
         # Step 2: 计算新文档 embedding（始终执行）
         self._notify(on_progress, "embedding", 0.2, "计算语义向量...")
         t1 = time.time()
         model = self._get_model()
-        new_emb, _ = self._vector_store.get_or_compute(
-            new_doc.filename, new_doc.paragraphs, model
-        )
+        new_emb, _ = self._vector_store.get_or_compute(new_doc.filename, new_doc.paragraphs, model)
         log.info(f"Embedding 完成 ({time.time() - t1:.1f}s)")
 
         # 如果库中没有已有文档，跳过对比步骤，直接返回安全结果
@@ -532,17 +515,18 @@ class DiffEngine:
         # on_judge_batch 回调包装：把每批新发现的 TextDiffItem 转为 dict
         _on_batch_callback = None
         if on_judge_batch is not None:
+
             def _on_batch_callback(batch_idx, total_batches, new_items):
                 dicts = [_item_to_dict(i) for i in new_items]
                 on_judge_batch(batch_idx, total_batches, dicts)
 
         judge_result = filter_diffs(
-            diff_items, llm_config=self.config.llm, judge_config=self.config.judge,
+            diff_items,
+            llm_config=self.config.llm,
+            judge_config=self.config.judge,
             on_batch=_on_batch_callback,
         )
-        log.info(
-            f"判断完成: {len(judge_result.inconsistent_items)} 处矛盾（跨文档） ({time.time() - t4:.1f}s)"
-        )
+        log.info(f"判断完成: {len(judge_result.inconsistent_items)} 处矛盾（跨文档） ({time.time() - t4:.1f}s)")
 
         # Step 6: 封装结果
         self._notify(on_progress, "done", 1.0, "完成")
@@ -568,9 +552,7 @@ class DiffEngine:
 
         return result
 
-    def _retrieve_candidates(
-        self, new_doc, new_emb, threshold: float, top_k: int
-    ) -> list:
+    def _retrieve_candidates(self, new_doc, new_emb, threshold: float, top_k: int) -> list:
         """
         在已有全局向量库中检索 new_doc 的相似段落。
 
@@ -587,9 +569,7 @@ class DiffEngine:
         norms_existing[norms_existing == 0] = 1
         normalized_existing = (self._all_embeddings / norms_existing).astype(np.float32)
         cpu_index.add(normalized_existing)
-        index, used_gpu = maybe_index_to_gpu(
-            cpu_index, gpu_id=self.config.embedding.get("gpu_id", 0)
-        )
+        index, used_gpu = maybe_index_to_gpu(cpu_index, gpu_id=self.config.embedding.get("gpu_id", 0))
         if used_gpu:
             log.info("  FAISS 检索在 GPU 上执行")
 
@@ -728,10 +708,14 @@ class DiffEngine:
 
         # 语义配对
         pairs = pair_paragraphs(
-            old_doc.paragraphs, new_doc.paragraphs, model,
+            old_doc.paragraphs,
+            new_doc.paragraphs,
+            model,
             threshold=threshold,
-            file_a=old_filepath, file_b=new_filepath,
+            file_a=old_filepath,
+            file_b=new_filepath,
             vector_store=self._vector_store,
+            top_k=self.config.diff.get("top_k", 3),
         )
 
         changes = []
@@ -749,44 +733,50 @@ class DiffEngine:
             if old_para.text.strip() == new_para.text.strip():
                 continue
 
-            changes.append(VersionChange(
-                change_type="modified",
-                section=new_para.chapter_title or new_para.chapter or "",
-                location=new_para.location,
-                old_section=old_para.chapter_title or old_para.chapter or "",
-                old_location=old_para.location,
-                old_text=old_para.text.strip(),
-                new_text=new_para.text.strip(),
-                summary="",  # 后续可用 LLM 生成摘要
-                similarity=sim,
-            ))
+            changes.append(
+                VersionChange(
+                    change_type="modified",
+                    section=new_para.chapter_title or new_para.chapter or "",
+                    location=new_para.location,
+                    old_section=old_para.chapter_title or old_para.chapter or "",
+                    old_location=old_para.location,
+                    old_text=old_para.text.strip(),
+                    new_text=new_para.text.strip(),
+                    summary="",  # 后续可用 LLM 生成摘要
+                    similarity=sim,
+                )
+            )
 
         # 旧版有但新版没有的（removed）
         for i, para in enumerate(old_doc.paragraphs):
             if i not in paired_old:
                 old_section = para.chapter_title or para.chapter or ""
-                changes.append(VersionChange(
-                    change_type="removed",
-                    section=old_section,
-                    location=para.location,
-                    old_section=para.chapter_title or para.chapter or "",
-                    old_location=para.location,
-                    old_text=para.text.strip(),
-                    new_text="",
-                    summary="",
-                ))
+                changes.append(
+                    VersionChange(
+                        change_type="removed",
+                        section=old_section,
+                        location=para.location,
+                        old_section=para.chapter_title or para.chapter or "",
+                        old_location=para.location,
+                        old_text=para.text.strip(),
+                        new_text="",
+                        summary="",
+                    )
+                )
 
         # 新版有但旧版没有的（added）
         for i, para in enumerate(new_doc.paragraphs):
             if i not in paired_new:
-                changes.append(VersionChange(
-                    change_type="added",
-                    section=para.chapter_title or para.chapter or "",
-                    location=para.location,
-                    old_text="",
-                    new_text=para.text.strip(),
-                    summary="",
-                ))
+                changes.append(
+                    VersionChange(
+                        change_type="added",
+                        section=para.chapter_title or para.chapter or "",
+                        location=para.location,
+                        old_text="",
+                        new_text=para.text.strip(),
+                        summary="",
+                    )
+                )
 
         # ====== 表格对比 ======
         table_changes = self._compare_tables(old_doc.tables, new_doc.tables)
@@ -857,9 +847,7 @@ class DiffEngine:
                 new_cols = len(new_t.rows[0])
                 # 列数相同 + 行数差异在 30% 以内
                 if old_cols == new_cols:
-                    size_ratio = min(len(old_t.rows), len(new_t.rows)) / max(
-                        len(old_t.rows), len(new_t.rows)
-                    )
+                    size_ratio = min(len(old_t.rows), len(new_t.rows)) / max(len(old_t.rows), len(new_t.rows))
                     if size_ratio >= 0.7:
                         table_pairs.append((i, j))
                         paired_old.add(i)
@@ -890,9 +878,6 @@ class DiffEngine:
            - 仅编号差异 → minor_changes (category="metadata")
         3. 剩余 modified 批量送 LLM 判断 → 保留或丢弃
         """
-        import math
-        import re
-
         keep = []
         minor = []
         modified = [c for c in changes if c.change_type == "modified"]
@@ -946,8 +931,8 @@ class DiffEngine:
                 continue
 
             # 3) normalize 后完全一致（空白差异）
-            old_norm = re.sub(r'\s+', '', c.old_text)
-            new_norm = re.sub(r'\s+', '', c.new_text)
+            old_norm = re.sub(r"\s+", "", c.old_text)
+            new_norm = re.sub(r"\s+", "", c.new_text)
             if old_norm == new_norm:
                 c = _classify_change("metadata", c)
                 c.summary = "[排版] 纯空白/换行差异"
@@ -955,8 +940,8 @@ class DiffEngine:
                 continue
 
             # 4) 仅编号差异（如条款编号微调）
-            old_no_num = re.sub(r'[（(]\d+[)）]', '', old_norm)
-            new_no_num = re.sub(r'[（(]\d+[)）]', '', new_norm)
+            old_no_num = re.sub(r"[（(]\d+[)）]", "", old_norm)
+            new_no_num = re.sub(r"[（(]\d+[)）]", "", new_norm)
             if old_no_num == new_no_num:
                 c = _classify_change("metadata", c)
                 c.summary = "[编号] 仅条款编号微调"
@@ -1013,8 +998,5 @@ class DiffEngine:
                 for c in batch:
                     keep.append(_classify_change("content", c))
 
-        log.info(
-            f"  版本diff过滤完成: {len(changes)} → "
-            f"{len(keep)} 实质性 + {len(minor)} 细微变更"
-        )
+        log.info(f"  版本diff过滤完成: {len(changes)} → {len(keep)} 实质性 + {len(minor)} 细微变更")
         return keep, minor

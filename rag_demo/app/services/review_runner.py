@@ -8,6 +8,7 @@
 import asyncio
 import copy
 import json
+import math
 import os
 import time
 
@@ -54,9 +55,7 @@ def _build_engine_config() -> dict:
         "llm": _state.app.config.get_llm_profile("pre_review"),
         "diff": _state.app.config.get_section("pre_review"),
         "judge": _state.app.config.get_section("judge"),
-        "cache": {
-            "vector_cache_dir": os.path.join(_state.app.cache_dir, "vector_cache")
-        },
+        "cache": {"vector_cache_dir": os.path.join(_state.app.cache_dir, "vector_cache")},
     }
 
 
@@ -96,9 +95,9 @@ def _run_version_compare(engine, old_version_filepath: str, new_filepath: str) -
             minor_changes.append(_serialize(change))
         log.info(
             f"版本对比完成: {len(version_changes)} 实质性 + {len(minor_changes)} 细微变更 "
-            f"(modified={sum(1 for c in version_changes if c['type']=='modified')}, "
-            f"added={sum(1 for c in version_changes if c['type']=='added')}, "
-            f"removed={sum(1 for c in version_changes if c['type']=='removed')})"
+            f"(modified={sum(1 for c in version_changes if c['type'] == 'modified')}, "
+            f"added={sum(1 for c in version_changes if c['type'] == 'added')}, "
+            f"removed={sum(1 for c in version_changes if c['type'] == 'removed')})"
         )
     except Exception as e:
         log.error(f"版本对比失败: {e}", exc_info=True)
@@ -206,8 +205,7 @@ async def run_pre_review(task_id: str):
         # ★ 用 task["filename"]（原始上传名）作为 source_file，
         #   确保前端 /review/paragraphs?file=原名 能匹配到段落
         task["parsed_paragraphs"] = [
-            {"text": p.text, "location": p.location, "source_file": task["filename"]}
-            for p in new_doc.paragraphs
+            {"text": p.text, "location": p.location, "source_file": task["filename"]} for p in new_doc.paragraphs
         ]
 
         # ====== 增量结果推送准备 ======
@@ -242,15 +240,13 @@ async def run_pre_review(task_id: str):
             """候选对检索完成后调用 — 前端立即显示 N 个候选 + 预估批次"""
             # 预估 batch 数量（与 filter_diffs 内部逻辑保持一致）
             bs = engine.config.llm.get("batch_size", 5) or 5
-            import math
             est_batches = max(1, math.ceil(diff_count / bs)) if diff_count > 0 else 0
             task["result"]["phase"] = "candidates_ready"
             task["result"]["total_candidates"] = cand_count
             task["result"]["diff_items"] = diff_count
             task["result"]["judge_total_batches"] = est_batches
             task["result"]["message"] = (
-                f"发现 {cand_count} 个相似候选对，{diff_count} 处文本差异，"
-                f"开始 LLM 判定（约 {est_batches} 批）..."
+                f"发现 {cand_count} 个相似候选对，{diff_count} 处文本差异，开始 LLM 判定（约 {est_batches} 批）..."
             )
             _bump_result()
             log.info(f"  增量推送: 候选就绪 {cand_count} 候选, {diff_count} 差异")
@@ -273,14 +269,16 @@ async def run_pre_review(task_id: str):
             _bump_result()
 
         result = await asyncio.to_thread(
-            engine.pre_review, filepath, on_progress=on_progress, doc_filename=task["filename"],
+            engine.pre_review,
+            filepath,
+            on_progress=on_progress,
+            doc_filename=task["filename"],
             on_candidates=on_candidates,
             on_judge_batch=on_judge_batch,
         )
 
         # 标记知识库是否为空（无任何已有文档可供对比）
-        kb_empty = (result.total_candidates == 0 and result.llm_judged == 0
-                    and len(result.inconsistencies) == 0)
+        kb_empty = result.total_candidates == 0 and result.llm_judged == 0 and len(result.inconsistencies) == 0
 
         # ====== 3. 版本对比（如果存在旧版本文档）======
         old_version_filepath = task.get("old_version_filepath", "")
@@ -308,9 +306,7 @@ async def run_pre_review(task_id: str):
             "total_candidates": result.total_candidates,
             "rule_filtered": result.rule_filtered,
             "llm_judged": result.llm_judged,
-            "message": "无矛盾，可安全入库"
-            if result.is_safe
-            else f"发现 {len(result.inconsistencies)} 处矛盾",
+            "message": "无矛盾，可安全入库" if result.is_safe else f"发现 {len(result.inconsistencies)} 处矛盾",
             "version_changes": version_compare_result["changes"],
             "minor_changes": version_compare_result["minor_changes"],
             "has_version_changes": len(version_compare_result["changes"]) > 0,

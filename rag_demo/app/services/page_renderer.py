@@ -27,9 +27,7 @@ class PageRenderer:
     def __init__(self, cache_dir: str = "", dpi: int = 150):
         # 默认缓存目录（~/.simple_rag/page_cache/）
         if not cache_dir:
-            cache_dir = os.path.join(
-                os.path.expanduser("~"), ".simple_rag", "page_cache"
-            )
+            cache_dir = os.path.join(os.path.expanduser("~"), ".simple_rag", "page_cache")
         self._cache_dir = cache_dir
         self._dpi = dpi
         os.makedirs(cache_dir, exist_ok=True)
@@ -73,9 +71,7 @@ class PageRenderer:
         doc.close()
         return count
 
-    def _render_page(
-        self, pdf_path: str, page: int, output_path: str, highlight: str = ""
-    ):
+    def _render_page(self, pdf_path: str, page: int, output_path: str, highlight: str = ""):
         """渲染单页为 PNG，可选高亮文字"""
         import fitz
 

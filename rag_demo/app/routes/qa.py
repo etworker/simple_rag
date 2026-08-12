@@ -35,9 +35,7 @@ async def ask(req: AskRequest):
 
     qa_engine = _state.app.qa_engine
     try:
-        response = await asyncio.to_thread(
-            qa_engine.ask, req.question, session_id=req.session_id
-        )
+        response = await asyncio.to_thread(qa_engine.ask, req.question, session_id=req.session_id)
     except RuntimeError as e:
         # API Key 未配置等运行时错误
         if "API Key" in str(e) or "未配置" in str(e):

@@ -8,10 +8,6 @@ noise_filter.patterns 剥离「纯元数据」段落（修订日期戳/版本号
 不依赖 LLM：仅构造含 added/removed 的 changes（无 modified），不会触发在线判断。
 """
 
-import re
-
-import pytest
-
 from version_diff import DiffEngine
 from version_diff.engine import _strip_configured_noise
 from version_diff.models import VersionChange
@@ -26,17 +22,19 @@ _DEFAULT_PATTERNS = [
 
 
 def _make_engine(enabled=True, patterns=None):
-    return DiffEngine(config={
-        "diff": {
-            "similarity_threshold": 0.80,
-            "top_k": 3,
-            "batch_size": 5,
-            "noise_filter": {
-                "enabled": enabled,
-                "patterns": patterns if patterns is not None else _DEFAULT_PATTERNS,
+    return DiffEngine(
+        config={
+            "diff": {
+                "similarity_threshold": 0.80,
+                "top_k": 3,
+                "batch_size": 5,
+                "noise_filter": {
+                    "enabled": enabled,
+                    "patterns": patterns if patterns is not None else _DEFAULT_PATTERNS,
+                },
             },
-        },
-    })
+        }
+    )
 
 
 def _change(change_type, old="", new=""):
@@ -54,16 +52,12 @@ class TestStripConfiguredNoise:
         assert _strip_configured_noise("修订日期：2026-05-08", _DEFAULT_PATTERNS) == ""
 
     def test_keeps_substantive_content(self):
-        out = _strip_configured_noise(
-            "核心网络设备、网络带宽的业务处理能力应满足业务高峰期的需求。", _DEFAULT_PATTERNS
-        )
+        out = _strip_configured_noise("核心网络设备、网络带宽的业务处理能力应满足业务高峰期的需求。", _DEFAULT_PATTERNS)
         assert "业务高峰期" in out
 
     def test_strips_date_with_surrounding_text(self):
         # 修订日期混在句中的情况：应只剥掉日期，保留正文
-        out = _strip_configured_noise(
-            "核心网络设备的业务能力 修订日期：2026-05-08 需求", _DEFAULT_PATTERNS
-        )
+        out = _strip_configured_noise("核心网络设备的业务能力 修订日期：2026-05-08 需求", _DEFAULT_PATTERNS)
         assert "业务能力" in out
         assert "2026" not in out
 
@@ -161,9 +155,7 @@ class TestDiffPartialConfig:
 
     def test_override_noise_filter_disabled(self):
         # 调用方显式传 noise_filter.enabled=False 覆盖默认
-        engine = DiffEngine(
-            config={"diff": {"noise_filter": {"enabled": False}}}
-        )
+        engine = DiffEngine(config={"diff": {"noise_filter": {"enabled": False}}})
         assert engine.config.diff["noise_filter"]["enabled"] is False
         changes = [_change("removed", old="修订日期：2021-06-15")]
         keep, minor = engine._filter_substantive_changes(changes)

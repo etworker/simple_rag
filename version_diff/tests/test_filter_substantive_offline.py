@@ -9,13 +9,11 @@
 import sys
 from pathlib import Path
 
-import pytest
-
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_PROJECT_ROOT / "src"))
 
-from version_diff.engine import DiffEngine  # noqa: E402
-from version_diff.models import VersionChange  # noqa: E402
+from version_diff.engine import DiffEngine
+from version_diff.models import VersionChange
 
 
 def _make_engine():
@@ -62,8 +60,7 @@ def test_classify_change_tags_dataclass_and_dict():
     """_classify_change 对 dataclass 实例和 plain dict 都应生效"""
     from version_diff.engine import _classify_change
 
-    vc = VersionChange(change_type="modified", section="s", location="l",
-                       old_text="a", new_text="b")
+    vc = VersionChange(change_type="modified", section="s", location="l", old_text="a", new_text="b")
     _classify_change("metadata", vc)
     assert vc.category == "metadata"
 

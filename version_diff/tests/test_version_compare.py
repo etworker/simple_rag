@@ -8,7 +8,6 @@
 """
 
 import os
-import sys
 
 import pytest
 
@@ -24,10 +23,12 @@ def version_diff_result():
     """执行一次 version_compare，所有测试共享结果"""
     from version_diff import DiffEngine
 
-    engine = DiffEngine(config={
-        "embedding": {"model": "BAAI/bge-small-zh-v1.5"},
-        "diff": {"similarity_threshold": 0.80},
-    })
+    engine = DiffEngine(
+        config={
+            "embedding": {"model": "BAAI/bge-small-zh-v1.5"},
+            "diff": {"similarity_threshold": 0.80},
+        }
+    )
     result = engine.version_compare(V1_PATH, V2_PATH)
     return result
 
@@ -41,6 +42,7 @@ class TestVersionCompareBasic:
 
     def test_result_type(self, version_diff_result):
         from version_diff.models import VersionDiffResult
+
         assert isinstance(version_diff_result, VersionDiffResult)
 
     def test_has_changes(self, version_diff_result):
@@ -75,46 +77,31 @@ class TestVersionCompareContentAccuracy:
     def test_p1_response_time_change(self, version_diff_result):
         """P1响应时间 30分钟→15分钟"""
         modified = [c for c in version_diff_result.changes if c.change_type == "modified"]
-        found = any(
-            "30分钟" in c.old_text and "15分钟" in c.new_text
-            for c in modified
-        )
+        found = any("30分钟" in c.old_text and "15分钟" in c.new_text for c in modified)
         assert found, "未检测到 P1 响应时间变更 (30→15分钟)"
 
     def test_p2_recovery_time_change(self, version_diff_result):
         """P2恢复时间 4小时→3小时"""
         modified = [c for c in version_diff_result.changes if c.change_type == "modified"]
-        found = any(
-            "4小时" in c.old_text and "3小时" in c.new_text
-            for c in modified
-        )
+        found = any("4小时" in c.old_text and "3小时" in c.new_text for c in modified)
         assert found, "未检测到 P2 恢复时间变更 (4→3小时)"
 
     def test_disk_threshold_change(self, version_diff_result):
         """磁盘阈值 75%→70%"""
         modified = [c for c in version_diff_result.changes if c.change_type == "modified"]
-        found = any(
-            "75%" in c.old_text and "70%" in c.new_text
-            for c in modified
-        )
+        found = any("75%" in c.old_text and "70%" in c.new_text for c in modified)
         assert found, "未检测到磁盘阈值变更 (75%→70%)"
 
     def test_notification_time_change(self, version_diff_result):
         """故障通知时间 5分钟→3分钟"""
         modified = [c for c in version_diff_result.changes if c.change_type == "modified"]
-        found = any(
-            "5分钟" in c.old_text and "3分钟" in c.new_text
-            for c in modified
-        )
+        found = any("5分钟" in c.old_text and "3分钟" in c.new_text for c in modified)
         assert found, "未检测到故障通知时间变更 (5→3分钟)"
 
     def test_shift_staff_change(self, version_diff_result):
         """白班人数 2人→3人"""
         modified = [c for c in version_diff_result.changes if c.change_type == "modified"]
-        found = any(
-            "2人" in c.old_text and "3人" in c.new_text
-            for c in modified
-        )
+        found = any("2人" in c.old_text and "3人" in c.new_text for c in modified)
         assert found, "未检测到白班人数变更 (2→3人)"
 
     def test_new_chapter_added(self, version_diff_result):
@@ -136,19 +123,13 @@ class TestVersionCompareTableChanges:
     def test_firewall_model_upgrade(self, version_diff_result):
         """防火墙 PA-850 → PA-3260"""
         modified = [c for c in version_diff_result.changes if c.change_type == "modified"]
-        found = any(
-            "PA-850" in c.old_text and "PA-3260" in c.new_text
-            for c in modified
-        )
+        found = any("PA-850" in c.old_text and "PA-3260" in c.new_text for c in modified)
         assert found, "未检测到防火墙型号升级 (PA-850→PA-3260)"
 
     def test_load_balancer_upgrade(self, version_diff_result):
         """负载均衡器 i2600 → i4800"""
         modified = [c for c in version_diff_result.changes if c.change_type == "modified"]
-        found = any(
-            "i2600" in c.old_text and "i4800" in c.new_text
-            for c in modified
-        )
+        found = any("i2600" in c.old_text and "i4800" in c.new_text for c in modified)
         assert found, "未检测到负载均衡器型号升级 (i2600→i4800)"
 
     def test_waf_device_added(self, version_diff_result):
@@ -166,10 +147,7 @@ class TestVersionCompareTableChanges:
     def test_database_version_upgrade(self, version_diff_result):
         """数据库 Oracle 19c → 21c"""
         modified = [c for c in version_diff_result.changes if c.change_type == "modified"]
-        found = any(
-            "19c" in c.old_text and "21c" in c.new_text
-            for c in modified
-        )
+        found = any("19c" in c.old_text and "21c" in c.new_text for c in modified)
         assert found, "未检测到数据库版本升级 (Oracle 19c→21c)"
 
 
@@ -179,22 +157,22 @@ class TestVersionCompareSummary:
     def test_print_all_changes(self, version_diff_result):
         """打印所有检测到的差异（用于人工检视）"""
         changes = version_diff_result.changes
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print(f"版本对比结果: {len(changes)} 处差异")
         print(f"  旧版段落数: {version_diff_result.old_paragraph_count}")
         print(f"  新版段落数: {version_diff_result.new_paragraph_count}")
         print(f"  modified: {sum(1 for c in changes if c.change_type == 'modified')}")
         print(f"  added: {sum(1 for c in changes if c.change_type == 'added')}")
         print(f"  removed: {sum(1 for c in changes if c.change_type == 'removed')}")
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")
         for i, c in enumerate(changes, 1):
             icon = {"modified": "✏️", "added": "➕", "removed": "➖"}[c.change_type]
             print(f"\n{icon} #{i} [{c.change_type}] {c.section}")
             print(f"  位置: {c.location}")
             if c.old_text:
-                print(f"  旧: {c.old_text[:120]}{'...' if len(c.old_text)>120 else ''}")
+                print(f"  旧: {c.old_text[:120]}{'...' if len(c.old_text) > 120 else ''}")
             if c.new_text:
-                print(f"  新: {c.new_text[:120]}{'...' if len(c.new_text)>120 else ''}")
+                print(f"  新: {c.new_text[:120]}{'...' if len(c.new_text) > 120 else ''}")
             if c.similarity:
                 print(f"  相似度: {c.similarity:.2f}")
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")

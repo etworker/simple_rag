@@ -10,19 +10,19 @@ doc_parser 单元测试
   - _is_in_table_region 表格区域判断
   - extract_document 格式分发（含 .doc 报错）
 """
-import pytest
-from pathlib import Path
 
-from doc_parser.models import Document, Paragraph, Table
+import pytest
+
+from doc_parser.models import Paragraph, Table
 from doc_parser.parser import (
+    DEFAULT_CONFIG,
     _clean_table,
-    _words_to_lines,
     _detect_chapter,
     _find_page,
     _is_in_table_region,
+    _words_to_lines,
     extract_document,
     get_extract_config,
-    DEFAULT_CONFIG,
 )
 
 
@@ -183,8 +183,9 @@ class TestExtractDocument:
         with pytest.raises(Exception) as exc_info:
             extract_document("nonexistent.docx")
         # 确认不是 ValueError("不支持的格式")
-        assert not (isinstance(exc_info.value, ValueError) and "不支持的格式" in str(exc_info.value)), \
+        assert not (isinstance(exc_info.value, ValueError) and "不支持的格式" in str(exc_info.value)), (
             ".docx should not raise unsupported format error"
+        )
 
 
 class TestGetExtractConfig:

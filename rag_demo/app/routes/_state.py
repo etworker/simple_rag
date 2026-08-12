@@ -18,9 +18,7 @@ class AppState:
         self.doc_store = doc_store
         self.config = config
         self.upload_dir = upload_dir
-        self.cache_dir = cache_dir or os.path.join(
-            os.path.expanduser("~"), ".simple_rag"
-        )
+        self.cache_dir = cache_dir or os.path.join(os.path.expanduser("~"), ".simple_rag")
         os.makedirs(upload_dir, exist_ok=True)
 
         # 预审核任务状态

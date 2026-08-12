@@ -7,11 +7,12 @@ rag_demo 修复验证测试
   - DocStore 无重复解析缓存层
   - chat.py 正确 re-export Message
 """
-import pytest
+
 import os
 import sys
 import tempfile
-import shutil
+
+import pytest
 
 # 添加项目路径
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -20,23 +21,27 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 class TestConfigStore:
     def test_get_dot_notation(self):
         from app.services.config_store import ConfigStore
+
         config = ConfigStore()
         assert config.get("retrieval.top_k") == 5
         assert config.get("llm_routing.qa") == "default"
 
     def test_get_default(self):
         from app.services.config_store import ConfigStore
+
         config = ConfigStore()
         assert config.get("nonexist.key", "default") == "default"
 
     def test_set(self):
         from app.services.config_store import ConfigStore
+
         config = ConfigStore()
         config.set("retrieval.top_k", 10)
         assert config.get("retrieval.top_k") == 10
 
     def test_deep_merge(self):
         from app.services.config_store import ConfigStore
+
         config = ConfigStore()
         config.update({"llm_profiles": {"test_model": {"provider": "openai", "model": "test"}}})
         assert config.get_llm_profile("qa")["model"] == "test"
@@ -45,11 +50,17 @@ class TestConfigStore:
 
     def test_get_llm_profile(self):
         from app.services.config_store import ConfigStore
+
         config = ConfigStore()
-        config.update({"llm_profiles": {
-            "fast": {"provider": "openai", "model": "gpt-fast"},
-            "precise": {"provider": "bedrock", "model": "kimi"},
-        }, "llm_routing": {"qa": "fast", "pre_review": "precise"}})
+        config.update(
+            {
+                "llm_profiles": {
+                    "fast": {"provider": "openai", "model": "gpt-fast"},
+                    "precise": {"provider": "bedrock", "model": "kimi"},
+                },
+                "llm_routing": {"qa": "fast", "pre_review": "precise"},
+            }
+        )
         qa_cfg = config.get_llm_profile("qa")
         assert qa_cfg["model"] == "gpt-fast"
         pr_cfg = config.get_llm_profile("pre_review")
@@ -65,6 +76,7 @@ class TestChatHistoryStore:
     def test_test_session_not_saved(self, tmp_path):
         """test_ 开头的 session 不应被持久化"""
         from app.services.chat_history import ChatHistoryStore
+
         store = ChatHistoryStore(history_dir=str(tmp_path))
         store.save_message("test_unit", "user", "测试问题")
         store.save_message("test_unit", "assistant", "测试回答")
@@ -74,6 +86,7 @@ class TestChatHistoryStore:
     def test_real_session_saved(self, tmp_path):
         """真实 session 应被持久化"""
         from app.services.chat_history import ChatHistoryStore
+
         store = ChatHistoryStore(history_dir=str(tmp_path))
         store.save_message("qa-001", "user", "什么是备份频率？")
         store.save_message("qa-001", "assistant", "每天备份", sources=[{"text": "每天", "source_file": "A.pdf"}])
@@ -84,6 +97,7 @@ class TestChatHistoryStore:
 
     def test_get_session(self, tmp_path):
         from app.services.chat_history import ChatHistoryStore
+
         store = ChatHistoryStore(history_dir=str(tmp_path))
         store.save_message("qa-002", "user", "问题1")
         data = store.get_session("qa-002")
@@ -92,6 +106,7 @@ class TestChatHistoryStore:
 
     def test_delete_session(self, tmp_path):
         from app.services.chat_history import ChatHistoryStore
+
         store = ChatHistoryStore(history_dir=str(tmp_path))
         store.save_message("qa-003", "user", "问题")
         assert store.delete_session("qa-003") is True
@@ -100,6 +115,7 @@ class TestChatHistoryStore:
 
     def test_list_sorted_by_updated_at(self, tmp_path):
         from app.services.chat_history import ChatHistoryStore
+
         store = ChatHistoryStore(history_dir=str(tmp_path))
         store.save_message("qa-old", "user", "旧问题")
         store.save_message("qa-new", "user", "新问题")
@@ -112,7 +128,8 @@ class TestChatMessageExport:
     """测试 chat.py 正确 re-export Message"""
 
     def test_can_import_message_from_chat(self):
-        from app.services.chat import ChatSession, Message
+        from app.services.chat import Message
+
         msg = Message(role="user", content="test")
         assert msg.role == "user"
         assert msg.content == "test"
@@ -133,6 +150,7 @@ class TestDocStorePublicMethods:
 
     def test_get_paragraphs_by_file(self, doc_store):
         from doc_parser import Paragraph
+
         # Manually add paragraphs
         doc_store._paragraphs = [
             Paragraph(text="段落A1", source_file="A.docx", page=1),
@@ -150,10 +168,8 @@ class TestDocStorePublicMethods:
 
     def test_get_paragraph_context(self, doc_store):
         from doc_parser import Paragraph
-        doc_store._paragraphs = [
-            Paragraph(text=f"段落{i}", source_file="A.docx", page=i)
-            for i in range(10)
-        ]
+
+        doc_store._paragraphs = [Paragraph(text=f"段落{i}", source_file="A.docx", page=i) for i in range(10)]
         ctx = doc_store.get_paragraph_context("A.docx", index=5, radius=2)
         # Should return 5 paragraphs (3,4,5,6,7)
         assert len(ctx) == 5
@@ -162,6 +178,7 @@ class TestDocStorePublicMethods:
 
     def test_get_paragraph_context_edge(self, doc_store):
         from doc_parser import Paragraph
+
         doc_store._paragraphs = [
             Paragraph(text="段落0", source_file="A.docx"),
             Paragraph(text="段落1", source_file="A.docx"),
@@ -171,6 +188,7 @@ class TestDocStorePublicMethods:
 
     def test_find_paragraphs(self, doc_store):
         from doc_parser import Paragraph
+
         doc_store._paragraphs = [
             Paragraph(text="备份频率每日", source_file="A.docx", page=1, chapter="2.1", chapter_title="备份"),
             Paragraph(text="其他内容", source_file="A.docx", page=2),
@@ -191,6 +209,7 @@ class TestDocStorePublicMethods:
     def teardown_method(self):
         """清理临时目录"""
         import gc
+
         # Force garbage collection to release file handles
         gc.collect()
 
@@ -201,6 +220,7 @@ class TestDocStoreNoDuplicateCache:
     def test_no_parse_with_cache_method(self):
         """_parse_with_cache 方法应已删除"""
         from app.services.doc_store import DocStore
-        assert not hasattr(DocStore, '_parse_with_cache')
-        assert not hasattr(DocStore, '_file_md5')
-        assert not hasattr(DocStore, '_load_parsed_cache')
+
+        assert not hasattr(DocStore, "_parse_with_cache")
+        assert not hasattr(DocStore, "_file_md5")
+        assert not hasattr(DocStore, "_load_parsed_cache")

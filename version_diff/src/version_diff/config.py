@@ -4,6 +4,8 @@ import os
 from dataclasses import dataclass, field
 from typing import Any
 
+from loguru import logger as log
+
 
 @dataclass
 class Config:
@@ -108,9 +110,10 @@ class Config:
         llm = d.get("llm", {})
         try:
             from llm_chat import resolve_llm_config
+
             llm = resolve_llm_config(llm)
-        except Exception:
-            pass  # 解析失败则保留原始 llm（交由下游容错）
+        except Exception as e:
+            log.warning(f"LLM 配置解析失败，保留原始值: {e}")
         return cls(
             embedding=d.get("embedding", {}),
             llm=llm,

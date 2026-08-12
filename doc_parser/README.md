@@ -7,6 +7,8 @@
 ## 功能概览
 
 - **PDF 解析**（`pdfplumber`）：提取正文段落 + 表格，自动过滤页眉/页脚/水印噪声
+- **MinerU 后端**（可选）：使用 VLM/OCR 引擎解析复杂排版（无框线表格、多栏布局、扫描件），准确率 95%+
+- **智能后端选择**：`backend: "auto"` 预扫描 PDF 特征，自动在 pdfplumber 和 MinerU 间选择最优后端
 - **Word 解析**（`python-docx`）：提取段落 + 表格，检测章节结构
 - **跨页段落拼接**：不按页分段，全文拼接后按语义信号（空行/章节标题/句末终止符）重新分段
 - **跨页表格合并**：启发式识别被分页截断的同一表格，自动合并并跳过重复表头
@@ -27,6 +29,7 @@
 | `pdfplumber >= 0.11.4` | PDF 文本与表格提取 |
 | `python-docx >= 1.1.2` | Word 文档解析 |
 | `loguru >= 0.7.3` | 日志 |
+| `mineru[all]` (可选) | VLM/OCR PDF 解析后端，需 GPU |
 
 Python >= 3.10
 
@@ -41,6 +44,9 @@ uv sync --project doc_parser
 # 或单独安装
 cd doc_parser
 uv sync
+
+# 安装 MinerU 后端（可选，需 GPU）
+uv pip install -U "mineru[all]"
 ```
 
 ---
@@ -83,6 +89,7 @@ with open("manual.md", "w", encoding="utf-8") as f:
 
 # 或从已解析的 Document 转换
 from doc_parser import parse
+
 doc = parse("manual.pdf")
 md = doc.to_markdown()
 ```
@@ -93,17 +100,99 @@ Markdown 输出规则：
 - 表格内的 `|` 自动转义为 `\|`，换行替换为空格
 - 段落和表格按页码 + 序号交错输出
 
+### 智能后端选择（推荐）
+
+`backend: "auto"` 模式会先对 PDF 做快速预扫描（< 1s），根据文档特征自动选择最合适的后端：
+
+```python
+from doc_parser import parse
+
+# ── 智能模式（推荐）── 预扫描后自动决定
+doc = parse("any.pdf", config={"extract": {"backend": "auto"}})
+```
+
+**决策流程：**
+
+| 检测项 | 条件 | 选择 | 理由 |
+|--------|------|------|------|
+| 扫描件 | 平均文字 < 50 字/页 | MinerU | 需要 OCR |
+| 扫描件 | 大图片覆盖 > 50% 页面 | MinerU | 图片型 PDF |
+| 无框线表格 | 有绘图对象但 pdfplumber 提取不到表格 | MinerU | 表格被漏掉 |
+| 无框线表格 | 文本含表头关键词 + 列对齐特征 | MinerU | 疑似表格 |
+| 正常文档 | pdfplumber 表格提取正常 | pdfplumber | 速度快 |
+
+预扫描只采样前 5 页，耗时通常 0.5-2s。若 MinerU 未安装，自动降级到 pdfplumber。
+
+### 手动指定后端
+
+```python
+from doc_parser import parse
+
+# ── 强制 MinerU ── 处理复杂排版（无框线表格、多栏布局、扫描件）
+doc = parse(
+    "complex_layout.pdf",
+    config={
+        "extract": {
+            "backend": "mineru",  # 切换到 MinerU 后端
+            "mineru_backend": "auto",  # 默认值：自动检测 GPU
+        }
+    },
+)
+
+# ── GPU 机器：强制 VLM（准确率 95%+）
+doc = parse(
+    "complex_layout.pdf",
+    config={
+        "extract": {
+            "backend": "mineru",
+            "mineru_backend": "vlm",
+        }
+    },
+)
+
+# ── CPU 机器：强制 pipeline（准确率 ~86%，无需 GPU）
+doc = parse(
+    "complex_layout.pdf",
+    config={
+        "extract": {
+            "backend": "mineru",
+            "mineru_backend": "pipeline",
+        }
+    },
+)
+```
+
+MinerU 后端特点：
+- **`auto`（默认）**：自动检测 GPU → 有则 VLM，无则 pipeline，**CPU 机器也能跑**
+- **`vlm` 后端**（需 GPU ≥8GB VRAM）：准确率 95%+，擅长无框线表格和多栏布局
+- **`pipeline` 后端**（CPU）：准确率 ~86%，无需 GPU，速度较慢
+- 复用 `doc_parser` 的后处理逻辑（章节检测、跨页表格合并等）
+
+| 机器 | `mineru_backend` | 实际后端 | 准确率 |
+|------|------------------|----------|--------|
+| 有 GPU | `auto`（默认） | vlm | 95%+ |
+| 无 GPU | `auto`（默认） | pipeline | ~86% |
+| 有 GPU | `vlm` | vlm | 95%+ |
+| 任意 | `pipeline` | pipeline | ~86% |
+
+GPU 推荐：T4 16GB / V100 / A10 / A100 均可，T4 性价比最高
+
+---
+
 ### 自定义配置
 
 ```python
-doc = parse("manual.pdf", config={
-    "extract": {
-        "min_paragraph_length": 20,    # 过滤更短的段落
-        "max_paragraph_length": 1000,  # 允许更长的段落
-        "header_margin_pct": 5,        # 缩小页眉过滤区域
-        "table_empty_cell_threshold": 0.8,  # 更宽松的模板表格过滤
-    }
-})
+doc = parse(
+    "manual.pdf",
+    config={
+        "extract": {
+            "min_paragraph_length": 20,  # 过滤更短的段落
+            "max_paragraph_length": 1000,  # 允许更长的段落
+            "header_margin_pct": 5,  # 缩小页眉过滤区域
+            "table_empty_cell_threshold": 0.8,  # 更宽松的模板表格过滤
+        }
+    },
+)
 ```
 
 ---
@@ -209,6 +298,10 @@ class Table:
 | `margin_number_pattern` | `^(?:\d+(?:\.\d+)*\|[A-Z])$` | 编号列匹配正则 |
 | `table_empty_cell_threshold` | `0.6` | 空单元格率阈值（1.0 = 禁用过滤） |
 | `table_empty_placeholders` | `["□", "☐", "○", "——"]` | 视为空单元格的占位符 |
+| `backend` | `"pdfplumber"` | PDF 解析后端：`"pdfplumber"` / `"mineru"` / `"auto"` |
+| `mineru_backend` | `"auto"` | MinerU 后端模式：`"vlm"` / `"pipeline"` / `"auto"` |
+| `mineru_output_dir` | `""` | MinerU 输出目录（空=临时目录） |
+| `mineru_timeout` | `600` | MinerU 解析超时秒数 |
 
 ### 章节匹配模式（默认）
 
@@ -237,7 +330,7 @@ class Table:
 ## 不支持的格式
 
 - `.doc`（旧版 Word 二进制格式）：需先用 Word/LibreOffice 转换为 `.docx`
-- 图片型 PDF（扫描件）：本库不做 OCR，需先用 OCR 工具转换为文本型 PDF
+- ~~图片型 PDF（扫描件）：本库不做 OCR~~ → **使用 MinerU 后端可解析扫描件**
 
 ---
 

@@ -64,9 +64,7 @@ class BedrockBackend(BaseHTTPBackend):
         # 构建 Bedrock Converse 格式的 messages
         api_messages = []
         for msg in messages:
-            api_messages.append(
-                {"role": msg["role"], "content": [{"text": msg["content"]}]}
-            )
+            api_messages.append({"role": msg["role"], "content": [{"text": msg["content"]}]})
 
         # Bedrock Converse API 支持顶层 system 字段
         payload = {

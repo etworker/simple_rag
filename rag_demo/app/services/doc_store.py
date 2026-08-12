@@ -93,9 +93,7 @@ class DocStore:
             config.get("embedding", {}).get("parse_config", {}),
             config.get("embedding", {}),
         )
-        self._vector_store = VectorStore(
-            cache_dir=vector_cache_dir, config_hash=cfg_hash
-        )
+        self._vector_store = VectorStore(cache_dir=vector_cache_dir, config_hash=cfg_hash)
 
     @staticmethod
     def _compute_file_hash(filepath: str) -> str:
@@ -105,19 +103,9 @@ class DocStore:
     def _get_model(self) -> SentenceTransformer:
         """懒加载 embedding 模型"""
         if self._model is None:
-            from version_diff.device_utils import embedding_model_kwargs, resolve_embedding_device
+            from version_diff.device_utils import load_embedding_model
 
-            emb_config = self._config.get("embedding", {})
-            model_name = emb_config.get("model", "")
-            cache_dir = emb_config.get("cache_dir") or None
-            device = resolve_embedding_device(emb_config)
-            kwargs = embedding_model_kwargs(emb_config)
-            log.info(f"加载 embedding 模型: {model_name} (device={device})")
-            m_kwargs = {"cache_folder": cache_dir}
-            m_kwargs.update(kwargs)
-            self._model = SentenceTransformer(model_name, device=device, **m_kwargs)
-            if device and device != "cpu":
-                log.info(f"🚀 Embedding 加速: GPU, device={device}")
+            self._model = load_embedding_model(self._config.get("embedding", {}))
         return self._model
 
     def add_document(self, filepath: str, original_filename: str = "") -> DocMeta:
@@ -136,15 +124,11 @@ class DocStore:
         # 用原始文件名覆盖（parse 返回的是磁盘文件名，可能是 SHA-256 安全名）
         if original_filename:
             doc.filename = original_filename
-        log.info(
-            f"解析完成: {doc.filename} ({len(doc.paragraphs)} 段, {len(doc.tables)} 表)"
-        )
+        log.info(f"解析完成: {doc.filename} ({len(doc.paragraphs)} 段, {len(doc.tables)} 表)")
 
         # 计算 embedding（VectorStore 内部有缓存，自动复用）
         model = self._get_model()
-        embeddings, _index = self._vector_store.get_or_compute(
-            doc.filename, doc.paragraphs, model
-        )
+        embeddings, _index = self._vector_store.get_or_compute(doc.filename, doc.paragraphs, model)
         embeddings = np.array(embeddings).astype(np.float32)
 
         # 追加到全局
@@ -206,9 +190,7 @@ class DocStore:
             doc_id = matches[0]
 
         # 找到该文档段落的范围
-        indices_to_remove = [
-            i for i, p in enumerate(self._paragraphs) if p.source_file == doc_id
-        ]
+        indices_to_remove = [i for i, p in enumerate(self._paragraphs) if p.source_file == doc_id]
         if not indices_to_remove:
             del self._documents[doc_id]
             return True
@@ -238,7 +220,8 @@ class DocStore:
         self._paragraphs = []
         self._embeddings = None
         self._index = None
-        # 清空磁盘持久化文件（保留目录）
+        # 清空磁盘持久化文件（保留目录）；目录不存在时先创建，避免空库清空报错
+        os.makedirs(self._persist_dir, exist_ok=True)
         for f in os.listdir(self._persist_dir):
             fp = os.path.join(self._persist_dir, f)
             if os.path.isfile(fp):
@@ -349,9 +332,7 @@ class DocStore:
                 emb_path = os.path.join(self._persist_dir, "embeddings.npy")
                 np.save(emb_path, self._embeddings)
 
-            log.info(
-                f"持久化完成: {len(self._documents)} 文档, {len(self._paragraphs)} 段落"
-            )
+            log.info(f"持久化完成: {len(self._documents)} 文档, {len(self._paragraphs)} 段落")
         except Exception as e:
             log.error(f"持久化失败: {e}", exc_info=True)
 
@@ -384,11 +365,7 @@ class DocStore:
             # 回填缺失的 page_count / char_count（所有数据加载完毕后）
             need_save = False
             for fname, meta in self._documents.items():
-                if (
-                    meta.page_count == 0
-                    and meta.filepath
-                    and meta.filepath.lower().endswith(".pdf")
-                ):
+                if meta.page_count == 0 and meta.filepath and meta.filepath.lower().endswith(".pdf"):
                     try:
                         import fitz
 
@@ -398,18 +375,14 @@ class DocStore:
                     except Exception:
                         pass
                 if meta.char_count == 0:
-                    chars = sum(
-                        len(p.text) for p in self._paragraphs if p.source_file == fname
-                    )
+                    chars = sum(len(p.text) for p in self._paragraphs if p.source_file == fname)
                     if chars > 0:
                         meta.char_count = chars
                         need_save = True
             if need_save:
                 self._save_to_disk()
 
-            log.info(
-                f"从磁盘恢复: {len(self._documents)} 文档, {len(self._paragraphs)} 段落"
-            )
+            log.info(f"从磁盘恢复: {len(self._documents)} 文档, {len(self._paragraphs)} 段落")
         except Exception as e:
             log.error(f"从磁盘恢复失败: {e}", exc_info=True)
 
@@ -424,15 +397,9 @@ class DocStore:
         if result:
             return result
         # 兼容：尝试用 filename 匹配
-        return [
-            p
-            for p in self._paragraphs
-            if p.source_file.startswith(doc_id + "#") or p.source_file == doc_id
-        ]
+        return [p for p in self._paragraphs if p.source_file.startswith(doc_id + "#") or p.source_file == doc_id]
 
-    def get_paragraph_context(
-        self, doc_id: str, index: int = 0, radius: int = 3
-    ) -> list:
+    def get_paragraph_context(self, doc_id: str, index: int = 0, radius: int = 3) -> list:
         """
         获取指定文档中某段落及其前后上下文
 
@@ -477,9 +444,7 @@ class DocStore:
             if p.source_file != doc_id and not p.source_file.startswith(doc_id + "#"):
                 continue
             if not location or p.location == location:
-                matches.append(
-                    {"text": p.text, "location": p.location, "chapter": p.chapter}
-                )
+                matches.append({"text": p.text, "location": p.location, "chapter": p.chapter})
                 if len(matches) >= limit:
                     break
         return matches

@@ -14,6 +14,7 @@
 
 使用 FastAPI TestClient（同步），预审核后台任务通过轮询等待。
 """
+
 import io
 import os
 import shutil
@@ -32,8 +33,8 @@ from fastapi.testclient import TestClient
 _TMP_CACHE = tempfile.mkdtemp(prefix="rag_e2e_")
 
 # Patch ConfigStore 在 import app 之前生效
-from app.services import config_store as _cs  # noqa: E402
-from app.services.config_store import ConfigStore  # noqa: E402
+from app.services import config_store as _cs
+from app.services.config_store import ConfigStore
 
 _orig_init = ConfigStore.__init__
 
@@ -50,6 +51,7 @@ _cs.ConfigStore.__init__ = _patched_init
 @pytest.fixture(scope="module")
 def client():
     from app.main import app
+
     with TestClient(app) as c:
         yield c
     shutil.rmtree(_TMP_CACHE, ignore_errors=True)
@@ -57,9 +59,11 @@ def client():
 
 # ── 辅助函数 ────────────────────────────────────────────────
 
+
 def _make_pdf_v1() -> bytes:
     """v1 文档：管理手册（每月巡检 / 30天保留 / 经理审批）"""
     import fitz
+
     doc = fitz.open()
     page = doc.new_page()
     page.insert_text((72, 720), "信息技术部管理手册 R1", fontsize=14)
@@ -75,6 +79,7 @@ def _make_pdf_v1() -> bytes:
 def _make_pdf_v2() -> bytes:
     """v2 文档：工作手册（每季度巡检 / 90天保留 / 总监审批）— 与 v1 有 4 处矛盾"""
     import fitz
+
     doc = fitz.open()
     page = doc.new_page()
     page.insert_text((72, 720), "信息技术部工作手册 R2", fontsize=14)
@@ -198,9 +203,11 @@ class TestE2EWebFlow:
         # 如果 LLM 可用，应该检测到矛盾
         if inconsistencies:
             for inc in inconsistencies:
-                print(f"    - {inc.get('point', '?')}: "
-                      f"{inc.get('doc_a_says', '?')[:30]} vs "
-                      f"{inc.get('doc_b_says', '?')[:30]}")
+                print(
+                    f"    - {inc.get('point', '?')}: "
+                    f"{inc.get('doc_a_says', '?')[:30]} vs "
+                    f"{inc.get('doc_b_says', '?')[:30]}"
+                )
             # 验证矛盾结构
             inc0 = inconsistencies[0]
             assert "point" in inc0, "矛盾项缺少 point"
@@ -234,10 +241,9 @@ class TestE2EWebFlow:
             assert d.get("doc_id", ""), f"doc_id 为空: {d}"
             assert len(d.get("file_hash", "")) == 64, f"file_hash 异常: {d}"
             assert d.get("paragraph_count", 0) >= 1, f"段落数异常: {d}"
-        print(f"  ✅ 2 篇文档均已入库:")
+        print("  ✅ 2 篇文档均已入库:")
         for d in docs:
-            print(f"    - {d['filename']} ({d['paragraph_count']}段, "
-                  f"hash={d['file_hash'][-8:].upper()})")
+            print(f"    - {d['filename']} ({d['paragraph_count']}段, hash={d['file_hash'][-8:].upper()})")
 
         # ================================================================
         # Step 9: 清理 — 重置知识库

@@ -6,8 +6,8 @@ doc_parser 元数据行剥离测试（离线纯单测）
 """
 
 from doc_parser.parser import (
-    _split_stream,
     DEFAULT_CONFIG,
+    _split_stream,
 )
 
 
@@ -19,11 +19,7 @@ def _split(text):
 
 class TestMetadataLineStripped:
     def test_revision_date_line_not_merged_into_paragraph(self):
-        text = (
-            "5.1.5.6 核心网络设备、网络带宽的业务处理能力应满足业务高峰期的\n"
-            "修订日期：2026-05-08\n"
-            "需求。\n"
-        )
+        text = "5.1.5.6 核心网络设备、网络带宽的业务处理能力应满足业务高峰期的\n修订日期：2026-05-08\n需求。\n"
         paras = _split(text)
         # 修订日期行不应混入任何正文段落
         joined = " ".join(paras)

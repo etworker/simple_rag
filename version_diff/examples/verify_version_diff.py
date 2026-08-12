@@ -31,10 +31,6 @@ import time
 
 from loguru import logger as log
 
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
-)
-
 # 脚本位于 version_diff/examples/ → parents[2] 即项目根（simple_rag）
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 PDF_DIR = REPO_ROOT / "data" / "pdf"
@@ -50,22 +46,15 @@ def build_summary_prompt(old_name, new_name, result):
     modified = [c for c in changes if c.change_type == "modified"]
 
     lines = []
-    lines.append(
-        f"你是文档版本对比分析师。以下是文档《{old_name}》与《{new_name}》的逐条差异。"
-    )
+    lines.append(f"你是文档版本对比分析师。以下是文档《{old_name}》与《{new_name}》的逐条差异。")
     lines.append(
         f"共检测到 {len(changes)} 处实质性变更：新增 {len(added)} 处、"
         f"删除 {len(removed)} 处、修改 {len(modified)} 处。\n"
     )
     lines.append("请使用中文，按以下结构归纳：")
     lines.append("1. 【主要变更类别】用 3-5 个类别概括本次版本演进的方向。")
-    lines.append(
-        "2. 【实质性变更摘要】挑选最重要的 5-10 处变更，说明旧版如何、新版如何、为何重要。"
-    )
-    lines.append(
-        "3. 【整体评估】一句话评估本次版本更新的性质"
-        "（如：常规维护 / 内容扩充 / 流程变更 / 风险收紧等）。\n"
-    )
+    lines.append("2. 【实质性变更摘要】挑选最重要的 5-10 处变更，说明旧版如何、新版如何、为何重要。")
+    lines.append("3. 【整体评估】一句话评估本次版本更新的性质（如：常规维护 / 内容扩充 / 流程变更 / 风险收紧等）。\n")
     lines.append("逐条差异如下（已截断长文本）：\n")
 
     # 上限：避免超长 prompt（优先展示修改类，其次新增/删除）
@@ -77,12 +66,8 @@ def build_summary_prompt(old_name, new_name, result):
         s = (s or "").replace("\n", " ")
         return s if len(s) <= n else s[:n] + "…"
 
-    idx = 0
-    for c in capped:
-        idx += 1
-        t = {"added": "新增", "removed": "删除", "modified": "修改"}.get(
-            c.change_type, c.change_type
-        )
+    for idx, c in enumerate(capped, start=1):
+        t = {"added": "新增", "removed": "删除", "modified": "修改"}.get(c.change_type, c.change_type)
         sec = c.section or ""
         loc = c.location or ""
         if c.change_type == "modified":
@@ -103,11 +88,9 @@ def list_pairs():
     if not PDF_DIR.exists():
         log.warning(f"未找到 PDF 目录: {PDF_DIR}")
         return
-    print(f"\ndata/pdf 下的多版本文档组（版本在子目录名中）：")
+    print("\ndata/pdf 下的多版本文档组（版本在子目录名中）：")
     for group in sorted(p for p in PDF_DIR.iterdir() if p.is_dir()):
-        versions = sorted(
-            v for v in group.iterdir() if v.is_dir() and any(v.glob("*.pdf"))
-        )
+        versions = sorted(v for v in group.iterdir() if v.is_dir() and any(v.glob("*.pdf")))
         if len(versions) >= 2:
             print(f"\n  {group.name}")
             for v in versions:
@@ -118,8 +101,9 @@ def list_pairs():
 
 
 def main(old_path, new_path, model, do_summary):
-    from version_diff import DiffEngine
     from llm_chat import ask_once
+
+    from version_diff import DiffEngine
 
     if not (os.path.exists(old_path) and os.path.exists(new_path)):
         log.error(f"PDF 不存在:\n  old={old_path}\n  new={new_path}")
@@ -127,7 +111,7 @@ def main(old_path, new_path, model, do_summary):
 
     old_name = os.path.basename(old_path)
     new_name = os.path.basename(new_path)
-    print(f"\n=== 验证版本差异识别 ===")
+    print("\n=== 验证版本差异识别 ===")
     print(f"旧版: {old_path}")
     print(f"新版: {new_path}")
 
@@ -156,23 +140,18 @@ def main(old_path, new_path, model, do_summary):
     added = [c for c in result.changes if c.change_type == "added"]
     removed = [c for c in result.changes if c.change_type == "removed"]
     modified = [c for c in result.changes if c.change_type == "modified"]
-    print(
-        f"实质性变更总数: {len(result.changes)} "
-        f"(新增 {len(added)} / 删除 {len(removed)} / 修改 {len(modified)})"
-    )
+    print(f"实质性变更总数: {len(result.changes)} (新增 {len(added)} / 删除 {len(removed)} / 修改 {len(modified)})")
 
     print("\n--- 抽样变更 ---")
     for c in result.changes[:8]:
-        t = {"added": "新增", "removed": "删除", "modified": "修改"}.get(
-            c.change_type, c.change_type
-        )
+        t = {"added": "新增", "removed": "删除", "modified": "修改"}.get(c.change_type, c.change_type)
         old_t = (c.old_text or "")[:50].replace("\n", " ")
         new_t = (c.new_text or "")[:50].replace("\n", " ")
         print(f"  [{t}] {c.section or ''} | 旧: {old_t} → 新: {new_t}")
 
     summary = ""
     if do_summary:
-        print(f"\n=== 验证 LLM 归纳能力 ===")
+        print("\n=== 验证 LLM 归纳能力 ===")
         t1 = time.time()
         prompt = build_summary_prompt(old_name, new_name, result)
         summary = ask_once(
@@ -196,14 +175,8 @@ def main(old_path, new_path, model, do_summary):
     out_path = out_dir / "verify_version_diff_output.txt"
     with open(out_path, "w", encoding="utf-8") as f:
         f.write(f"版本对比: {old_name} -> {new_name}\n")
-        f.write(
-            f"旧版段落: {result.old_paragraph_count}  "
-            f"新版段落: {result.new_paragraph_count}\n"
-        )
-        f.write(
-            f"实质性变更: {len(result.changes)} "
-            f"(新增 {len(added)} / 删除 {len(removed)} / 修改 {len(modified)})\n"
-        )
+        f.write(f"旧版段落: {result.old_paragraph_count}  新版段落: {result.new_paragraph_count}\n")
+        f.write(f"实质性变更: {len(result.changes)} (新增 {len(added)} / 删除 {len(removed)} / 修改 {len(modified)})\n")
         f.write(f"version_compare 耗时: {elapsed:.1f}s\n\n")
         if summary:
             f.write("【LLM 归纳摘要】\n")
@@ -212,18 +185,12 @@ def main(old_path, new_path, model, do_summary):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(
-        description="验证版本差异识别 + LLM 归纳（示例脚本）"
-    )
+    parser = argparse.ArgumentParser(description="验证版本差异识别 + LLM 归纳（示例脚本）")
     parser.add_argument("old", nargs="?", default=str(DEFAULT_OLD), help="旧版 PDF 路径")
     parser.add_argument("new", nargs="?", default=str(DEFAULT_NEW), help="新版 PDF 路径")
     parser.add_argument("--model", default="zai.glm-4.7-flash", help="归纳用 LLM 模型")
-    parser.add_argument(
-        "--no-summary", action="store_true", help="仅做差异识别，跳过 LLM 归纳"
-    )
-    parser.add_argument(
-        "--list-pairs", action="store_true", help="列出 data/pdf 下所有可对比的多版本组"
-    )
+    parser.add_argument("--no-summary", action="store_true", help="仅做差异识别，跳过 LLM 归纳")
+    parser.add_argument("--list-pairs", action="store_true", help="列出 data/pdf 下所有可对比的多版本组")
     args = parser.parse_args()
 
     if args.list_pairs:

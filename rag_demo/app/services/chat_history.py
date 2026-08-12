@@ -31,9 +31,7 @@ class ChatHistoryStore:
 
     def __init__(self, history_dir: str = ""):
         self._dir = history_dir or os.path.join(
-            os.path.dirname(
-                os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-            ),
+            os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
             "data",
             "chat_history",
         )

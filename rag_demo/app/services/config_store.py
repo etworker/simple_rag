@@ -14,6 +14,8 @@ import os
 from copy import deepcopy
 from typing import Any
 
+# doc_parser 的默认解析配置（单一数据源，避免两处维护不一致）
+from doc_parser.parser import DEFAULT_CONFIG as _PARSER_DEFAULT_CONFIG
 from loguru import logger as log
 
 # 默认缓存根目录
@@ -75,30 +77,7 @@ DEFAULT_CONFIG = {
     "chat": {
         "max_history": 20,
     },
-    "extract": {
-        "header_margin_pct": 8,
-        "footer_margin_pct": 8,
-        "repeat_line_threshold_pct": 30,
-        "min_paragraph_length": 10,
-        "max_paragraph_length": 600,
-        "margin_number_x": 130,
-        "margin_number_pattern": r"^(?:\d+(?:\.\d+)*|[A-Z])$",
-        "table_empty_cell_threshold": 0.6,
-        "table_empty_placeholders": ["□", "☐", "○", "——"],
-        "chapter_patterns": [
-            r"^(\d+\.\d+\.\d+)\s+(.+)",
-            r"^(\d+\.\d+)\s+(.+)",
-            r"^(\d+)\s+(.+)",
-            r"^第\s*(\d+)\s*[章节]\s*(.+)",
-        ],
-        "noise_line_patterns": [
-            r"^修订日期\s*[：:]\s*\S+$",
-            r"^发布日期\s*[：:]\s*\S+$",
-            r"^\d{4}[-./]\s*\d{1,2}[-./]\s*\d{1,2}$",
-            r"^修订次数\s*[：:]\s*\d+\s+\S+\s+页码",
-            r"修订日期\s*[：:]\s*\d{4}-\d{1,2}-\d{1,2}\s*$",
-        ],
-    },
+    "extract": deepcopy(_PARSER_DEFAULT_CONFIG),
 }
 
 # 配置项描述（用于前端 UI 展示）

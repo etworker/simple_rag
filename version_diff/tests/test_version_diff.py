@@ -8,14 +8,15 @@ version_diff 修复验证测试
   - DiffEngine.check_conflicts 实现
   - 统计字段语义正确性
 """
-import pytest
-from unittest.mock import patch, MagicMock
+
+from unittest.mock import patch
+
+from doc_parser.models import Paragraph
 
 from version_diff.judge import JudgeResult, filter_diffs
-from version_diff.vectorstore import VectorStore
 from version_diff.matcher import TextDiffItem, compute_diff
 from version_diff.models import DiffResult, Inconsistency
-from doc_parser.models import Paragraph
+from version_diff.vectorstore import VectorStore
 
 
 class TestJudgeResult:
@@ -56,21 +57,13 @@ class TestFilterDiffsReturnJudgeResult:
 
 class TestConfigHash:
     def test_different_config_different_hash(self):
-        h1 = VectorStore.compute_config_hash(
-            {"model": "A"}, {"model": "B"}
-        )
-        h2 = VectorStore.compute_config_hash(
-            {"model": "C"}, {"model": "D"}
-        )
+        h1 = VectorStore.compute_config_hash({"model": "A"}, {"model": "B"})
+        h2 = VectorStore.compute_config_hash({"model": "C"}, {"model": "D"})
         assert h1 != h2
 
     def test_same_config_same_hash(self):
-        h1 = VectorStore.compute_config_hash(
-            {"model": "A"}, {"model": "B"}
-        )
-        h2 = VectorStore.compute_config_hash(
-            {"model": "A"}, {"model": "B"}
-        )
+        h1 = VectorStore.compute_config_hash({"model": "A"}, {"model": "B"})
+        h2 = VectorStore.compute_config_hash({"model": "A"}, {"model": "B"})
         assert h1 == h2
 
     def test_empty_config(self):
@@ -92,12 +85,12 @@ class TestTextDiffItemStructuredFields:
             para_b=Paragraph(text="b"),
             similarity=0.9,
         )
-        assert hasattr(item, 'llm_point')
-        assert hasattr(item, 'llm_doc_a_says')
-        assert hasattr(item, 'llm_doc_b_says')
-        assert item.llm_point == ''
-        assert item.llm_doc_a_says == ''
-        assert item.llm_doc_b_says == ''
+        assert hasattr(item, "llm_point")
+        assert hasattr(item, "llm_doc_a_says")
+        assert hasattr(item, "llm_doc_b_says")
+        assert item.llm_point == ""
+        assert item.llm_doc_a_says == ""
+        assert item.llm_doc_b_says == ""
 
 
 class TestCheckConflicts:
@@ -105,36 +98,42 @@ class TestCheckConflicts:
 
     def test_empty_input(self):
         from version_diff.engine import DiffEngine
+
         engine = DiffEngine(config={})
         result = engine.check_conflicts([])
         assert result == []
 
     def test_single_passage_no_conflict(self):
         from version_diff.engine import DiffEngine
+
         engine = DiffEngine(config={})
-        result = engine.check_conflicts([
-            {"text": "每天备份", "source_file": "A.docx", "location": "第1页"}
-        ])
+        result = engine.check_conflicts([{"text": "每天备份", "source_file": "A.docx", "location": "第1页"}])
         assert result == []
 
     def test_same_file_no_conflict(self):
         """来自同一文档的段落不应触发冲突检测"""
         from version_diff.engine import DiffEngine
+
         engine = DiffEngine(config={})
-        result = engine.check_conflicts([
-            {"text": "每天备份", "source_file": "A.docx", "location": "第1页"},
-            {"text": "每周备份", "source_file": "A.docx", "location": "第2页"},
-        ])
+        result = engine.check_conflicts(
+            [
+                {"text": "每天备份", "source_file": "A.docx", "location": "第1页"},
+                {"text": "每周备份", "source_file": "A.docx", "location": "第2页"},
+            ]
+        )
         assert result == []
 
     def test_identical_text_no_conflict(self):
         """文本完全相同的段落不触发 diff"""
         from version_diff.engine import DiffEngine
+
         engine = DiffEngine(config={})
-        result = engine.check_conflicts([
-            {"text": "每天备份", "source_file": "A.docx", "location": "第1页"},
-            {"text": "每天备份", "source_file": "B.docx", "location": "第1页"},
-        ])
+        result = engine.check_conflicts(
+            [
+                {"text": "每天备份", "source_file": "A.docx", "location": "第1页"},
+                {"text": "每天备份", "source_file": "B.docx", "location": "第1页"},
+            ]
+        )
         assert result == []
 
     def test_different_files_different_text_calls_judge(self):
@@ -143,10 +142,12 @@ class TestCheckConflicts:
 
         engine = DiffEngine(config={"llm": {"model": "x", "provider": "bedrock"}})
         with patch("version_diff.conflict.judge_pairs", return_value=[]):
-            result = engine.check_conflicts([
-                {"text": "每天备份", "source_file": "A.docx", "location": "第1页"},
-                {"text": "每周备份", "source_file": "B.docx", "location": "第1页"},
-            ])
+            result = engine.check_conflicts(
+                [
+                    {"text": "每天备份", "source_file": "A.docx", "location": "第1页"},
+                    {"text": "每周备份", "source_file": "B.docx", "location": "第1页"},
+                ]
+            )
         # judge_pairs 被调用，返回空不一致
         assert result == []
 
@@ -167,10 +168,12 @@ class TestCheckConflicts:
                 }
             ],
         ):
-            result = engine.check_conflicts([
-                {"text": "每天备份", "source_file": "A.docx", "location": "第1页"},
-                {"text": "每周备份", "source_file": "B.docx", "location": "第1页"},
-            ])
+            result = engine.check_conflicts(
+                [
+                    {"text": "每天备份", "source_file": "A.docx", "location": "第1页"},
+                    {"text": "每周备份", "source_file": "B.docx", "location": "第1页"},
+                ]
+            )
 
         assert len(result) == 1
         assert isinstance(result[0], Inconsistency)
@@ -199,8 +202,13 @@ class TestDiffResultStats:
 
     def test_not_safe_when_has_inconsistencies(self):
         inc = Inconsistency(
-            point="test", doc_a_file="a", doc_a_location="", doc_a_says="",
-            doc_b_file="b", doc_b_location="", doc_b_says="",
+            point="test",
+            doc_a_file="a",
+            doc_a_location="",
+            doc_a_says="",
+            doc_b_file="b",
+            doc_b_location="",
+            doc_b_says="",
         )
         result = DiffResult(inconsistencies=[inc])
         assert result.is_safe is False
@@ -208,15 +216,19 @@ class TestDiffResultStats:
     def test_to_dict_structure(self):
         inc = Inconsistency(
             point="备份频率",
-            doc_a_file="A.pdf", doc_a_location="第1页", doc_a_says="每天",
-            doc_b_file="B.pdf", doc_b_location="第2页", doc_b_says="每周",
+            doc_a_file="A.pdf",
+            doc_a_location="第1页",
+            doc_a_says="每天",
+            doc_b_file="B.pdf",
+            doc_b_location="第2页",
+            doc_b_says="每周",
             similarity=0.9,
         )
         result = DiffResult(inconsistencies=[inc], total_candidates=5, rule_filtered=2, llm_judged=3)
         d = result.to_dict()
-        assert d['is_safe'] is False
-        assert d['inconsistency_count'] == 1
-        assert d['stats']['total_candidates'] == 5
-        assert d['stats']['rule_filtered'] == 2
-        assert d['stats']['llm_judged'] == 3
-        assert d['inconsistencies'][0]['point'] == '备份频率'
+        assert d["is_safe"] is False
+        assert d["inconsistency_count"] == 1
+        assert d["stats"]["total_candidates"] == 5
+        assert d["stats"]["rule_filtered"] == 2
+        assert d["stats"]["llm_judged"] == 3
+        assert d["inconsistencies"][0]["point"] == "备份频率"

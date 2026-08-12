@@ -127,8 +127,10 @@ class TestResolveEmbeddingDevice:
 
     def test_env_var_auto_expands(self):
         mock = _mock_torch()
-        with patch.dict("sys.modules", {"torch": mock}), \
-             patch.dict(os.environ, {"SIMPLE_RAG_EMBEDDING_DEVICE": "auto"}):
+        with (
+            patch.dict("sys.modules", {"torch": mock}),
+            patch.dict(os.environ, {"SIMPLE_RAG_EMBEDDING_DEVICE": "auto"}),
+        ):
             result = resolve_embedding_device({})
             assert result == "cpu"
 
@@ -150,16 +152,19 @@ class TestEmbeddingModelKwargs:
 
     def test_dtype_float16(self):
         import torch
+
         result = embedding_model_kwargs({"dtype": "float16"})
         assert result == {"model_kwargs": {"torch_dtype": torch.float16}}
 
     def test_dtype_bfloat16(self):
         import torch
+
         result = embedding_model_kwargs({"dtype": "bfloat16"})
         assert result == {"model_kwargs": {"torch_dtype": torch.bfloat16}}
 
     def test_dtype_float32(self):
         import torch
+
         result = embedding_model_kwargs({"dtype": "float32"})
         assert result == {"model_kwargs": {"torch_dtype": torch.float32}}
 
@@ -186,8 +191,10 @@ class TestMaybeIndexToGpu:
         mock_faiss = MagicMock()
         mock_faiss.index_cpu_to_gpu.return_value = mock_gpu_index
 
-        with patch.object(device_utils, "is_cuda_available", return_value=True), \
-             patch.dict("sys.modules", {"faiss": mock_faiss}):
+        with (
+            patch.object(device_utils, "is_cuda_available", return_value=True),
+            patch.dict("sys.modules", {"faiss": mock_faiss}),
+        ):
             result_index, is_gpu = maybe_index_to_gpu(mock_index, gpu_id=0)
 
         assert result_index is mock_gpu_index
@@ -199,8 +206,10 @@ class TestMaybeIndexToGpu:
         mock_faiss = MagicMock()
         mock_faiss.StandardGpuResources.side_effect = RuntimeError("libfaiss_gpu not found")
 
-        with patch.object(device_utils, "is_cuda_available", return_value=True), \
-             patch.dict("sys.modules", {"faiss": mock_faiss}):
+        with (
+            patch.object(device_utils, "is_cuda_available", return_value=True),
+            patch.dict("sys.modules", {"faiss": mock_faiss}),
+        ):
             result_index, is_gpu = maybe_index_to_gpu(mock_index)
 
         # 失败时返回原始 index，is_gpu=False
@@ -210,4 +219,5 @@ class TestMaybeIndexToGpu:
 
 if __name__ == "__main__":
     import pytest
+
     pytest.main([__file__, "-v"])

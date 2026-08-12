@@ -10,6 +10,7 @@ doc_parser example — PDF/Word → Markdown 转换
     python examples/convert_to_md.py input.pdf --out output.md
     python examples/convert_to_md.py input.docx --min-paragraph-length 20
 """
+
 import argparse
 import os
 import sys
@@ -19,7 +20,7 @@ import time
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(_PROJECT_ROOT, "src"))
 
-from doc_parser import parse, parse_to_markdown
+from doc_parser import parse
 
 
 def main():

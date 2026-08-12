@@ -49,7 +49,14 @@ _default_vector_store = VectorStore()
 
 
 def pair_paragraphs(
-    paras_a, paras_b, model, threshold=0.80, file_a="", file_b="", vector_store=None
+    paras_a,
+    paras_b,
+    model,
+    threshold=0.80,
+    file_a="",
+    file_b="",
+    vector_store=None,
+    top_k=3,
 ):
     """
     用 FAISS 找到两篇文档中"说同一件事"的段落对
@@ -71,8 +78,8 @@ def pair_paragraphs(
     log.info("  📄 文档B:")
     _emb_b, index_b = vs.get_or_compute(file_b, paras_b, model)
 
-    # 用 FAISS 检索：对 A 中每段，在 B 中找 top-3 最相似
-    top_k = min(3, len(paras_b))
+    # 用 FAISS 检索：对 A 中每段，在 B 中找 top-K 最相似
+    top_k = min(top_k, len(paras_b))
     log.info(f"  🔍 FAISS 检索 (A的{len(paras_a)}段 → B的index, top-{top_k})...")
     similarities, indices = vs.search_similar(emb_a, index_b, top_k)
 
@@ -128,9 +135,7 @@ def compute_diff(para_a, para_b, similarity):
         if tag == "equal":
             continue
         elif tag == "replace":
-            fragments.append(
-                ("replace", sep.join(tokens_a[i1:i2]), sep.join(tokens_b[j1:j2]))
-            )
+            fragments.append(("replace", sep.join(tokens_a[i1:i2]), sep.join(tokens_b[j1:j2])))
         elif tag == "delete":
             fragments.append(("delete", sep.join(tokens_a[i1:i2]), ""))
         elif tag == "insert":

@@ -86,9 +86,7 @@ async def upload_document(file: UploadFile = File(...), choice: str = Form("")):
     existing = _state.app.doc_store.get_document(filename)
     if existing and existing.status == "active":
         if existing.file_hash == new_sha:
-            raise HTTPException(
-                status_code=409, detail=f"文档 '{filename}' 内容完全相同，请勿重复上传"
-            )
+            raise HTTPException(status_code=409, detail=f"文档 '{filename}' 内容完全相同，请勿重复上传")
         if not choice:
             return {
                 "needs_choice": True,
@@ -122,6 +120,7 @@ async def upload_document(file: UploadFile = File(...), choice: str = Form("")):
 
     # 原子写入
     tmp_filepath = filepath + ".tmp"
+    os.makedirs(_state.app.upload_dir, exist_ok=True)
     with open(tmp_filepath, "wb") as f:
         f.write(content)
     os.replace(tmp_filepath, filepath)
@@ -172,11 +171,7 @@ async def review_progress(task_id: str):
 
                 completed = task.get("completed_steps", [])
                 current_elapsed = 0
-                if (
-                    completed
-                    and "started_at" in completed[-1]
-                    and "elapsed" not in completed[-1]
-                ):
+                if completed and "started_at" in completed[-1] and "elapsed" not in completed[-1]:
                     current_elapsed = round(_t.time() - completed[-1]["started_at"], 1)
                 payload = {
                     "status": task["status"],
@@ -210,9 +205,7 @@ async def confirm_review(task_id: str):
         raise HTTPException(status_code=404, detail="任务不存在")
     task = _state.app.review_tasks[task_id]
     if task["status"] != "done":
-        raise HTTPException(
-            status_code=400, detail=f"预审核未完成（当前状态: {task['status']}）"
-        )
+        raise HTTPException(status_code=400, detail=f"预审核未完成（当前状态: {task['status']}）")
 
     filename = task["filename"]
     filepath = task["filepath"]
@@ -222,14 +215,10 @@ async def confirm_review(task_id: str):
     file_hash = compute_sha256(filepath)
     existing = _state.app.doc_store.get_document(f"{filename}#{file_hash[-8:].upper()}")
     if existing and existing.status == "active":
-        raise HTTPException(
-            status_code=409, detail=f"文档 '{filename}' 已入库（相同内容）"
-        )
+        raise HTTPException(status_code=409, detail=f"文档 '{filename}' 已入库（相同内容）")
 
     try:
-        meta = await asyncio.to_thread(
-            _state.app.doc_store.add_document, filepath, task["filename"]
-        )
+        meta = await asyncio.to_thread(_state.app.doc_store.add_document, filepath, task["filename"])
     except Exception as e:
         log.error(f"入库失败: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"入库失败: {e!s}") from e
@@ -266,7 +255,8 @@ async def rerun_review(task_id: str):
 
     if task["status"] in ("confirmed", "rejected"):
         raise HTTPException(
-            status_code=400, detail=f"任务已{task['status']}，无法重跑",
+            status_code=400,
+            detail=f"任务已{task['status']}，无法重跑",
         )
 
     filepath = task.get("filepath", "")
@@ -323,9 +313,7 @@ async def get_review_page(task_id: str, page: int = 1, highlight: str = ""):
     if not os.path.exists(filepath):
         raise HTTPException(status_code=404, detail="文件不存在")
     renderer = PageRenderer(cache_dir=os.path.join(_state.app.cache_dir, "page_cache"))
-    png_path = await asyncio.to_thread(
-        renderer.get_page, filepath, page, unquote(highlight)
-    )
+    png_path = await asyncio.to_thread(renderer.get_page, filepath, page, unquote(highlight))
     return FileResponse(png_path, media_type="image/png")
 
 
@@ -339,6 +327,7 @@ async def get_review_info(task_id: str):
     if not filepath or not os.path.exists(filepath):
         return {"exists": False, "page_count": 0}
     import pdfplumber
+
     try:
         with pdfplumber.open(filepath) as pdf:
             return {"exists": True, "page_count": len(pdf.pages)}
@@ -356,6 +345,7 @@ async def get_review_old_info(task_id: str):
     if not old_filepath or not os.path.exists(old_filepath):
         return {"exists": False, "page_count": 0}
     import pdfplumber
+
     try:
         with pdfplumber.open(old_filepath) as pdf:
             return {"exists": True, "page_count": len(pdf.pages)}
@@ -377,7 +367,5 @@ async def get_review_old_page(task_id: str, page: int = 1, highlight: str = ""):
     if not old_filepath or not os.path.exists(old_filepath):
         raise HTTPException(status_code=404, detail="旧版文档文件不存在")
     renderer = PageRenderer(cache_dir=os.path.join(_state.app.cache_dir, "page_cache"))
-    png_path = await asyncio.to_thread(
-        renderer.get_page, old_filepath, page, unquote(highlight)
-    )
+    png_path = await asyncio.to_thread(renderer.get_page, old_filepath, page, unquote(highlight))
     return FileResponse(png_path, media_type="image/png")
