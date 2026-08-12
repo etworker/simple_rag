@@ -166,6 +166,8 @@ from version_diff.judge import filter_diffs
 from version_diff.llm_util import call_llm_json
 from version_diff.matcher import compute_diff
 from version_diff.models import DiffResult, Inconsistency, VersionChange, VersionDiffResult
+from version_diff.normalization import normalize_text
+from version_diff.table_diff import compare_tables
 from version_diff.vectorstore import VectorStore
 
 # 版本过滤 prompt（随包发布，外部文件优先）
@@ -484,7 +486,7 @@ class DiffEngine:
             if para_a.text.strip() == para_b.text.strip():
                 continue
             # 路径 2：归一化后相同（消除 PDF 解析差异）→ 跳过，避免浪费 LLM
-            if _normalize_text(para_a.text) == _normalize_text(para_b.text):
+            if normalize_text(para_a.text) == normalize_text(para_b.text):
                 continue
             item = compute_diff(para_a, para_b, sim)
             if item.has_changes:
@@ -808,57 +810,7 @@ class DiffEngine:
         支持：列增减、行增减、单元格内容修改
         列对齐 / 行对齐 / 单元格 diff 的实现见模块级 _compare_table_pair。
         """
-        changes = []
-
-        # 1. 配对表格（按表头相似度）
-        paired_old = set()
-        paired_new = set()
-        table_pairs = []
-
-        for i, old_t in enumerate(old_tables):
-            old_header = _table_header_text(old_t)
-            best_match = -1
-            best_score = 0.0
-            for j, new_t in enumerate(new_tables):
-                if j in paired_new:
-                    continue
-                new_header = _table_header_text(new_t)
-                score = SequenceMatcher(None, old_header, new_header).ratio()
-                if score > best_score and score >= 0.5:
-                    best_score = score
-                    best_match = j
-            if best_match >= 0:
-                table_pairs.append((i, best_match))
-                paired_old.add(i)
-                paired_new.add(best_match)
-
-        # Fallback：未配对的大表格按列数+行数规模匹配（处理 PDF 跨页表头丢失的情况）
-        for i, old_t in enumerate(old_tables):
-            if i in paired_old:
-                continue
-            if not old_t.rows or len(old_t.rows) < 5:
-                continue  # 只对大表格做 fallback
-            old_cols = len(old_t.rows[0])
-            for j, new_t in enumerate(new_tables):
-                if j in paired_new:
-                    continue
-                if not new_t.rows or len(new_t.rows) < 5:
-                    continue
-                new_cols = len(new_t.rows[0])
-                # 列数相同 + 行数差异在 30% 以内
-                if old_cols == new_cols:
-                    size_ratio = min(len(old_t.rows), len(new_t.rows)) / max(len(old_t.rows), len(new_t.rows))
-                    if size_ratio >= 0.7:
-                        table_pairs.append((i, j))
-                        paired_old.add(i)
-                        paired_new.add(j)
-                        break
-
-        # 2. 对配对的表格做行级 diff
-        for old_idx, new_idx in table_pairs:
-            changes.extend(_compare_table_pair(old_tables[old_idx], new_tables[new_idx]))
-
-        return changes
+        return compare_tables(old_tables, new_tables)
 
     # ============================================================
     # 版本对比：实质性变更过滤

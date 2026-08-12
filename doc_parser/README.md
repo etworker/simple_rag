@@ -245,6 +245,7 @@ class Paragraph:
     chapter_title: str      # 章节标题
     source_file: str        # 来源文件名
     index: int              # 段落序号
+    order: int              # 文档内原始块顺序（用于与表格交错渲染）
 
     @property
     def location(self) -> str  # "第3-4页 / §2.3 / 备份策略"
@@ -260,22 +261,100 @@ class Paragraph:
 @dataclass
 class Table:
     rows: list              # 二维数组 list[list[str]]
-    headers: list           # 表头（可选）
+    headers: list           # 表头（可选，为空时用 rows[0]）
     page: int               # 起始页码
     page_end: int           # 结束页码（跨页表格）
     chapter: str            # 所属章节号
     chapter_title: str      # 所属章节标题
-    context_before: str     # 表格前一段正文
+    context_before: str     # 表格前一段正文（上下文）
     source_file: str        # 来源文件名
     index: int              # 表格序号
+    order: int              # 文档内原始块顺序
 
     @property
-    def location(self) -> str
+    def location(self) -> str  # "第3-4页 / §2.1 / 风险应对"
     def to_dict(self) -> dict
     def to_markdown(self) -> str     # 转 Markdown 表格
     @classmethod
     def from_dict(cls, d: dict) -> "Table"
 ```
+
+---
+
+## 输出结构示例
+
+解析后的 `Document` 对象可通过 `to_dict()` 序列化为 JSON：
+
+```python
+doc = parse("manual.pdf")
+import json
+
+json_str = json.dumps(doc.to_dict(), ensure_ascii=False, indent=2)
+```
+
+**JSON 结构：**
+
+```json
+{
+  "filename": "信息技术部工作手册.pdf",
+  "paragraphs": [
+    {
+      "text": "本手册适用于信息技术部所有人员。",
+      "page": 1,
+      "page_end": 1,
+      "chapter": "1",
+      "chapter_title": "总则",
+      "source_file": "信息技术部工作手册.pdf",
+      "index": 1,
+      "order": 1
+    },
+    {
+      "text": "备份策略应遵循每日全量、每周增量的原则。",
+      "page": 2,
+      "page_end": 3,
+      "chapter": "2.3",
+      "chapter_title": "备份策略",
+      "source_file": "信息技术部工作手册.pdf",
+      "index": 5,
+      "order": 7
+    }
+  ],
+  "tables": [
+    {
+      "rows": [
+        ["序号", "风险描述", "应对措施", "责任人"],
+        ["1",   "系统宕机", "双机热备切换", "运维组"],
+        ["2",   "数据丢失", "从备份恢复",   "DBA"]
+      ],
+      "headers": [],
+      "page": 3,
+      "page_end": 4,
+      "chapter": "2.1",
+      "chapter_title": "风险应对",
+      "context_before": "主要风险及应对措施如下表所示：",
+      "source_file": "信息技术部工作手册.pdf",
+      "index": 1,
+      "order": 5
+    }
+  ]
+}
+```
+
+**字段说明：**
+
+| 字段 | 所在 | 类型 | 含义 |
+|------|------|------|------|
+| `filename` | Document | str | 源文件名 |
+| `text` | Paragraph | str | 段落正文 |
+| `page` / `page_end` | 两者 | int | 起始/结束页码（跨页时 `page_end > page`） |
+| `chapter` | 两者 | str | 章节号，如 `"2.3"` |
+| `chapter_title` | 两者 | str | 章节标题，如 `"备份策略"` |
+| `source_file` | 两者 | str | 来源文件名 |
+| `index` | 两者 | int | 同类序号（段落列表/表格列表中的位置） |
+| `order` | 两者 | int | 文档内原始块顺序（用于 `to_markdown()` 交错渲染） |
+| `rows` | Table | list[list[str]] | 表格数据，每行一个字符串列表 |
+| `headers` | Table | list | 表头（为空时用 `rows[0]` 作表头） |
+| `context_before` | Table | str | 表格前一段正文（上下文） |
 
 ---
 
