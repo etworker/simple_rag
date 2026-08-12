@@ -13,7 +13,7 @@ doc_parser 单元测试
 
 import pytest
 
-from doc_parser.models import Paragraph, Table
+from doc_parser.models import Document, Paragraph, Table
 from doc_parser.parser import (
     DEFAULT_CONFIG,
     _clean_table,
@@ -22,6 +22,7 @@ from doc_parser.parser import (
     _is_in_table_region,
     _words_to_lines,
     extract_document,
+    extract_docx,
     get_extract_config,
 )
 
@@ -49,6 +50,24 @@ class TestTable:
     def test_location_fallback(self):
         t = Table(rows=[], index=2)
         assert t.location == "表格#2"
+
+    def test_location_page_range(self):
+        t = Table(rows=[], page=3, page_end=4)
+        assert t.location == "第3-4页"
+
+
+class TestDocumentMarkdownOrder:
+    def test_uses_source_order_to_interleave_tables(self):
+        doc = Document(
+            filename="test.docx",
+            paragraphs=[
+                Paragraph(text="前文", index=1, order=1),
+                Paragraph(text="后文", index=2, order=3),
+            ],
+            tables=[Table(rows=[["列"], ["值"]], index=1, order=2)],
+        )
+        markdown = doc.to_markdown()
+        assert markdown.index("前文") < markdown.index("| 列 |") < markdown.index("后文")
 
 
 class TestCleanTable:
@@ -186,6 +205,29 @@ class TestExtractDocument:
         assert not (isinstance(exc_info.value, ValueError) and "不支持的格式" in str(exc_info.value)), (
             ".docx should not raise unsupported format error"
         )
+
+
+class TestExtractDocx:
+    def test_keeps_block_order_short_headings_and_table_chapters(self, tmp_path):
+        from docx import Document as WordDocument
+
+        path = tmp_path / "ordered.docx"
+        word = WordDocument()
+        word.add_paragraph("1 总则")  # 短标题，仍应保留
+        first_table = word.add_table(rows=2, cols=1)
+        first_table.cell(0, 0).text = "项目"
+        first_table.cell(1, 0).text = "内容"
+        word.add_paragraph("2 附则")
+        second_table = word.add_table(rows=2, cols=1)
+        second_table.cell(0, 0).text = "项目"
+        second_table.cell(1, 0).text = "内容"
+        word.save(path)
+
+        result = extract_docx(str(path), {"extract": {"min_paragraph_length": 10}})
+
+        assert [p.text for p in result.paragraphs] == ["1 总则", "2 附则"]
+        assert [t.chapter for t in result.tables] == ["1", "2"]
+        assert result.to_markdown().index("| 项目 |") > result.to_markdown().index("# 1 总则")
 
 
 class TestGetExtractConfig:

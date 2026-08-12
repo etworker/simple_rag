@@ -232,7 +232,7 @@ def _convert_json_to_document(content_list: list, filepath: str, cfg: dict):
     current_chapter_title = ""
     min_len = cfg.get("min_paragraph_length", 10)
 
-    for block in content_list:
+    for block_order, block in enumerate(content_list, 1):
         block_type = block.get("type", "text")
         text = block.get("text", "").strip()
         page_idx = block.get("page_idx", 0)
@@ -260,6 +260,7 @@ def _convert_json_to_document(content_list: list, filepath: str, cfg: dict):
                     chapter_title=current_chapter_title,
                     source_file=os.path.basename(filepath),
                     index=len(tables) + 1,
+                    order=block_order,
                 )
             )
 
@@ -282,6 +283,7 @@ def _convert_json_to_document(content_list: list, filepath: str, cfg: dict):
                     chapter_title=current_chapter_title,
                     source_file=os.path.basename(filepath),
                     index=len(paragraphs) + 1,
+                    order=block_order,
                 )
             )
 
@@ -326,6 +328,7 @@ def _convert_markdown_to_document(md_content: str, filepath: str, cfg: dict):
 
     lines = md_content.split("\n")
     i = 0
+    block_order = 0
     while i < len(lines):
         line = lines[i].strip()
 
@@ -335,6 +338,7 @@ def _convert_markdown_to_document(md_content: str, filepath: str, cfg: dict):
 
         # Markdown 标题
         if line.startswith("#"):
+            block_order += 1
             heading = re.sub(r"^#{1,6}\s+", "", line)
             ch = _detect_chapter(heading, cfg)
             if ch:
@@ -349,6 +353,7 @@ def _convert_markdown_to_document(md_content: str, filepath: str, cfg: dict):
                         chapter_title=current_chapter_title,
                         source_file=os.path.basename(filepath),
                         index=len(paragraphs) + 1,
+                        order=block_order,
                     )
                 )
             i += 1
@@ -358,6 +363,7 @@ def _convert_markdown_to_document(md_content: str, filepath: str, cfg: dict):
         if line.startswith("|") and i + 1 < len(lines):
             next_line = lines[i + 1].strip()
             if next_line.startswith("|") and "---" in next_line:
+                block_order += 1
                 table_lines = []
                 while i < len(lines) and lines[i].strip().startswith("|"):
                     table_lines.append(lines[i].strip())
@@ -381,11 +387,13 @@ def _convert_markdown_to_document(md_content: str, filepath: str, cfg: dict):
                                 chapter_title=current_chapter_title,
                                 source_file=os.path.basename(filepath),
                                 index=len(tables) + 1,
+                                order=block_order,
                             )
                         )
                 continue
 
         # 普通文本
+        block_order += 1
         ch = _detect_chapter(line, cfg)
         if ch:
             current_chapter, current_chapter_title = ch
@@ -402,6 +410,7 @@ def _convert_markdown_to_document(md_content: str, filepath: str, cfg: dict):
                 chapter_title=current_chapter_title,
                 source_file=os.path.basename(filepath),
                 index=len(paragraphs) + 1,
+                order=block_order,
             )
         )
         i += 1

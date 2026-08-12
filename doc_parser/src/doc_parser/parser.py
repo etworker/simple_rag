@@ -18,6 +18,10 @@ from pathlib import Path
 
 import pdfplumber
 from docx import Document as DocxDocument
+from docx.oxml.table import CT_Tbl
+from docx.oxml.text.paragraph import CT_P
+from docx.table import Table as DocxTable
+from docx.text.paragraph import Paragraph as DocxParagraph
 from loguru import logger
 
 from doc_parser.models import Document, Paragraph, Table
@@ -832,11 +836,13 @@ def _merge_cross_page_tables(tables: list) -> list:
     return merged
 
 
-def _should_merge_tables(a, b) -> bool:
+def _should_merge_tables(a, b, header_threshold: float = 0.85) -> bool:
     """判断两张表格是否应为同一逻辑表格的跨页片段。
 
-    合并判定: 同文件 + 页码连续 + 列数兼容 (差异 ≤ 1)
-    header 相似度不影响是否合并，仅用于 _append 阶段决定是否跳过重复表头。
+    合并判定: 同文件 + 页码连续 + 列数兼容 (差异 ≤ 1) + 重复表头。
+
+    重复表头是识别“续表”的关键证据。仅按相邻页和列数合并会把两张
+    恰好列数相同的独立表格拼在一起；没有可靠续表证据时，宁可保留两表。
     """
     # 1. 同文件
     if a.source_file != b.source_file:
@@ -854,7 +860,9 @@ def _should_merge_tables(a, b) -> bool:
         return False
     a_cols = len(a_rows[0]) if a_rows[0] else 0
     b_cols = len(b_rows[0]) if b_rows[0] else 0
-    return not abs(a_cols - b_cols) > 1
+    if abs(a_cols - b_cols) > 1:
+        return False
+    return _row_token_jaccard(a_rows[0], b_rows[0]) >= header_threshold
 
 
 def _row_token_jaccard(row_a, row_b) -> float:
@@ -894,6 +902,15 @@ def _append_rows_skip_dup_header(target, source, header_threshold: float = 0.85)
 # ============================================================
 
 
+def _iter_docx_blocks(doc):
+    """按 OOXML body 顺序产出顶层段落和表格。"""
+    for child in doc.element.body.iterchildren():
+        if isinstance(child, CT_P):
+            yield "paragraph", DocxParagraph(child, doc)
+        elif isinstance(child, CT_Tbl):
+            yield "table", DocxTable(child, doc)
+
+
 def extract_docx(filepath, config=None):
     """从 Word 文档提取段落和表格"""
     cfg = get_extract_config(config)
@@ -903,33 +920,35 @@ def extract_docx(filepath, config=None):
     current_chapter = ""
     current_chapter_title = ""
 
-    # 提取段落
-    for para in doc.paragraphs:
-        text = para.text.strip()
-        if not text or len(text) < cfg["min_paragraph_length"]:
+    # 必须按 body 块顺序读取：doc.paragraphs 和 doc.tables 是两份独立列表，
+    # 分别遍历会让所有表格错误地继承最后一个章节。
+    for block_order, (block_type, block) in enumerate(_iter_docx_blocks(doc), 1):
+        if block_type == "paragraph":
+            text = block.text.strip()
+            if not text:
+                continue
+
+            # 与 PDF 路径一致：先识别标题，短标题不受最小段落长度过滤。
+            ch = _detect_chapter(text, cfg)
+            if not ch and len(text) < cfg["min_paragraph_length"]:
+                continue
+            if ch:
+                current_chapter, current_chapter_title = ch
+
+            paragraphs.append(
+                Paragraph(
+                    text=text,
+                    page=0,
+                    chapter=current_chapter,
+                    chapter_title=current_chapter_title,
+                    source_file=os.path.basename(filepath),
+                    index=len(paragraphs) + 1,
+                    order=block_order,
+                )
+            )
             continue
 
-        ch = _detect_chapter(text, cfg)
-        if ch:
-            current_chapter, current_chapter_title = ch
-
-        paragraphs.append(
-            Paragraph(
-                text=text,
-                page=0,
-                chapter=current_chapter,
-                chapter_title=current_chapter_title,
-                source_file=os.path.basename(filepath),
-                index=len(paragraphs) + 1,
-            )
-        )
-
-    # 提取表格
-    for i, tbl in enumerate(doc.tables):
-        rows = []
-        for row in tbl.rows:
-            cells = [cell.text.strip() for cell in row.cells]
-            rows.append(cells)
+        rows = [[cell.text.strip() for cell in row.cells] for row in block.rows]
         cleaned = _clean_table(rows)
         if cleaned and len(cleaned) >= 2:
             tables.append(
@@ -940,7 +959,8 @@ def extract_docx(filepath, config=None):
                     chapter_title=current_chapter_title,
                     context_before="",
                     source_file=os.path.basename(filepath),
-                    index=i + 1,
+                    index=len(tables) + 1,
+                    order=block_order,
                 )
             )
 

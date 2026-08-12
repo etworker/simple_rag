@@ -14,6 +14,8 @@ class Paragraph:
     chapter_title: str = ""
     source_file: str = ""
     index: int = 0
+    # 文档内的原始块顺序；0 表示来源未提供顺序信息。
+    order: int = 0
 
     @property
     def location(self) -> str:
@@ -39,6 +41,7 @@ class Paragraph:
             "chapter_title": self.chapter_title,
             "source_file": self.source_file,
             "index": self.index,
+            "order": self.order,
         }
 
     @classmethod
@@ -51,6 +54,7 @@ class Paragraph:
             chapter_title=d.get("chapter_title", ""),
             source_file=d.get("source_file", ""),
             index=d.get("index", 0),
+            order=d.get("order", 0),
         )
 
     def to_markdown(self) -> str:
@@ -81,12 +85,17 @@ class Table:
     context_before: str = ""
     source_file: str = ""
     index: int = 0
+    # 文档内的原始块顺序；用于与 Paragraph 交错渲染。
+    order: int = 0
 
     @property
     def location(self) -> str:
         parts = []
         if self.page:
-            parts.append(f"第{self.page}页")
+            if self.page_end and self.page_end != self.page:
+                parts.append(f"第{self.page}-{self.page_end}页")
+            else:
+                parts.append(f"第{self.page}页")
         if self.chapter:
             parts.append(f"§{self.chapter}")
         if self.chapter_title:
@@ -105,6 +114,7 @@ class Table:
             "context_before": self.context_before,
             "source_file": self.source_file,
             "index": self.index,
+            "order": self.order,
         }
 
     @classmethod
@@ -119,6 +129,7 @@ class Table:
             context_before=d.get("context_before", ""),
             source_file=d.get("source_file", ""),
             index=d.get("index", 0),
+            order=d.get("order", 0),
         )
 
     def to_markdown(self) -> str:
@@ -228,12 +239,13 @@ class Document:
             """归一化用于标题比较：去空白 + 去标题分隔符"""
             return re.sub(r"[\s、（）()]+", "", s)
 
-        # 合并段落和表格，按 (page, index) 排序
+        # 合并段落和表格：优先使用解析器提供的原始块顺序。
+        # 对旧数据（order=0）保留原有的 index 兜底排序。
         items = []
         for p in self.paragraphs:
-            items.append((p.page, p.index, "para", p))
+            items.append((p.page, p.order or p.index, "para", p))
         for t in self.tables:
-            items.append((t.page, t.index, "table", t))
+            items.append((t.page, t.order or t.index, "table", t))
         items.sort(key=lambda x: (x[0], x[1]))
 
         lines = []

@@ -111,16 +111,14 @@ def test_triple_page_merge():
     assert len(merged[0].rows) == 6  # 1 header + 2(a,b) + 1(c) + 2(d,e)
 
 
-def test_continuation_without_duplicate_header():
-    """续页不重复表头 → 全部保留"""
+def test_adjacent_tables_without_duplicate_header_do_not_merge():
+    """相邻页且列数相同，但没有续表证据时不能误合并。"""
     tables = [
         _mk_table([["H"], ["a"]], page=1),
         _mk_table([["b"], ["c"]], page=2),  # 无表头行, 直接数据
     ]
     merged = _merge_cross_page_tables(tables)
-    assert len(merged) == 1
-    # 续页无重复表头 → 4 行全保留
-    assert len(merged[0].rows) == 4  # header + a + b + c
+    assert len(merged) == 2
 
 
 def test_row_token_jaccard():
