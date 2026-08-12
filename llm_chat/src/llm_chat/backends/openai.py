@@ -47,9 +47,7 @@ class OpenAIBackend(BaseHTTPBackend):
         self.model = model or OPENAI_DEFAULTS.get("model", "gpt-4o")
         self.base_url = (base_url or OPENAI_DEFAULTS["base_url"]).rstrip("/")
         self.endpoint = endpoint or OPENAI_DEFAULTS["endpoint"]
-        self._init_common(
-            OPENAI_DEFAULTS, api_key_env, api_key, max_tokens, timeout, max_retries, retry_backoff
-        )
+        self._init_common(OPENAI_DEFAULTS, api_key_env, api_key, max_tokens, timeout, max_retries, retry_backoff)
 
     def chat(self, messages: list[dict], system_prompt: str = "") -> str:
         """

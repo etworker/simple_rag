@@ -41,7 +41,7 @@ def retry_http(fn, max_retries: int = 3, backoff: float = 2.0):
             should_retry = is_net or status == 429 or (status is not None and 500 <= status < 600)
             if not should_retry or attempt == max_retries:
                 raise
-            wait = backoff ** attempt
+            wait = backoff**attempt
             log.warning(f"请求失败 (attempt {attempt + 1}/{max_retries + 1}), {wait:.1f}s 后重试: {str(e)[:100]}")
             time.sleep(wait)
     raise last_err
