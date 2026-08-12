@@ -10,6 +10,7 @@
 4. 重复内容（页眉页脚） → 统计高频重复行自动识别并过滤
 """
 
+import copy
 import os
 import re
 from collections import Counter
@@ -73,11 +74,17 @@ DEFAULT_CONFIG = {
     # 这些字符（除 None 和纯空白外）也视为"空"单元格，
     # 与 table_empty_cell_threshold 配合使用。
     "table_empty_placeholders": ["□", "☐", "○", "——"],
+
+    # 章节标题最大长度（超过此值的不视为标题）
+    "max_chapter_title_length": 80,
+
+    # 句末断句的最小段落长度（段落达到此长度且遇到句末终止符时断开）
+    "sentence_break_min_length": 40,
 }
 
 def get_extract_config(config=None):
     """合并用户配置和默认配置"""
-    result = DEFAULT_CONFIG.copy()
+    result = copy.deepcopy(DEFAULT_CONFIG)
     if config and 'extract' in config:
         result.update(config['extract'])
     return result
@@ -307,16 +314,17 @@ def _segment_and_locate(full_text, page_boundaries, filepath, cfg):
     for para_text, char_start, char_end in raw_paras:
         para_text = para_text.strip()
 
-        # 长度过滤
-        if len(para_text) < min_len:
+        # 章节检测（先检测，标题段免长度过滤）
+        ch = _detect_chapter(para_text, cfg)
+
+        # 长度过滤（章节标题段免过滤，因为 "2 日常管理" 等标题较短）
+        if not ch and len(para_text) < min_len:
             continue
 
         # 噪声正则过滤
         if any(p.match(para_text) for p in noise_patterns):
             continue
 
-        # 章节检测
-        ch = _detect_chapter(para_text, cfg)
         if ch:
             current_chapter, current_chapter_title = ch
 
@@ -382,24 +390,25 @@ def _split_stream(full_text, cfg):
             current_start = char_pos
             continue
 
-        # 章节标题 → 先断开前面的
+        # 章节标题 → 独占一段（先断开前面的，标题自身也单独成段）
         if _detect_chapter(stripped, cfg):
             if current_lines:
                 para_text = ' '.join(current_lines)
                 if len(para_text.strip()) > 0:
                     paragraphs.append((para_text, current_start, line_start))
                 current_lines = []
-            current_start = line_start
+            # 标题独占一段
+            paragraphs.append((stripped, line_start, char_pos))
+            current_start = char_pos
+            continue
 
-        if not current_lines:
-            current_start = line_start
-
+        # 正文行 → 先累积到 current_lines
         current_lines.append(stripped)
+        current_text = ' '.join(current_lines)
 
         # 句末终止符 + 段落已有一定长度 → 断开
-        current_text = ' '.join(current_lines)
         if (
-            stripped and stripped[-1] in '。；！？.;!?' and len(current_text) >= 40
+            stripped and stripped[-1] in '。；！？.;!?' and len(current_text) >= cfg.get('sentence_break_min_length', 40)
         ) or (
             len(current_text) > max_len and stripped and stripped[-1] in '。.;；，,'
         ):
@@ -416,15 +425,52 @@ def _split_stream(full_text, cfg):
     return paragraphs
 
 
+# 列表项特征：以动作动词开头（后面通常跟长描述）
+_LIST_VERB_PREFIXES = (
+    '负责', '建立', '整合', '加强', '完成', '管理与', '参与',
+    '组织', '规划', '做好', '开展', '制定', '依据', '按照',
+    '定期', '管理维护', '采集', '编制', '审批', '评估',
+)
+
+# 列表项结尾标点（真实章节标题不会以这些结尾）
+_LIST_END_PUNCT = '；，。、；,.；'
+
+
 def _detect_chapter(text, cfg):
-    """识别章节标题"""
+    """识别章节标题
+
+    过滤规则（避免表格行/目录条目/正文碎片/列表项被误识别为标题）：
+    - 标题长度不超过 max_chapter_title_length
+    - 标题部分长度 >= 2（排除 "6 R" 之类的单字符）
+    - 标题不含日期模式（排除 "3 2025-12-03 ..." 之类的表格行）
+    - 标题不含过多列表分隔符（排除 "0.2-1、0.4-1、0.4-6、 ..." 之类的内容）
+    - 标题不以列表项标点结尾（排除 "...负责...工作；" 之类的列表项）
+    - 标题不以动作动词开头且过长（排除 "负责信息系统建设..." 之类的列表项）
+    """
     text = text.strip()
-    if not text or len(text) > 80:  # 太长的不可能是标题
+    if not text or len(text) > cfg.get('max_chapter_title_length', 80):
         return None
     for pattern in cfg['chapter_patterns']:
         m = re.match(pattern, text)
         if m:
-            return (m.group(1), m.group(2).strip())
+            chapter = m.group(1)
+            title = m.group(2).strip()
+            # 标题太短 → 可能是表格数字
+            if len(title) < 2:
+                return None
+            # 标题含日期 → 可能是表格行
+            if re.search(r'\d{4}[-./]\d{1,2}[-./]\d{1,2}', title):
+                return None
+            # 标题含过多列表分隔符 → 可能是正文碎片
+            if title.count('、') + title.count('，') > 2:
+                return None
+            # 标题以列表项标点结尾 → 列表项，非章节标题
+            if title[-1] in _LIST_END_PUNCT:
+                return None
+            # 标题以动作动词开头且较长 → 列表项描述，非章节标题
+            if len(title) > 12 and title.startswith(_LIST_VERB_PREFIXES):
+                return None
+            return (chapter, title)
     return None
 
 
@@ -651,6 +697,9 @@ def extract_docx(filepath, config=None):
 
     _assign_table_chapters(tables, paragraphs)
 
+    # 过滤空白模板表格（与 PDF 路径保持一致）
+    tables = _filter_template_tables(tables, cfg)
+
     return Document(
         filename=os.path.basename(filepath),
         paragraphs=paragraphs,
@@ -705,3 +754,25 @@ def parse(filepath: str, config: dict | None = None) -> Document:
             print(para.text, para.location)
     """
     return extract_document(filepath, config)
+
+
+def parse_to_markdown(filepath: str, config: dict | None = None) -> str:
+    """
+    解析文档并直接转为 Markdown（便捷 API）
+
+    等价于 parse(filepath, config).to_markdown()
+
+    Args:
+        filepath: 文件路径 (支持 .pdf, .docx)
+        config: 解析配置字典，可选
+
+    Returns:
+        Markdown 格式的字符串
+
+    Example:
+        from doc_parser import parse_to_markdown
+        md = parse_to_markdown("manual.pdf")
+        with open("manual.md", "w", encoding="utf-8") as f:
+            f.write(md)
+    """
+    return parse(filepath, config).to_markdown()
