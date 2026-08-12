@@ -46,13 +46,10 @@ class OpenAIBackend(BaseHTTPBackend):
     ):
         self.model = model or OPENAI_DEFAULTS.get("model", "gpt-4o")
         self.base_url = (base_url or OPENAI_DEFAULTS["base_url"]).rstrip("/")
-        self.api_key_env = api_key_env or OPENAI_DEFAULTS["api_key_env"]
-        self.api_key = api_key
-        self.max_tokens = max_tokens or OPENAI_DEFAULTS["max_tokens"]
-        self.timeout = timeout or OPENAI_DEFAULTS["timeout"]
         self.endpoint = endpoint or OPENAI_DEFAULTS["endpoint"]
-        self.max_retries = max_retries or OPENAI_DEFAULTS.get("max_retries", 3)
-        self.retry_backoff = retry_backoff or OPENAI_DEFAULTS.get("retry_backoff", 2.0)
+        self._init_common(
+            OPENAI_DEFAULTS, api_key_env, api_key, max_tokens, timeout, max_retries, retry_backoff
+        )
 
     def chat(self, messages: list[dict], system_prompt: str = "") -> str:
         """

@@ -63,15 +63,21 @@ def compare_table_pair(old_table, new_table) -> list[VersionChange]:
     if added_columns:
         changes.append(
             VersionChange(
-                change_type="added", section=f"表格: {section}", location="表格结构",
-                new_text=f"新增列: {', '.join(added_columns)}", summary=f"表格新增 {len(added_columns)} 列",
+                change_type="added",
+                section=f"表格: {section}",
+                location="表格结构",
+                new_text=f"新增列: {', '.join(added_columns)}",
+                summary=f"表格新增 {len(added_columns)} 列",
             )
         )
     if removed_columns:
         changes.append(
             VersionChange(
-                change_type="removed", section=f"表格: {section}", location="表格结构",
-                old_text=f"删除列: {', '.join(removed_columns)}", summary=f"表格删除 {len(removed_columns)} 列",
+                change_type="removed",
+                section=f"表格: {section}",
+                location="表格结构",
+                old_text=f"删除列: {', '.join(removed_columns)}",
+                summary=f"表格删除 {len(removed_columns)} 列",
             )
         )
 
@@ -82,11 +88,16 @@ def compare_table_pair(old_table, new_table) -> list[VersionChange]:
             continue
         old_row, new_row = old_rows.get(key), new_rows.get(key)
         if old_row and new_row:
-            old_text, new_text = _aligned_row_text(old_row, column_map, True), _aligned_row_text(new_row, column_map, False)
+            old_text, new_text = (
+                _aligned_row_text(old_row, column_map, True),
+                _aligned_row_text(new_row, column_map, False),
+            )
             if old_text != new_text:
                 changes.append(
                     VersionChange(
-                        change_type="modified", section=f"表格: {section}", location=f"行: {key}",
+                        change_type="modified",
+                        section=f"表格: {section}",
+                        location=f"行: {key}",
                         old_text=" | ".join(map(_display_cell, old_row)),
                         new_text=" | ".join(map(_display_cell, new_row)),
                         similarity=SequenceMatcher(None, old_text, new_text).ratio(),
@@ -95,14 +106,18 @@ def compare_table_pair(old_table, new_table) -> list[VersionChange]:
         elif old_row:
             changes.append(
                 VersionChange(
-                    change_type="removed", section=f"表格: {section}", location=f"行: {key}",
+                    change_type="removed",
+                    section=f"表格: {section}",
+                    location=f"行: {key}",
                     old_text=" | ".join(map(_display_cell, old_row)),
                 )
             )
         elif new_row:
             changes.append(
                 VersionChange(
-                    change_type="added", section=f"表格: {section}", location=f"行: {key}",
+                    change_type="added",
+                    section=f"表格: {section}",
+                    location=f"行: {key}",
                     new_text=" | ".join(map(_display_cell, new_row)),
                 )
             )
@@ -121,13 +136,25 @@ def compare_tables(old_tables: list, new_tables: list) -> list[VersionChange]:
             if score >= 0.5 and score > best_score:
                 best_index, best_score = new_index, score
         if best_index >= 0:
-            pairs.append((old_index, best_index)); paired_old.add(old_index); paired_new.add(best_index)
+            pairs.append((old_index, best_index))
+            paired_old.add(old_index)
+            paired_new.add(best_index)
     for old_index, old_table in enumerate(old_tables):
         if old_index in paired_old or len(old_table.rows or []) < 5:
             continue
         for new_index, new_table in enumerate(new_tables):
             if new_index in paired_new or len(new_table.rows or []) < 5:
                 continue
-            if len(old_table.rows[0]) == len(new_table.rows[0]) and min(len(old_table.rows), len(new_table.rows)) / max(len(old_table.rows), len(new_table.rows)) >= 0.7:
-                pairs.append((old_index, new_index)); paired_old.add(old_index); paired_new.add(new_index); break
-    return [change for old_index, new_index in pairs for change in compare_table_pair(old_tables[old_index], new_tables[new_index])]
+            if (
+                len(old_table.rows[0]) == len(new_table.rows[0])
+                and min(len(old_table.rows), len(new_table.rows)) / max(len(old_table.rows), len(new_table.rows)) >= 0.7
+            ):
+                pairs.append((old_index, new_index))
+                paired_old.add(old_index)
+                paired_new.add(new_index)
+                break
+    return [
+        change
+        for old_index, new_index in pairs
+        for change in compare_table_pair(old_tables[old_index], new_tables[new_index])
+    ]

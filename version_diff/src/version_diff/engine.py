@@ -20,155 +20,44 @@ import math
 import os
 import re
 import time
-import unicodedata
 from collections.abc import Callable
 from contextlib import suppress
-from difflib import SequenceMatcher
 
 import numpy as np
 from loguru import logger as log
-
-# ======================================================================
-# 通用「版本管理噪声」模式：文档版本迭代中常见的非内容变化
-# 适用于：修订日期戳、版本号标记、受控状态、页码跟踪表行等
-# ======================================================================
-
-# 修订日期戳："修订日期：2026-05-08" / "修订日期:2026年5月8日" 等
-_REVISION_DATE_PATTERNS = [
-    re.compile(r"修订日期[：:]\s*\d{4}[-年./]\s*\d{1,2}[-月./]\s*\d{1,2}[日]?"),
-    re.compile(r"修订日期[：:]\s*\d{4}[-年./]\s*\d{1,2}[-月./]\s*\d{1,2}"),
-]
-
-# 版本号文件号："R5-22"、"BK-J-62"、"版次：xxx"
-_VERSION_STAMP_RE = re.compile(r"(?:R\d+-\d{2,}|BK-J-\d+|版次[：:]\s*\S+)")
-
-# 纯日期（无上下文）：行首或行尾的 YYYY-MM-DD
-_STANDALONE_DATE_RE = re.compile(r"(?:^\s*|\b)\d{4}[-./]\s*\d{1,2}[-./]\s*\d{1,2}\s*(?:$|\b)")
-
-# 页码跟踪表行特征："22 R 2026-05-08" 或 "R5-21 | 2026.04.14 | 2026.03.31 | 生效"
-_TABLE_ROW_RE = re.compile(
-    r"^(?:\d{1,4}\s+)?(?:R\d{2,3}|N|A|D)\s+\d{4}[-./]\d{1,2}[-./]\d{1,2}"  # "22 R 2026-05-08"
-    r"|(?:R\d+-\d+\s*\|\s*\d{4}[-./]\d{1,2}[-./]\d{1,2}(?:\s*\|\s*\d{4}[-./]\d{1,2}[-./]\d{1,2})*\s*\|\s*(?:生效|无效|页))"
-    r"|(?:\d{1,4}\s*\|\s*\d{1,3}\s*\|\s*[NRAD]\s*\|\s*\d{4}[-./]\d{1,2}[-./]\d{1,2})",  # "0.4-1 | 21 | R | 2026-03-31"
-    re.MULTILINE,
-)
-
-# 页码跟踪表名称（location 包含这些即归类为跟踪表）
-_TRACKING_TABLE_HINTS = re.compile(r"有效页清单|修订记录表|发放清单|修改记录")
-
-
-def _strip_revision_noise(text: str) -> str:
-    """移除文档版本管理常见噪音，用于「实质内容相同」的判定
-
-    通用模式：修订日期戳、版本号文件号、独立日期、跟踪表行标记
-    """
-    if not text:
-        return ""
-    result = text
-    # 移除修订日期戳
-    for pat in _REVISION_DATE_PATTERNS:
-        result = pat.sub("", result)
-    # 移除独立日期
-    result = _STANDALONE_DATE_RE.sub("", result)
-    # 移除版本号文件号
-    result = _VERSION_STAMP_RE.sub("", result)
-    # 压缩空白
-    result = re.sub(r"\s+", " ", result).strip()
-    return result
-
-
-def _strip_configured_noise(text: str, patterns) -> str:
-    """按配置的元数据噪声正则剥离文本（通用、可配置）
-
-    用于判定 added/removed 段落是否「纯元数据」（如仅含修订日期戳/版本号/页码跟踪行）
-    """
-    if not text:
-        return ""
-    result = text
-    for pat in patterns:
-        try:
-            if isinstance(pat, str):
-                pat = re.compile(pat)
-            result = pat.sub("", result)
-        except Exception:
-            continue
-    return re.sub(r"\s+", " ", result).strip()
-
-
-def _is_tracking_table_row(change) -> bool:
-    """判断是否为页码跟踪表/修订记录表中的一行（版本号+日期行，非实质内容）
-
-    兼容 VersionChange 实例和 plain dict。
-    """
-    if isinstance(change, dict):
-        loc = change.get("location", "") or ""
-        new_t = change.get("new_text", "") or ""
-        old_t = change.get("old_text", "") or ""
-    else:
-        loc = getattr(change, "location", "") or ""
-        new_t = getattr(change, "new_text", "") or ""
-        old_t = getattr(change, "old_text", "") or ""
-    # location 直接命中常见表名
-    if loc and _TRACKING_TABLE_HINTS.search(loc):
-        return True
-    # 两侧文本本身符合跟踪表行格式
-    text_to_check = new_t or old_t
-    return bool(text_to_check and _TABLE_ROW_RE.search(text_to_check))
-
-
-def _normalize_text(text: str) -> str:
-    """文本归一化：NFKC 标准化 + 去除零宽字符 + 统一空白 + 全角字母数字转半角
-
-    用于 cross-doc 预过滤，消除 PDF 解析引入的不可见差异，
-    把"肉眼相同但字节不同"的段落对排除在 LLM 判断之外。
-    """
-    if not text:
-        return ""
-    # NFKC 归一化（全角字母数字 → 半角，兼容分解形态）
-    t = unicodedata.normalize("NFKC", text)
-    # 去除零宽字符（BOM、零宽空格、零宽连字、零宽非断字、软连字符等）
-    t = re.sub(r"[\u200b\u200c\u200d\ufeff\u00ad\u2060\ufe0f\ufe0e]", "", t)
-    # 全角英文标点 → 半角（NFKC 已处理大部分，以下个别符号仍需映射）
-    t = t.translate(_FULLWIDTH_TRANS)
-    # 空白统一：多种不间断空格、全角空格 → 单个普通空格
-    t = re.split(r"[\s\u00a0\u2000-\u200a\u202f\u205f\u3000]+", t)
-    return " ".join(filter(None, t))
-
-
-def _classify_change(category: str, change):
-    """给 VersionChange 打 category 标签（兼容 dataclass 实例和 plain dict）"""
-    if isinstance(change, dict):
-        change["category"] = category
-    else:
-        change.category = category
-    return change
-
-
-# 全角标点 → 半角映射（模块级常量，避免每次调用重建）
-_FULLWIDTH_TRANS = str.maketrans(
-    {
-        "\uff08": "(",
-        "\uff09": ")",
-        "\uff1a": ":",
-        "\uff1b": ";",
-        "\u300a": "<",
-        "\u300b": ">",
-        "\u3001": ",",  # 顿号 → 半角逗号
-        "\u201c": '"',
-        "\u201d": '"',
-        "\u2018": "'",
-        "\u2019": "'",
-    }
-)
 
 from version_diff.config import Config
 from version_diff.judge import filter_diffs
 from version_diff.llm_util import call_llm_json
 from version_diff.matcher import compute_diff
 from version_diff.models import DiffResult, Inconsistency, VersionChange, VersionDiffResult
-from version_diff.normalization import normalize_text
+from version_diff.normalization import (
+    is_tracking_table_row as _is_tracking_table_row,
+)
+from version_diff.normalization import (
+    normalize_text,
+)
+from version_diff.normalization import (
+    strip_configured_noise as _strip_configured_noise,
+)
+from version_diff.normalization import (
+    strip_revision_noise as _strip_revision_noise,
+)
 from version_diff.table_diff import compare_tables
 from version_diff.vectorstore import VectorStore
+
+# 兼容已有的私有调用入口。
+_normalize_text = normalize_text
+
+
+def _classify_change(category: str, change):
+    """为 dataclass 或 dict 形式的变更写入分类标签。"""
+    if isinstance(change, dict):
+        change["category"] = category
+    else:
+        change.category = category
+    return change
+
 
 # 版本过滤 prompt（随包发布，外部文件优先）
 _VERSION_FILTER_PROMPT_FILE = os.path.join(os.path.dirname(__file__), "prompts", "version_filter.txt")
@@ -186,164 +75,6 @@ def _load_version_filter_prompt() -> str:
     except Exception as e:
         log.warning(f"加载版本过滤 prompt 失败，使用兜底: {e}")
         return fallback
-
-
-# ============================================================
-# 表格对比辅助函数（模块级，供 DiffEngine._compare_tables 调用）
-# ============================================================
-
-
-def _normalize_cell(text: str) -> str:
-    """标准化单元格文本：去换行、压缩空格"""
-    return re.sub(r"\s+", "", str(text).strip())
-
-
-def _normalize_display_cell(text: str) -> str:
-    """显示用标准化：去换行、压缩连续空格为单个"""
-    return re.sub(r"\s+", " ", str(text).strip())
-
-
-def _table_header_text(table) -> str:
-    """提取表格表头文本用于配对（标准化后）"""
-    if table.rows:
-        return " ".join(_normalize_cell(cell) for cell in table.rows[0])
-    return ""
-
-
-def _row_key(row, col_idx: int) -> str:
-    """行对齐关键字（按指定对齐列）"""
-    return _normalize_cell(row[col_idx]) if len(row) > col_idx else ""
-
-
-def _aligned_row_text(row, col_map: dict, is_old: bool) -> str:
-    """只提取对齐列的内容（忽略新增/删除列的噪音）"""
-    ordered = sorted(col_map.keys())
-    if is_old:
-        return " | ".join(_normalize_cell(row[oi]) for oi in ordered if oi < len(row))
-    return " | ".join(_normalize_cell(row[col_map[oi]]) for oi in ordered if col_map[oi] < len(row))
-
-
-def _compare_table_pair(old_t, new_t) -> list[VersionChange]:
-    """
-    对一对已配对表格做列对齐 + 行对齐 + 单元格 diff。
-
-    返回 VersionChange 列表（可能为空）。行为与旧实现完全一致。
-    """
-    changes: list[VersionChange] = []
-    section = old_t.chapter_title or old_t.location
-
-    if not old_t.rows or not new_t.rows:
-        return changes
-
-    old_header = [str(c).strip() for c in old_t.rows[0]]
-    new_header = [str(c).strip() for c in new_t.rows[0]]
-
-    # 列对齐：按列名模糊匹配
-    col_map: dict = {}
-    used_new_cols = set()
-
-    # 检测新表头是否被截断（PDF 跨页导致表头丢失）
-    new_header_valid = sum(1 for h in new_header if _normalize_cell(h)) >= len(new_header) * 0.5
-
-    if new_header_valid and len(old_header) > 0:
-        for oi, oh in enumerate(old_header):
-            best_ci = -1
-            best_cs = 0.0
-            for ni, nh in enumerate(new_header):
-                if ni in used_new_cols:
-                    continue
-                cs = SequenceMatcher(None, _normalize_cell(oh), _normalize_cell(nh)).ratio()
-                if cs > best_cs and cs >= 0.5:
-                    best_cs = cs
-                    best_ci = ni
-            if best_ci >= 0:
-                col_map[oi] = best_ci
-                used_new_cols.add(best_ci)
-    else:
-        # 新表头被截断：假设列结构相同，1:1 映射
-        for ci in range(min(len(old_header), len(new_header))):
-            col_map[ci] = ci
-            used_new_cols.add(ci)
-
-    # 报告新增/删除的列
-    added_cols = [new_header[ni] for ni in range(len(new_header)) if ni not in used_new_cols]
-    removed_cols = [old_header[oi] for oi in range(len(old_header)) if oi not in col_map]
-    if added_cols:
-        changes.append(
-            VersionChange(
-                change_type="added",
-                section=f"表格: {section}",
-                location="表格结构",
-                old_text="",
-                new_text=f"新增列: {', '.join(added_cols)}",
-                summary=f"表格新增 {len(added_cols)} 列",
-            )
-        )
-    if removed_cols:
-        changes.append(
-            VersionChange(
-                change_type="removed",
-                section=f"表格: {section}",
-                location="表格结构",
-                old_text=f"删除列: {', '.join(removed_cols)}",
-                new_text="",
-                summary=f"表格删除 {len(removed_cols)} 列",
-            )
-        )
-
-    # 行对齐：按首列（对齐后）关键字配对
-    first_old_col = 0
-    first_new_col = col_map.get(0, 0)
-
-    old_rows = {_row_key(r, first_old_col): r for r in old_t.rows[1:]}
-    new_rows = {_row_key(r, first_new_col): r for r in new_t.rows[1:]}
-    all_keys = list(dict.fromkeys(list(old_rows.keys()) + list(new_rows.keys())))
-
-    for key in all_keys:
-        if not key:
-            continue
-        old_r = old_rows.get(key)
-        new_r = new_rows.get(key)
-
-        if old_r and new_r:
-            old_txt = _aligned_row_text(old_r, col_map, is_old=True)
-            new_txt = _aligned_row_text(new_r, col_map, is_old=False)
-            if old_txt != new_txt:
-                changes.append(
-                    VersionChange(
-                        change_type="modified",
-                        section=f"表格: {section}",
-                        location=f"行: {key}",
-                        old_text=" | ".join(_normalize_display_cell(c) for c in old_r),
-                        new_text=" | ".join(_normalize_display_cell(c) for c in new_r),
-                        summary="",
-                        similarity=SequenceMatcher(None, old_txt, new_txt).ratio(),
-                    )
-                )
-        elif old_r and not new_r:
-            changes.append(
-                VersionChange(
-                    change_type="removed",
-                    section=f"表格: {section}",
-                    location=f"行: {key}",
-                    old_text=" | ".join(_normalize_display_cell(c) for c in old_r),
-                    new_text="",
-                    summary="",
-                )
-            )
-        elif new_r and not old_r:
-            changes.append(
-                VersionChange(
-                    change_type="added",
-                    section=f"表格: {section}",
-                    location=f"行: {key}",
-                    old_text="",
-                    new_text=" | ".join(_normalize_display_cell(c) for c in new_r),
-                    summary="",
-                )
-            )
-
-    return changes
 
 
 class DiffEngine:
@@ -808,7 +539,7 @@ class DiffEngine:
         4. 只比较对齐列的内容，新增/删除列单独报告
 
         支持：列增减、行增减、单元格内容修改
-        列对齐 / 行对齐 / 单元格 diff 的实现见模块级 _compare_table_pair。
+        具体配对和行级比较由 ``version_diff.table_diff`` 负责；引擎仅编排流程。
         """
         return compare_tables(old_tables, new_tables)
 

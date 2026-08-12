@@ -1,30 +1,17 @@
 """
 网络请求重试工具
 
-对 429（限流）和 5xx（服务端错误）自动重试，指数退避。
+对 429（限流）、5xx（服务端错误）和网络错误自动重试，指数退避。
 401/403 等认证错误不重试，直接抛出。
+
+重试判定依赖异常属性（由 backends/base.py 设置），不再解析 message 字符串：
+  - ``status_code``：HTTP 状态码（429 或 5xx 可重试）
+  - ``is_network_error``：网络错误（可重试）
 """
 
-import re
 import time
 
 from loguru import logger as log
-
-# 从异常信息中提取 HTTP 状态码，例如 "服务端错误 (503): ..." 或 "HTTP 503: ..."
-_STATUS_RE = re.compile(r"\((\d{3})\)|\b(\d{3})\b")
-
-
-def _extract_status_code(msg: str) -> int | None:
-    """从 RuntimeError 信息中提取 HTTP 状态码（若有）"""
-    m = _STATUS_RE.search(msg)
-    if not m:
-        return None
-    code = int(m.group(1) or m.group(2))
-    # 仅当数字落在合法 HTTP 状态码区间时才认作状态码，
-    # 避免把正文里出现的 3 位数误判为状态码
-    if 100 <= code <= 599:
-        return code
-    return None
 
 
 def retry_http(fn, max_retries: int = 3, backoff: float = 2.0):
@@ -48,16 +35,13 @@ def retry_http(fn, max_retries: int = 3, backoff: float = 2.0):
             return fn()
         except RuntimeError as e:
             last_err = e
-            msg = str(e)
-            # 429（限流）或 5xx（服务端错误）才重试；
-            # 从异常信息提取真实状态码，避免把正文里的 "500" 等数字误判为重试条件
-            status = _extract_status_code(msg)
-            should_retry = status == 429 or (status is not None and 500 <= status < 600)
-            if not should_retry and "网络请求失败" in msg:
-                should_retry = True
+            status = getattr(e, "status_code", None)
+            is_net = getattr(e, "is_network_error", False)
+            # 429（限流）/ 5xx（服务端错误）/ 网络错误才重试
+            should_retry = is_net or status == 429 or (status is not None and 500 <= status < 600)
             if not should_retry or attempt == max_retries:
                 raise
-            wait = backoff**attempt
-            log.warning(f"请求失败 (attempt {attempt + 1}/{max_retries + 1}), {wait:.1f}s 后重试: {msg[:100]}")
+            wait = backoff ** attempt
+            log.warning(f"请求失败 (attempt {attempt + 1}/{max_retries + 1}), {wait:.1f}s 后重试: {str(e)[:100]}")
             time.sleep(wait)
     raise last_err

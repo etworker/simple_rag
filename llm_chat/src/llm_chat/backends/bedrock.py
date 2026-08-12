@@ -39,12 +39,9 @@ class BedrockBackend(BaseHTTPBackend):
     ):
         self.model = model or BEDROCK_DEFAULTS.get("model", "zai.glm-4.7-flash")
         self.region = region or BEDROCK_DEFAULTS["region"]
-        self.api_key_env = api_key_env or BEDROCK_DEFAULTS["api_key_env"]
-        self.api_key = api_key
-        self.max_tokens = max_tokens or BEDROCK_DEFAULTS["max_tokens"]
-        self.timeout = timeout or BEDROCK_DEFAULTS["timeout"]
-        self.max_retries = max_retries or BEDROCK_DEFAULTS.get("max_retries", 3)
-        self.retry_backoff = retry_backoff or BEDROCK_DEFAULTS.get("retry_backoff", 2.0)
+        self._init_common(
+            BEDROCK_DEFAULTS, api_key_env, api_key, max_tokens, timeout, max_retries, retry_backoff
+        )
 
     def chat(self, messages: list[dict], system_prompt: str = "") -> str:
         """

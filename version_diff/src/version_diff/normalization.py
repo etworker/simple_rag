@@ -5,7 +5,6 @@ from __future__ import annotations
 import re
 import unicodedata
 
-
 _REVISION_DATE_PATTERNS = (
     re.compile(r"修订日期[：:]\s*\d{4}[-年./]\s*\d{1,2}[-月./]\s*\d{1,2}[日]?"),
     re.compile(r"修订日期[：:]\s*\d{4}[-年./]\s*\d{1,2}[-月./]\s*\d{1,2}"),
@@ -21,8 +20,17 @@ _TABLE_ROW_RE = re.compile(
 _TRACKING_TABLE_HINTS = re.compile(r"有效页清单|修订记录表|发放清单|修改记录")
 _FULLWIDTH_TRANS = str.maketrans(
     {
-        "（": "(", "）": ")", "：": ":", "；": ";", "《": "<", "》": ">", "、": ",",
-        "“": '"', "”": '"', "‘": "'", "’": "'",
+        "（": "(",
+        "）": ")",
+        "：": ":",
+        "；": ";",
+        "《": "<",
+        "》": ">",
+        "、": ",",
+        "“": '"',
+        "”": '"',
+        "‘": "'",
+        "’": "'",
     }
 )
 
