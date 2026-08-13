@@ -69,3 +69,7 @@ version_diff/src/_mock_vc/
 # ===== OS =====
 .DS_Store
 Thumbs.db
+
+# ==== blog ====
+
+blog/
