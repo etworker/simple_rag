@@ -129,10 +129,18 @@ def main(existing_paths, new_path, model, do_summary):
     print(f"候选对数: {result.total_candidates}")
     print(f"规则过滤: {result.rule_filtered}")
     print(f"LLM 判断: {result.llm_judged}")
-    print(f"不一致总数: {len(result.inconsistencies)}")
+    print(f"不一致总数: {len(result.inconsistencies)}", end="")
+    if result.dedup_count:
+        print(f"（已合并 {result.dedup_count} 处重复）", end="")
+    print()
+    if result.suspects:
+        print(f"疑似不一致: {len(result.suspects)} 处（需人工复核）")
 
     if result.is_safe:
-        print("\n✅ 未发现与已有文档的矛盾，可安全入库。")
+        if result.suspects:
+            print("\n✅ 未发现确定性矛盾，但有疑似不一致需人工复核。")
+        else:
+            print("\n✅ 未发现与已有文档的矛盾，可安全入库。")
     else:
         print(f"\n⚠️ 发现 {len(result.inconsistencies)} 处文档间不一致：\n")
         for i, inc in enumerate(result.inconsistencies[:10], 1):
@@ -142,6 +150,12 @@ def main(existing_paths, new_path, model, do_summary):
             print()
         if len(result.inconsistencies) > 10:
             print(f"  ...（仅展示前 10 处，共 {len(result.inconsistencies)} 处）")
+        if result.suspects:
+            print(f"\n  ⚠️ 疑似不一致（{len(result.suspects)} 处）：")
+            for i, inc in enumerate(result.suspects[:5], 1):
+                print(f"    [{i}] {inc.point}: {inc.doc_a_says[:50]} ↔ {inc.doc_b_says[:50]}")
+            if len(result.suspects) > 5:
+                print(f"    ...（仅展示前 5 处，共 {len(result.suspects)} 处）")
 
     # Step 3: LLM 归纳
     summary = ""
@@ -176,7 +190,12 @@ def main(existing_paths, new_path, model, do_summary):
         f.write(
             f"候选对数: {result.total_candidates}  规则过滤: {result.rule_filtered}  LLM判断: {result.llm_judged}\n"
         )
-        f.write(f"不一致总数: {len(result.inconsistencies)}\n")
+        f.write(f"不一致总数: {len(result.inconsistencies)}")
+        if result.dedup_count:
+            f.write(f"（已合并 {result.dedup_count} 处重复）")
+        f.write("\n")
+        if result.suspects:
+            f.write(f"疑似不一致: {len(result.suspects)} 处\n")
         f.write(f"pre_review 耗时: {elapsed:.1f}s\n\n")
         if result.inconsistencies:
             f.write("【不一致详情】\n")

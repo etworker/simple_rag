@@ -48,9 +48,11 @@ class DiffResult:
     """预审核结果"""
 
     inconsistencies: list[Inconsistency] = field(default_factory=list)
+    suspects: list[Inconsistency] = field(default_factory=list)  # 疑似不一致（confidence=low）
     total_candidates: int = 0  # 跨文档候选对数
     rule_filtered: int = 0  # 规则预过滤数
     llm_judged: int = 0  # LLM 判断数
+    dedup_count: int = 0  # 去重合并的数量
 
     @property
     def is_safe(self) -> bool:
@@ -60,9 +62,14 @@ class DiffResult:
     def report(self) -> str:
         """生成 Markdown 报告"""
         if self.is_safe:
+            if self.suspects:
+                return f"## ✅ 预审核通过\n\n未发现确定性矛盾，但有 {len(self.suspects)} 处疑似不一致需人工复核。"
             return "## ✅ 预审核通过\n\n未发现与已有文档的矛盾。"
 
-        lines = [f"## ⚠️ 发现 {len(self.inconsistencies)} 处文档间不一致\n"]
+        lines = [f"## ⚠️ 发现 {len(self.inconsistencies)} 处文档间不一致"]
+        if self.dedup_count:
+            lines.append(f"（已自动合并 {self.dedup_count} 处重复）")
+        lines.append("")
         for i, inc in enumerate(self.inconsistencies, 1):
             lines.append(f"### 不一致 #{i}: {inc.point}\n")
             lines.append("| | 描述 |")
@@ -70,6 +77,10 @@ class DiffResult:
             lines.append(f"| **{inc.doc_a_file}** {inc.doc_a_location} | {inc.doc_a_says} |")
             lines.append(f"| **{inc.doc_b_file}** {inc.doc_b_location} | {inc.doc_b_says} |")
             lines.append("")
+        if self.suspects:
+            lines.append(f"---\n\n### ⚠️ 疑似不一致（{len(self.suspects)} 处，需人工复核）\n")
+            for i, inc in enumerate(self.suspects, 1):
+                lines.append(f"{i}. **{inc.point}**: {inc.doc_a_says} ↔ {inc.doc_b_says}")
         return "\n".join(lines)
 
     def to_dict(self) -> dict:
@@ -77,6 +88,8 @@ class DiffResult:
         return {
             "is_safe": self.is_safe,
             "inconsistency_count": len(self.inconsistencies),
+            "suspect_count": len(self.suspects),
+            "dedup_count": self.dedup_count,
             "inconsistencies": [
                 {
                     "point": inc.point,
@@ -98,5 +111,6 @@ class DiffResult:
                 "total_candidates": self.total_candidates,
                 "rule_filtered": self.rule_filtered,
                 "llm_judged": self.llm_judged,
+                "dedup_count": self.dedup_count,
             },
         }

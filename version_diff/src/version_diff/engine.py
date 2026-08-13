@@ -259,31 +259,105 @@ class DiffEngine:
             judge_config=self.config.judge,
             on_batch=_on_batch_callback,
         )
-        log.info(f"判断完成: {len(judge_result.inconsistent_items)} 处矛盾（跨文档） ({time.time() - t4:.1f}s)")
+        log.info(
+            f"判断完成: {len(judge_result.inconsistent_items)} 处矛盾"
+            f" (+{len(judge_result.suspect_items)} 疑似)（跨文档） ({time.time() - t4:.1f}s)"
+        )
 
-        # Step 6: 封装结果
+        # Step 6: 封装结果（含去重）
         self._notify(on_progress, "done", 1.0, "完成")
 
+        inconsistencies = [
+            Inconsistency(
+                point=item.llm_point or item.description or "内容差异",
+                doc_a_file=item.para_a.source_file,
+                doc_a_location=item.para_a.location,
+                doc_a_says=item.llm_doc_a_says or item.description or "",
+                doc_b_file=item.para_b.source_file,
+                doc_b_location=item.para_b.location,
+                doc_b_says=item.llm_doc_b_says or item.description or "",
+                similarity=item.similarity,
+            )
+            for item in judge_result.inconsistent_items
+        ]
+        suspects = [
+            Inconsistency(
+                point=item.llm_point or item.description or "疑似差异",
+                doc_a_file=item.para_a.source_file,
+                doc_a_location=item.para_a.location,
+                doc_a_says=item.llm_doc_a_says or item.description or "",
+                doc_b_file=item.para_b.source_file,
+                doc_b_location=item.para_b.location,
+                doc_b_says=item.llm_doc_b_says or item.description or "",
+                similarity=item.similarity,
+            )
+            for item in judge_result.suspect_items
+        ]
+
+        # 去重：合并语义高度相似的矛盾项
+        inconsistencies, dedup_count = self._dedup_inconsistencies(inconsistencies)
+        if dedup_count:
+            log.info(f"  去重: 合并 {dedup_count} 处重复，保留 {len(inconsistencies)} 处")
+
         result = DiffResult(
-            inconsistencies=[
-                Inconsistency(
-                    point=item.llm_point or item.description or "内容差异",
-                    doc_a_file=item.para_a.source_file,
-                    doc_a_location=item.para_a.location,
-                    doc_a_says=item.llm_doc_a_says or item.description or "",
-                    doc_b_file=item.para_b.source_file,
-                    doc_b_location=item.para_b.location,
-                    doc_b_says=item.llm_doc_b_says or item.description or "",
-                    similarity=item.similarity,
-                )
-                for item in judge_result.inconsistent_items
-            ],
+            inconsistencies=inconsistencies,
+            suspects=suspects,
             total_candidates=len(candidates),
             rule_filtered=judge_result.rule_filtered,
             llm_judged=judge_result.llm_judged,
+            dedup_count=dedup_count,
         )
 
         return result
+
+    def _dedup_inconsistencies(
+        self, inconsistencies: list[Inconsistency], threshold: float = 0.85
+    ) -> tuple[list[Inconsistency], int]:
+        """
+        对不一致列表进行语义去重。
+
+        当新文档的一个段落与已有库中多个相似段落配对时，会产生相同矛盾的重复副本。
+        本方法将 point + doc_a_says + doc_b_says 的 embedding 余弦相似度超过阈值者合并。
+
+        Args:
+            inconsistencies: 原始不一致列表
+            threshold: 合并阈值（余弦相似度），默认 0.85
+
+        Returns:
+            (去重后的列表, 合并掉的数量)
+        """
+        if len(inconsistencies) < 2:
+            return inconsistencies, 0
+
+        import numpy as np
+
+        # 构造每条不一致的文本表示
+        texts = []
+        for inc in inconsistencies:
+            text = f"{inc.point} | {inc.doc_a_says} | {inc.doc_b_says}"
+            texts.append(text)
+
+        # 用已有 embedding 模型计算向量
+        model = self._get_model()
+        embeddings = model.encode(texts, normalize_embeddings=True)
+        embeddings = np.array(embeddings, dtype=np.float32)
+
+        # 贪心聚类：按相似度合并
+        kept_indices = []
+        merged = set()
+        for i in range(len(inconsistencies)):
+            if i in merged:
+                continue
+            kept_indices.append(i)
+            for j in range(i + 1, len(inconsistencies)):
+                if j in merged:
+                    continue
+                sim = float(np.dot(embeddings[i], embeddings[j]))
+                if sim >= threshold:
+                    merged.add(j)
+
+        deduped = [inconsistencies[i] for i in kept_indices]
+        return deduped, len(merged)
 
     def _retrieve_candidates(self, new_doc, new_emb, threshold: float, top_k: int) -> list:
         """

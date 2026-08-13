@@ -31,6 +31,7 @@ class JudgeResult:
     """LLM 判断结果"""
 
     inconsistent_items: list = field(default_factory=list)  # 确认为不一致的 TextDiffItem
+    suspect_items: list = field(default_factory=list)  # 疑似不一致（confidence=low）
     rule_filtered: int = 0  # 规则预过滤排除的数量
     llm_judged: int = 0  # 实际送 LLM 判断的数量
 
@@ -257,10 +258,11 @@ def _run_batches_concurrent(batches, llm_config, prompt_template, num_batches, c
 
 
 def _process_batch_results(batch, results):
-    """处理单个批次的 LLM 结果，返回新确认的不一致项列表"""
+    """处理单个批次的 LLM 结果，返回 (确认不一致项, 疑似不一致项)"""
     new_items = []
+    suspect_items = []
     if not results:
-        return new_items
+        return new_items, suspect_items
     for r in results:
         if not isinstance(r, dict):
             log.warning(f"    ↪ 跳过非结构化 judge 输出项: {r!r}")
@@ -275,6 +277,7 @@ def _process_batch_results(batch, results):
             point = r.get("point", "")
             doc_a_says = r.get("doc_a_says", "")
             doc_b_says = r.get("doc_b_says", "")
+            confidence = r.get("confidence", "high")
             item.llm_point = point
             item.llm_doc_a_says = doc_a_says
             item.llm_doc_b_says = doc_b_says
@@ -285,10 +288,15 @@ def _process_batch_results(batch, results):
             else:
                 item.llm_reason = _generate_specific_summary(item)
                 item.llm_point = item.llm_reason
-            item.__dict__["category"] = "inconsistency"
-            item.__dict__["category_label"] = "文档间不一致"
-            new_items.append(item)
-    return new_items
+            if confidence == "low":
+                item.__dict__["category"] = "suspect"
+                item.__dict__["category_label"] = "疑似不一致"
+                suspect_items.append(item)
+            else:
+                item.__dict__["category"] = "inconsistency"
+                item.__dict__["category_label"] = "文档间不一致"
+                new_items.append(item)
+    return new_items, suspect_items
 
 
 def filter_diffs(diff_items, llm_config: dict | None = None, judge_config: dict | None = None, on_batch=None):
@@ -352,27 +360,37 @@ def filter_diffs(diff_items, llm_config: dict | None = None, judge_config: dict 
 
         # 有回调 → 逐批串行处理（保证顺序 + 每批完成后回调）
         # 无回调且并发 > 1 → 并发执行（旧行为）
+        suspect_items = []
+
         if on_batch is not None:
             for batch_idx, batch in enumerate(batches):
                 log.info(f"    batch {batch_idx + 1}/{num_batches} ({len(batch)} pairs)...")
                 batch_results = _judge_batch(batch, llm_config, prompt_template)
-                new_items = _process_batch_results(batch, results=batch_results)
+                new_items, new_suspects = _process_batch_results(batch, results=batch_results)
                 inconsistent_items.extend(new_items)
+                suspect_items.extend(new_suspects)
                 log.info(
                     f"    batch {batch_idx + 1}/{num_batches} 完成 "
-                    f"(+{len(new_items)} 矛盾, 累计 {len(inconsistent_items)})"
+                    f"(+{len(new_items)} 矛盾, +{len(new_suspects)} 疑似, "
+                    f"累计 {len(inconsistent_items)})"
                 )
                 on_batch(batch_idx, num_batches, new_items)
         elif concurrency > 1:
             batch_results = _run_batches_concurrent(batches, llm_config, prompt_template, num_batches, concurrency)
             for _, batch, results in batch_results:
-                inconsistent_items.extend(_process_batch_results(batch, results))
+                new_items, new_suspects = _process_batch_results(batch, results)
+                inconsistent_items.extend(new_items)
+                suspect_items.extend(new_suspects)
         else:
             batch_results = _run_batches_sequential(batches, llm_config, prompt_template, num_batches)
             for _, batch, results in batch_results:
-                inconsistent_items.extend(_process_batch_results(batch, results))
+                new_items, new_suspects = _process_batch_results(batch, results)
+                inconsistent_items.extend(new_items)
+                suspect_items.extend(new_suspects)
 
-    log.info(f"  ✅ 确认不一致: {len(inconsistent_items)} 处")
+    log.info(
+        f"  ✅ 确认不一致: {len(inconsistent_items)} 处" + (f" (+{len(suspect_items)} 疑似)" if suspect_items else "")
+    )
     log.info(
         f"  📊 总计: {len(diff_items)} 候选 → 规则排除 {len(pre_classified)} "
         f"→ LLM判断 {len(uncertain)} → 确认矛盾 {len(inconsistent_items)}"
@@ -380,6 +398,7 @@ def filter_diffs(diff_items, llm_config: dict | None = None, judge_config: dict 
 
     return JudgeResult(
         inconsistent_items=inconsistent_items,
+        suspect_items=suspect_items,
         rule_filtered=len(pre_classified),
         llm_judged=len(uncertain),
     )
