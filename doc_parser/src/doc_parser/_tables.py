@@ -73,10 +73,11 @@ def _row_token_jaccard(row_a, row_b) -> float:
 def _should_merge_tables(a, b, header_threshold: float = 0.85) -> bool:
     """判断两张表格是否应为同一逻辑表格的跨页片段。
 
-    合并判定: 同文件 + 页码连续 + 列数兼容 (差异 ≤ 1) + 重复表头。
+    合并判定: 同文件 + 页码连续 + 列数兼容 (差异 ≤ 1)。
 
-    重复表头是识别"续表"的关键证据。仅按相邻页和列数合并会把两张
-    恰好列数相同的独立表格拼在一起；没有可靠续表证据时，宁可保留两表。
+    表头相似度不作为合并前置条件——续页可能不重复表头。
+    表头相似度仅在 ``_append_rows_skip_dup_header`` 阶段用于决定
+    是否跳过续页首行（若与表头高度相似则视为重复表头跳过）。
     """
     # 1. 同文件
     if a.source_file != b.source_file:
@@ -96,7 +97,9 @@ def _should_merge_tables(a, b, header_threshold: float = 0.85) -> bool:
     b_cols = len(b_rows[0]) if b_rows[0] else 0
     if abs(a_cols - b_cols) > 1:
         return False
-    return _row_token_jaccard(a_rows[0], b_rows[0]) >= header_threshold
+    # 表头相似度不作为合并条件；仅用于 _append 阶段跳过重复表头
+    _ = header_threshold  # 保留参数签名兼容外部调用
+    return True
 
 
 def _append_rows_skip_dup_header(target, source, header_threshold: float = 0.85) -> list:
