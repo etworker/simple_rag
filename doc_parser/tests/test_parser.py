@@ -189,7 +189,7 @@ class TestIsInTableRegion:
 
 class TestExtractDocument:
     def test_doc_format_raises(self):
-        with pytest.raises(ValueError, match="不支持的格式.*doc"):
+        with pytest.raises(ValueError, match=r"不支持的格式.*doc"):
             extract_document("test.doc")
 
     def test_unsupported_format(self):

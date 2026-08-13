@@ -129,8 +129,7 @@ def judge_differences(diff_pairs, model_id="zai.glm-4.7-flash"):
     results = []
     for pair in diff_pairs:
         response = client.converse(
-            modelId=model_id,
-            messages=[{"role": "user", "content": [{"text": prompt}]}]
+            modelId=model_id, messages=[{"role": "user", "content": [{"text": prompt}]}]
         )
         results.append(parse_classification(response))
     return results

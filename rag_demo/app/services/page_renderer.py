@@ -64,12 +64,9 @@ class PageRenderer:
 
     def get_page_count(self, pdf_path: str) -> int:
         """获取 PDF 总页数"""
-        import fitz
+        from app.services.utils import get_pdf_page_count
 
-        doc = fitz.open(pdf_path)
-        count = len(doc)
-        doc.close()
-        return count
+        return get_pdf_page_count(pdf_path)
 
     def _render_page(self, pdf_path: str, page: int, output_path: str, highlight: str = ""):
         """渲染单页为 PNG，可选高亮文字"""

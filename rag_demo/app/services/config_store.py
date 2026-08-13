@@ -156,33 +156,27 @@ class ConfigStore:
         """
         获取指定用途的 LLM 配置
 
+        复用 ``llm_chat.resolve_llm_profile`` 的查找逻辑（单一实现），
+        仅保留 ConfigStore 特有的"use_case 未配置时默认指向 default profile"
+        约定与 deepcopy 语义。
+
         Args:
             use_case: 用途标识 ("qa" | "pre_review" | "conflict_detection")
 
         Returns:
-            完整的 LLM 配置字典
-
-        Example:
-            config.get_llm_profile("qa")         → self_hosted_glm 的配置
-            config.get_llm_profile("pre_review") → bedrock_kimi_thinking 的配置
+            完整的 LLM 配置字典（深拷贝，调用方修改不影响内部配置）
 
         Raises:
-            KeyError: 如果 routing 指向的 profile 不存在
+            KeyError: 如果 llm_profiles 为空
         """
+        from llm_chat import resolve_llm_profile
+
         profiles = self._config.get("llm_profiles", {})
         routing = self._config.get("llm_routing", {})
-
-        profile_name = routing.get(use_case, "default")
-
-        if profile_name in profiles:
-            return deepcopy(profiles[profile_name])
-
-        # fallback: 第一个 profile
-        if profiles:
-            first_key = next(iter(profiles))
-            return deepcopy(profiles[first_key])
-
-        raise KeyError(f"未配置 LLM profile（llm_profiles 为空，use_case='{use_case}'）")
+        # ConfigStore 约定：routing 未配置的 use_case 默认指向 "default" profile
+        resolved = {use_case: routing.get(use_case, "default")}
+        cfg = resolve_llm_profile(profiles, resolved, use_case)
+        return deepcopy(cfg)
 
     def to_dict(self) -> dict:
         """导出完整配置"""

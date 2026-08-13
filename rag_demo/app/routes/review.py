@@ -14,7 +14,7 @@ from loguru import logger as log
 
 from app.routes import _state
 from app.services.review_runner import run_pre_review as _run_pre_review
-from app.services.utils import compute_sha256, compute_sha256_bytes
+from app.services.utils import compute_sha256, compute_sha256_bytes, get_pdf_page_count
 
 router = APIRouter()
 
@@ -326,13 +326,8 @@ async def get_review_info(task_id: str):
     filepath = task.get("filepath", "")
     if not filepath or not os.path.exists(filepath):
         return {"exists": False, "page_count": 0}
-    import pdfplumber
-
-    try:
-        with pdfplumber.open(filepath) as pdf:
-            return {"exists": True, "page_count": len(pdf.pages)}
-    except Exception:
-        return {"exists": False, "page_count": 0}
+    page_count = get_pdf_page_count(filepath)
+    return {"exists": page_count > 0, "page_count": page_count}
 
 
 @router.get("/review/old/info")
@@ -344,13 +339,8 @@ async def get_review_old_info(task_id: str):
     old_filepath = task.get("old_version_filepath", "")
     if not old_filepath or not os.path.exists(old_filepath):
         return {"exists": False, "page_count": 0}
-    import pdfplumber
-
-    try:
-        with pdfplumber.open(old_filepath) as pdf:
-            return {"exists": True, "page_count": len(pdf.pages)}
-    except Exception:
-        return {"exists": False, "page_count": 0}
+    page_count = get_pdf_page_count(old_filepath)
+    return {"exists": page_count > 0, "page_count": page_count}
 
 
 @router.get("/review/old/page")

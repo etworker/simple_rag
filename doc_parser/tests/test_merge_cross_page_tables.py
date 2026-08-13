@@ -139,4 +139,6 @@ def test_should_merge_tables_different_columns():
 
 
 if __name__ == "__main__":
+    import pytest
+
     pytest.main([__file__, "-v"])

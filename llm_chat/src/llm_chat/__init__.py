@@ -33,7 +33,7 @@ from llm_chat.defaults import (
     OPENAI_DEFAULTS,
     SESSION_DEFAULTS,
 )
-from llm_chat.oneshot import ask_once
+from llm_chat.oneshot import ask_once, ask_once_with_config
 from llm_chat.profile import resolve_llm_config, resolve_llm_profile
 from llm_chat.session import ChatSession, Message
 
@@ -46,6 +46,7 @@ __all__ = [
     "ChatSession",
     "Message",
     "ask_once",
+    "ask_once_with_config",
     "resolve_llm_config",
     "resolve_llm_profile",
 ]

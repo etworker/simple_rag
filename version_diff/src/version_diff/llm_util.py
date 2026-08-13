@@ -40,24 +40,10 @@ def call_llm_json(
 
     for attempt in range(max_retries + 1):
         try:
-            from llm_chat import ask_once
+            from llm_chat import ask_once_with_config
 
-            backend = llm_config.get("provider", "bedrock")
-            # 别名（如 bedrock_converse → bedrock）由 llm_chat backends 层统一处理
-            response = ask_once(
-                prompt,
-                backend=backend,
-                model=llm_config.get("model", ""),
-                region=llm_config.get("region", ""),
-                api_key_env=llm_config.get("api_key_env", ""),
-                api_key=llm_config.get("api_key", ""),
-                base_url=llm_config.get("base_url", ""),
-                endpoint=llm_config.get("endpoint", "chat"),
-                max_tokens=llm_config.get("max_tokens", 0),
-                timeout=llm_config.get("timeout", 0),
-                max_retries=llm_config.get("max_retries", 0),
-                retry_backoff=llm_config.get("retry_backoff", 0),
-            )
+            # llm_config 的 provider→backend、其余字段透传，由 llm_chat 统一管理默认值
+            response = ask_once_with_config(llm_config, prompt)
         except Exception as e:
             last_err = e
             log.warning(f"LLM 调用失败 (第 {attempt + 1} 次尝试): {e}")

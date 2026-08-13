@@ -21,7 +21,7 @@ from sentence_transformers import SentenceTransformer
 from version_diff.vectorstore import VectorStore
 
 from app.services.parse_cache import cached_parse as parse
-from app.services.utils import compute_sha256
+from app.services.utils import compute_sha256, get_pdf_page_count
 
 
 @dataclass
@@ -142,15 +142,7 @@ class DocStore:
         self._rebuild_index()
 
         # 计算页数
-        page_count = 0
-        if filepath.lower().endswith(".pdf"):
-            try:
-                import fitz
-
-                with fitz.open(filepath) as pdf_doc:
-                    page_count = pdf_doc.page_count
-            except Exception:
-                pass
+        page_count = get_pdf_page_count(filepath)
 
         # 计算字数
         char_count = sum(len(p.text) for p in doc.paragraphs)

@@ -51,3 +51,25 @@ def clear_cache_dir(path: str):
             os.makedirs(path, exist_ok=True)
         else:
             os.remove(path)
+
+
+def get_pdf_page_count(filepath: str) -> int:
+    """
+    获取 PDF 总页数
+
+    统一用 PyMuPDF (fitz)，避免 doc_store / page_renderer / review 各自实现
+    且混用 fitz 与 pdfplumber。非 PDF 或读取失败返回 0。
+
+    Args:
+        filepath: PDF 文件路径
+
+    Returns:
+        总页数（失败返回 0）
+    """
+    try:
+        import fitz
+
+        with fitz.open(filepath) as doc:
+            return doc.page_count
+    except Exception:
+        return 0

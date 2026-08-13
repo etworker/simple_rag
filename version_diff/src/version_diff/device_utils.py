@@ -11,7 +11,10 @@ GPU/CPU 设备检测与选择工具
 from __future__ import annotations
 
 import os
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from sentence_transformers import SentenceTransformer
 
 from loguru import logger as log
 

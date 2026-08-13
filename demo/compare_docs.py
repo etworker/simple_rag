@@ -45,6 +45,7 @@ LLM（默认启用，从共享 llm_profiles 文件按名字选择，对「修改
         "data/pdf/(三级)(司批)信息技术部工作手册/R6-7/(三级)(司批)信息技术部工作手册.pdf" \
         --same-threshold 0.5 --min-sim 0.4 --max-sim 0.95 --out demo/reports/compare_2_3.md
 """
+
 import argparse
 import json
 import os
@@ -55,6 +56,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT / "doc_parser"))
 sys.path.insert(0, str(PROJECT_ROOT / "version_diff"))
+
 
 def load_dotenv():
     dotenv = PROJECT_ROOT / ".env"
@@ -79,14 +81,18 @@ def build_llm_config(args) -> dict:
         with open(profile_file, encoding="utf-8") as f:
             data = json.load(f)
         llm_profiles = data.get("llm_profiles", {})
-        llm = resolve_llm_config({
-            "profile": args.profile,
-            "llm_profiles": llm_profiles,
-            "routing": data.get("llm_routing", {}),
-        })
+        llm = resolve_llm_config(
+            {
+                "profile": args.profile,
+                "llm_profiles": llm_profiles,
+                "routing": data.get("llm_routing", {}),
+            }
+        )
         if llm:
             return llm
-        print(f"[提示] 未在 {profile_file} 找到 profile「{args.profile}」，使用兜底配置")
+        print(
+            f"[提示] 未在 {profile_file} 找到 profile「{args.profile}」，使用兜底配置"
+        )
     return {
         "provider": args.llm_provider,
         "model": args.llm_model,
@@ -101,7 +107,9 @@ def build_llm_config(args) -> dict:
 
 
 def grams(text: str) -> set:
-    return {text[i:i + 2] for i in range(len(text) - 1)} if len(text) > 1 else set(text)
+    return (
+        {text[i : i + 2] for i in range(len(text) - 1)} if len(text) > 1 else set(text)
+    )
 
 
 def jaccard(ga: set, gb: set) -> float:
@@ -114,10 +122,16 @@ def load_paragraphs(path: str) -> list[str]:
     from doc_parser import parse
 
     doc = parse(path)
-    return [(p.text or "").strip() for p in doc.paragraphs if (p.text or "").strip() and len((p.text or "").strip()) >= 6]
+    return [
+        (p.text or "").strip()
+        for p in doc.paragraphs
+        if (p.text or "").strip() and len((p.text or "").strip()) >= 6
+    ]
 
 
-def compute_overlap(A: list[str], B: list[str], sample: int = 100, thresh: float = 0.5) -> float:
+def compute_overlap(
+    A: list[str], B: list[str], sample: int = 100, thresh: float = 0.5
+) -> float:
     """估算 A 能在 B 找到相似段的比例（采样，够区分类型即可）。
 
     Args:
@@ -150,11 +164,17 @@ def build_version_report(a, b, real, noise, minor):
     lines = [
         "# 文档内容差异（识别为：同一文档不同版本）",
         "",
-        f"- 文档A: `{a}`", f"- 文档B: `{b}`",
+        f"- 文档A: `{a}`",
+        f"- 文档B: `{b}`",
         f"- 实质差异 **{len(real)}** 处（新增 {sum(1 for c in real if c.change_type == 'added')} / 删除 {sum(1 for c in real if c.change_type == 'removed')} / 修改 {sum(1 for c in real if c.change_type == 'modified')}）",
-        f"- 噪声(版式) {len(noise)} | 细微 {len(minor)}", "",
+        f"- 噪声(版式) {len(noise)} | 细微 {len(minor)}",
+        "",
     ]
-    for key, title in [("added", "新增（B 有而 A 无）"), ("removed", "删除（A 有而 B 无）"), ("modified", "修改（表述不同）")]:
+    for key, title in [
+        ("added", "新增（B 有而 A 无）"),
+        ("removed", "删除（A 有而 B 无）"),
+        ("modified", "修改（表述不同）"),
+    ]:
         group = [c for c in real if c.change_type == key]
         if not group:
             continue
@@ -189,8 +209,10 @@ def run_similarity_cluster(a, b, args, engine):
     lines = [
         "# 文档内容差异（识别为：不同文档 / 不同级别）",
         "",
-        f"- 文档A: `{a}`", f"- 文档B: `{b}`",
-        f"- 找到「同一主题但表述不一致」**{len(found)}** 处（相似度区间 [{args.min_sim}, {args.max_sim}]）", "",
+        f"- 文档A: `{a}`",
+        f"- 文档B: `{b}`",
+        f"- 找到「同一主题但表述不一致」**{len(found)}** 处（相似度区间 [{args.min_sim}, {args.max_sim}]）",
+        "",
     ]
     for i, (s, ta, tb) in enumerate(found[: args.top], 1):
         lines.append(f"### [{i}] 相似度 {s:.2f}")
@@ -203,34 +225,64 @@ def run_similarity_cluster(a, b, args, engine):
 def main():
     # 统一日志（loguru）写到 ~/.cache/simple_rag/log/simple_rag.log
     from version_diff.logging_setup import setup_logging
+
     setup_logging()
 
     parser = argparse.ArgumentParser(description="文档内容差异对比（自动识别类型）")
     parser.add_argument("doc_a")
     parser.add_argument("doc_b")
     parser.add_argument("--out", default="")
-    parser.add_argument("--no-llm", action="store_true", help="关闭 LLM（默认启用，用共享 profile 的 LLM 生成修改类摘要）")
+    parser.add_argument(
+        "--no-llm",
+        action="store_true",
+        help="关闭 LLM（默认启用，用共享 profile 的 LLM 生成修改类摘要）",
+    )
     # LLM 共享 profile：从 llm_profiles + llm_routing 文件解析（默认 demo/llm_profiles.json）
-    parser.add_argument("--llm-profiles", default="",
-                        help="LLM profiles+routing JSON 文件路径（缺省 demo/llm_profiles.json）")
-    parser.add_argument("--profile", default="self_hosted_glm",
-                        help="要使用的 LLM profile 名（缺省 self_hosted_glm）")
+    parser.add_argument(
+        "--llm-profiles",
+        default="",
+        help="LLM profiles+routing JSON 文件路径（缺省 demo/llm_profiles.json）",
+    )
+    parser.add_argument(
+        "--profile",
+        default="self_hosted_glm",
+        help="要使用的 LLM profile 名（缺省 self_hosted_glm）",
+    )
     # 兜底单配置（仅在无 --llm-profiles 时用）
-    parser.add_argument("--llm-provider", default="openai", help="LLM 服务商（无 profile 文件时兜底）")
-    parser.add_argument("--llm-model", default="GLM-4.7-Flash-Q4_K_M.gguf", help="LLM 模型名（无 profile 文件时兜底）")
-    parser.add_argument("--llm-base-url", default="http://a10bj.etworker.tech:8731/v1", help="LLM base_url（无 profile 文件时兜底）")
-    parser.add_argument("--llm-key", default="dummy", help="LLM api_key（无 profile 文件时兜底）")
+    parser.add_argument(
+        "--llm-provider", default="openai", help="LLM 服务商（无 profile 文件时兜底）"
+    )
+    parser.add_argument(
+        "--llm-model",
+        default="GLM-4.7-Flash-Q4_K_M.gguf",
+        help="LLM 模型名（无 profile 文件时兜底）",
+    )
+    parser.add_argument(
+        "--llm-base-url",
+        default="http://a10bj.etworker.tech:8731/v1",
+        help="LLM base_url（无 profile 文件时兜底）",
+    )
+    parser.add_argument(
+        "--llm-key", default="dummy", help="LLM api_key（无 profile 文件时兜底）"
+    )
     parser.add_argument("--top", type=int, default=20, help="跨文档模式列出前 N 条")
     parser.add_argument("--embedding", default="BAAI/bge-small-zh-v1.5")
     # 可配置阈值（均有缺省值）
-    parser.add_argument("--same-threshold", type=float, default=0.5,
-                        help="内容重叠度 >= 此值判定为「同一文档不同版本」（缺省 0.5）")
-    parser.add_argument("--overlap-sample", type=int, default=100,
-                        help="重叠度估算采样段数（缺省 100）")
-    parser.add_argument("--min-sim", type=float, default=0.4,
-                        help="跨文档相似度下限（缺省 0.4）")
-    parser.add_argument("--max-sim", type=float, default=0.95,
-                        help="跨文档相似度上限（缺省 0.95）")
+    parser.add_argument(
+        "--same-threshold",
+        type=float,
+        default=0.5,
+        help="内容重叠度 >= 此值判定为「同一文档不同版本」（缺省 0.5）",
+    )
+    parser.add_argument(
+        "--overlap-sample", type=int, default=100, help="重叠度估算采样段数（缺省 100）"
+    )
+    parser.add_argument(
+        "--min-sim", type=float, default=0.4, help="跨文档相似度下限（缺省 0.4）"
+    )
+    parser.add_argument(
+        "--max-sim", type=float, default=0.95, help="跨文档相似度上限（缺省 0.95）"
+    )
     args = parser.parse_args()
 
     for p in (args.doc_a, args.doc_b):
@@ -243,10 +295,14 @@ def main():
     # 自动识别类型（阈值可配置，缺省 0.5）
     print("解析文档并评估内容重叠度 ...")
     A, B = load_paragraphs(args.doc_a), load_paragraphs(args.doc_b)
-    overlap = compute_overlap(A, B, sample=args.overlap_sample, thresh=args.same_threshold)
+    overlap = compute_overlap(
+        A, B, sample=args.overlap_sample, thresh=args.same_threshold
+    )
     same_doc = overlap >= args.same_threshold
-    print(f"A={len(A)} 段, B={len(B)} 段, 内容重叠度={overlap:.1%} → "
-          f"{'同一文档不同版本' if same_doc else '不同文档/不同级别'}")
+    print(
+        f"A={len(A)} 段, B={len(B)} 段, 内容重叠度={overlap:.1%} → "
+        f"{'同一文档不同版本' if same_doc else '不同文档/不同级别'}"
+    )
 
     t0 = time.time()
     if same_doc:
@@ -258,10 +314,15 @@ def main():
         config = {
             "embedding": {"model": args.embedding, "device": "cpu"},
             "llm": llm_config,
-            "diff": {"similarity_threshold": 0.80, "top_k": 3, "batch_size": 5,
-                     "noise_filter": {"enabled": True}},
+            "diff": {
+                "similarity_threshold": 0.80,
+                "top_k": 3,
+                "batch_size": 5,
+                "noise_filter": {"enabled": True},
+            },
         }
         from version_diff import DiffEngine
+
         engine = DiffEngine(config=config)
         report = run_version_compare(args.doc_a, args.doc_b, args, engine)
     else:

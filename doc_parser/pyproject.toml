@@ -22,6 +22,8 @@ packages = ["src/doc_parser"]
 
 [tool.ruff]
 line-length = 120
+
+[tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "C4", "SIM", "FURB", "RUF"]
 # 策略性忽略：盲异常捕获(BLE001)/空except(S110)/异步阻塞文件操作(ASYNC230)
 # 对这些既有代码改起来风险大收益低，保持关注错误而非强制重构

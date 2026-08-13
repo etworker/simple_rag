@@ -8,6 +8,7 @@
 用法:
     uv run --project version_diff python demo/batch_verify.py [--out 输出] [--top N] [--max-changes N]
 """
+
 import argparse
 import os
 import sys
@@ -32,18 +33,30 @@ def load_dotenv():
 
 # 组合：(文档A 相对路径, 文档B 相对路径, 类型, 说明)
 COMBOS = [
-    ("(二级)(司批)网络与信息安全管理手册/R5-21/(二级)(司批)网络与信息安全管理手册.pdf",
-     "(二级)(司批)网络与信息安全管理手册/R5-22/(二级)(司批)网络与信息安全管理手册.pdf",
-     "同文档不同版本", "网络与信息安全管理手册 R5-21 → R5-22（相邻修订）"),
-    ("(二级)(司批)网络与信息安全管理手册/R5-18/(二级)(司批)网络与信息安全管理手册.pdf",
-     "(二级)(司批)网络与信息安全管理手册/R5-22/(二级)(司批)网络与信息安全管理手册.pdf",
-     "同文档不同版本", "网络与信息安全管理手册 R5-18 → R5-22（跨版修订）"),
-    ("(二级)(司批)信息技术管理手册/R3-3/(二级)(司批)信息技术管理手册.pdf",
-     "(三级)(司批)信息技术部工作手册/R6-7/(三级)(司批)信息技术部工作手册.pdf",
-     "不同级别", "二级《信息技术管理手册》 vs 三级《信息技术部工作手册》"),
-    ("(二级)(司批)网络与信息安全管理手册/R5-22/(二级)(司批)网络与信息安全管理手册.pdf",
-     "IT运维管理规范/v2/IT运维管理规范.pdf",
-     "不同文档", "《网络与信息安全管理手册》 vs 《IT运维管理规范》"),
+    (
+        "(二级)(司批)网络与信息安全管理手册/R5-21/(二级)(司批)网络与信息安全管理手册.pdf",
+        "(二级)(司批)网络与信息安全管理手册/R5-22/(二级)(司批)网络与信息安全管理手册.pdf",
+        "同文档不同版本",
+        "网络与信息安全管理手册 R5-21 → R5-22（相邻修订）",
+    ),
+    (
+        "(二级)(司批)网络与信息安全管理手册/R5-18/(二级)(司批)网络与信息安全管理手册.pdf",
+        "(二级)(司批)网络与信息安全管理手册/R5-22/(二级)(司批)网络与信息安全管理手册.pdf",
+        "同文档不同版本",
+        "网络与信息安全管理手册 R5-18 → R5-22（跨版修订）",
+    ),
+    (
+        "(二级)(司批)信息技术管理手册/R3-3/(二级)(司批)信息技术管理手册.pdf",
+        "(三级)(司批)信息技术部工作手册/R6-7/(三级)(司批)信息技术部工作手册.pdf",
+        "不同级别",
+        "二级《信息技术管理手册》 vs 三级《信息技术部工作手册》",
+    ),
+    (
+        "(二级)(司批)网络与信息安全管理手册/R5-22/(二级)(司批)网络与信息安全管理手册.pdf",
+        "IT运维管理规范/v2/IT运维管理规范.pdf",
+        "不同文档",
+        "《网络与信息安全管理手册》 vs 《IT运维管理规范》",
+    ),
 ]
 
 
@@ -55,7 +68,9 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--out", default="", help="报告输出路径（默认打印控制台）")
     parser.add_argument("--top", type=int, default=5, help="每个组合列出前 N 条差异")
-    parser.add_argument("--limit", type=int, default=0, help="只跑前 N 个组合（0=全部）")
+    parser.add_argument(
+        "--limit", type=int, default=0, help="只跑前 N 个组合（0=全部）"
+    )
     args = parser.parse_args()
 
     load_dotenv()
@@ -64,7 +79,12 @@ def main():
     config = {
         "embedding": {"model": "BAAI/bge-small-zh-v1.5", "device": "cpu"},
         "llm": {"provider": "noop", "model": "", "api_key": ""},
-        "diff": {"similarity_threshold": 0.80, "top_k": 3, "batch_size": 5, "noise_filter": {"enabled": True}},
+        "diff": {
+            "similarity_threshold": 0.80,
+            "top_k": 3,
+            "batch_size": 5,
+            "noise_filter": {"enabled": True},
+        },
     }
     engine = DiffEngine(config=config)
 
@@ -95,8 +115,10 @@ def main():
             "noise": len(noise),
             "minor": len(res.minor_changes),
         }
-        report.append(f"- 耗时 {el:.1f}s | 实质差异 {stats['total']}（新增 {stats['added']} / 删除 {stats['removed']} / "
-                      f"修改 {stats['modified']}）| 噪声 {stats['noise']} | 细微 {stats['minor']}")
+        report.append(
+            f"- 耗时 {el:.1f}s | 实质差异 {stats['total']}（新增 {stats['added']} / 删除 {stats['removed']} / "
+            f"修改 {stats['modified']}）| 噪声 {stats['noise']} | 细微 {stats['minor']}"
+        )
         report.append("")
         # 代表性真实差异
         for i, c in enumerate(real[: args.top], 1):
