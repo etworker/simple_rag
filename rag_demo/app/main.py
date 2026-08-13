@@ -67,7 +67,15 @@ _FMT = "{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {name}:{line} | {message}"
 log = logger
 logger.remove()  # 去掉默认 stderr，避免重复输出
 # 统一文件（供 /api/logs/tail 读取）+ 每模块独立文件（按运行时模块前缀过滤）
-logger.add(os.path.join(_LOG_DIR, "simple_rag.log"), level=_LEVEL, encoding="utf-8", format=_FMT)
+# 统一文件用 DEBUG 级别，确保前端 Debug 面板能看到所有日志
+logger.add(
+    os.path.join(_LOG_DIR, "simple_rag.log"),
+    level="DEBUG",
+    encoding="utf-8",
+    format=_FMT,
+    rotation="10 MB",
+    retention=3,
+)
 logger.add(sys.stderr, level=_LEVEL, format=_FMT)
 _module_filters = {
     "llm_chat": "llm_chat",
