@@ -111,7 +111,7 @@ def _generate_specific_summary(item) -> str:
 
 
 def _format_judge_items(items):
-    """将候选段落对格式化为判断 prompt"""
+    """将候选段落对格式化为判断 prompt（含章节上下文）"""
     parts = []
     for i, item in enumerate(items, 1):
         text_a = item.para_a.text[:300].replace("\n", " ")
@@ -120,7 +120,16 @@ def _format_judge_items(items):
         src_b = item.para_b.source_file
         loc_a = item.para_a.location
         loc_b = item.para_b.location
-        parts.append(f"--- 第 {i} 对 ---\n文档A [{src_a}] {loc_a}:\n{text_a}\n\n文档B [{src_b}] {loc_b}:\n{text_b}")
+        # 提取章节上下文，帮助 LLM 判断两段是否在讨论同一件事
+        chapter_a = getattr(item.para_a, "chapter_title", "") or getattr(item.para_a, "chapter", "") or ""
+        chapter_b = getattr(item.para_b, "chapter_title", "") or getattr(item.para_b, "chapter", "") or ""
+        chap_tag_a = f" [章节: {chapter_a}]" if chapter_a else ""
+        chap_tag_b = f" [章节: {chapter_b}]" if chapter_b else ""
+        parts.append(
+            f"--- 第 {i} 对 ---\n"
+            f"文档A [{src_a}] {loc_a}{chap_tag_a}:\n{text_a}\n\n"
+            f"文档B [{src_b}] {loc_b}{chap_tag_b}:\n{text_b}"
+        )
     return "\n\n".join(parts)
 
 

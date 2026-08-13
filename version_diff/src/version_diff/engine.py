@@ -558,6 +558,7 @@ class DiffEngine:
         for i, para in enumerate(old_doc.paragraphs):
             if i not in paired_old:
                 old_section = para.chapter_title or para.chapter or ""
+                old_text = para.text.strip()
                 changes.append(
                     VersionChange(
                         change_type="removed",
@@ -565,23 +566,24 @@ class DiffEngine:
                         location=para.location,
                         old_section=para.chapter_title or para.chapter or "",
                         old_location=para.location,
-                        old_text=para.text.strip(),
+                        old_text=old_text,
                         new_text="",
-                        summary="",
+                        summary=f"[删除] {old_text[:60]}{'...' if len(old_text) > 60 else ''}",
                     )
                 )
 
         # 新版有但旧版没有的（added）
         for i, para in enumerate(new_doc.paragraphs):
             if i not in paired_new:
+                new_text = para.text.strip()
                 changes.append(
                     VersionChange(
                         change_type="added",
                         section=para.chapter_title or para.chapter or "",
                         location=para.location,
                         old_text="",
-                        new_text=para.text.strip(),
-                        summary="",
+                        new_text=new_text,
+                        summary=f"[新增] {new_text[:60]}{'...' if len(new_text) > 60 else ''}",
                     )
                 )
 
@@ -647,8 +649,15 @@ class DiffEngine:
         noise_patterns = noise_cfg.get("patterns", [])
 
         # added/removed：剥离配置噪声后为空 → 纯元数据噪声；否则保留为 content
+        # added/removed 跟踪表行 → minor_changes（页码/修订记录等自动更新）
         for c in changes:
             if c.change_type == "modified":
+                continue
+            # 跟踪表行（修订记录表、有效页清单等）→ minor_changes
+            if _is_tracking_table_row(c):
+                c = _classify_change("tracking_table", c)
+                c.summary = "[页码跟踪] 跟踪表行自动更新（修订记录/有效页清单）"
+                minor.append(c)
                 continue
             if noise_enabled:
                 target = c.new_text or c.old_text

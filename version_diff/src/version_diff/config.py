@@ -49,7 +49,7 @@ class Config:
 
     diff: dict[str, Any] = field(
         default_factory=lambda: {
-            "similarity_threshold": 0.80,
+            "similarity_threshold": 0.85,
             "top_k": 3,
             "batch_size": 5,
             # 版本管理「元数据噪声」过滤配置（通用、可覆盖）

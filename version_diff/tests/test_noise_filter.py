@@ -165,6 +165,6 @@ class TestDiffPartialConfig:
     def test_diff_defaults_kept_when_partial(self):
         # 部分配置不丢默认的 similarity_threshold 等
         engine = DiffEngine(config={"diff": {"batch_size": 3}})
-        assert engine.config.diff["similarity_threshold"] == 0.80
+        assert engine.config.diff["similarity_threshold"] == 0.85
         assert engine.config.diff["top_k"] == 3
         assert engine.config.diff["batch_size"] == 3
