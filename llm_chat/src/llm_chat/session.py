@@ -78,11 +78,11 @@ class ChatSession:
         # 调用后端
         try:
             answer = self._backend.chat(conversation, system_prompt=self.system_prompt)
-        except RuntimeError:
-            raise  # API Key 缺失等严重错误，让上层处理
         except Exception as e:
+            # 失败向上抛出，由上层（如 FastAPI 路由）转换为可控的 HTTP 错误（503/500），
+            # 避免把 "[错误] ..." 当成正常答案返回给用户。失败时不清历史（不写入 messages）。
             log.error(f"LLM 调用失败: {e}")
-            return f"[错误] LLM 调用失败: {e}"
+            raise
 
         # 记录助手回复（失败时不写入历史，避免错误文本污染多轮上下文）
         self.messages.append(Message(role="assistant", content=answer))

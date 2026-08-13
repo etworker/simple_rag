@@ -12,10 +12,13 @@
 from collections import OrderedDict
 from dataclasses import dataclass, field
 
+from llm_chat import (
+    ChatSession,
+    Message,  # noqa: F401 - re-export for tests
+)
 from loguru import logger as log
 from version_diff.conflict import detect_conflicts
 
-from app.services.chat import ChatSession
 from app.services.chat_history import ChatHistoryStore
 from app.services.config_store import ConfigStore
 from app.services.doc_store import DocStore, RetrievedChunk
@@ -145,11 +148,14 @@ class QAEngine:
             system_prompt = self._config.get("prompts.system", "")
             llm_config = self._config.get_llm_profile("qa")
             max_history = self._config.get("chat.max_history", 20)
+            # 从 llm_config 构造 llm_chat.ChatSession 参数
+            cfg = dict(llm_config)
+            backend = cfg.pop("provider", "") or "bedrock"
             self._sessions[session_id] = ChatSession(
                 system_prompt=system_prompt,
-                llm_config=llm_config,
+                backend=backend,
                 max_history=max_history,
-                session_id=session_id,
+                **cfg,
             )
         else:
             # 标记为最近使用，维持 LRU 顺序

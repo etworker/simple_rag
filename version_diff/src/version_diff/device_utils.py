@@ -152,11 +152,19 @@ def embedding_model_kwargs(config_embedding: dict | None) -> dict[str, Any]:
     return {"model_kwargs": {"torch_dtype": resolved}}
 
 
+# 模型实例缓存：key = (model_name, device, cache_dir)，
+# 使 DocStore 和 DiffEngine 共享同一模型实例，避免重复加载（省显存/内存）
+_model_cache: dict = {}
+
+
 def load_embedding_model(emb_config: dict) -> SentenceTransformer:
     """根据配置加载 SentenceTransformer embedding 模型。
 
     封装 device 解析、dtype 参数、缓存目录等通用逻辑，
     供 DiffEngine 和 DocStore 共享，避免两处维护。
+
+    同一 (model_name, device, cache_dir) 组合只加载一次，
+    后续调用返回缓存的实例。
 
     Args:
         emb_config: embedding 配置 dict，需包含 "model" 键。
@@ -170,12 +178,19 @@ def load_embedding_model(emb_config: dict) -> SentenceTransformer:
     model_name = emb_config.get("model", "")
     cache_dir = emb_config.get("cache_dir") or None
     device = resolve_embedding_device(emb_config)
+
+    cache_key = (model_name, device, cache_dir)
+    if cache_key in _model_cache:
+        log.info(f"复用已加载 embedding 模型: {model_name} (device={device})")
+        return _model_cache[cache_key]
+
     kwargs = embedding_model_kwargs(emb_config)
     log.info(f"加载 embedding 模型: {model_name} (device={device})")
     m_kwargs = {"cache_folder": cache_dir}
     m_kwargs.update(kwargs)
     model = SentenceTransformer(model_name, device=device, **m_kwargs)
     log_device_status(device)
+    _model_cache[cache_key] = model
     return model
 
 

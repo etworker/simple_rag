@@ -23,7 +23,7 @@
 | 模块 | 职责 | 关键入口 |
 |------|------|----------|
 | `doc_parser` | 文档解析（PDF / Word）→ 段落 + 表格 + 定位信息 | `parse(filepath, config)`，`Paragraph`/`Table`/`Document` 模型 |
-| `llm_chat` | LLM 调用抽象（bedrock / openai 等多后端）、重试、对话会话 | `ask_once(prompt, backend, ...)`、`ChatSession` |
+| `llm_chat` | LLM 调用抽象（bedrock / openai 等多后端）、重试、对话会话 | `ask_once(prompt, backend, ...)`、`ask_once_with_config(prompt, llm_config, ...)`、`resolve_llm_profile(profiles, routing, use_case)`、`ChatSession` |
 | `version_diff` | 差异检测引擎：跨文档语义检索 + 字级 diff + 规则预过滤 + LLM 矛盾判定 + 版本对比 + 统一冲突检测 | `DiffEngine`（add / pre_review / version_compare / check_conflicts）、`judge_pairs`、`detect_conflicts`、`call_llm_json` |
 | `rag_demo` | FastAPI 应用：上传、预审核任务编排、RAG 问答、冲突检测、Web UI | `app/main.py`，`app/services/*`，`app/routes/*` |
 
@@ -95,6 +95,13 @@ uv run python examples/verify_version_diff.py <旧版.pdf> <新版.pdf> --model 
 - 模板含 `{count}` / `{items}` 占位符，运行时由代码 `.format(...)` 填充；JSON 示例用 `{{`/`}}` 转义。可通过 `judge.prompt_file` / `judge.prompt_template` 覆盖。
 
 ---
+
+## 近期迭代（2026-08-12 ~ 08-13）
+
+- **llm_chat**：后端异常挂 `status_code` / `is_network_error` 属性，`retry` 据此判断重试（不再正则解析异常文本）；公共字段初始化上提到 `_init_common`。
+- **跨模块去重**：`version_diff.llm_util` 改用新增的 `llm_chat.ask_once_with_config`；`rag_demo` 的 PDF 页数计算统一为 `get_pdf_page_count`（fitz）。
+- **错误处理契约**：`ChatSession.ask` 失败改为向上抛出（不再把 `"[错误]..."` 当答案返回），`/api/qa/ask` 将 LLM 不可用映射为 503。
+- 详细决策与原理见 [设计文档 §迭代记录](docs/设计文档.md)。
 
 ## 测试
 

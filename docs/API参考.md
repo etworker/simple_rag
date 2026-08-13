@@ -1,6 +1,6 @@
 # API 参考（API Reference）
 
-> simple_rag 接口文档 ｜ 代码状态：2026-08 全量重构后
+> simple_rag 接口文档 ｜ 代码状态：2026-08 全量重构 + 08-12/08-13 迭代优化（详见 [设计文档 §迭代记录](设计文档.md)）
 > 基础路径：服务运行于 `http://localhost:8000`
 
 ---
@@ -105,7 +105,7 @@ d = p.to_dict(); p2 = Paragraph.from_dict(d)
 ### 2. llm_chat
 
 ```python
-from llm_chat import ask_once
+from llm_chat import ask_once, ask_once_with_config, resolve_llm_profile, ChatSession
 
 resp: str = ask_once(
     prompt: str,
@@ -115,13 +115,28 @@ resp: str = ask_once(
     **kwargs,                   # region / base_url / api_key_env / api_key / max_tokens / timeout / max_retries / retry_backoff
 ) -> str
 
+# 从配置字典一次性调用（provider→后端，其余透传），消除调用方手写逐字段透传
+resp: str = ask_once_with_config(
+    prompt: str,
+    llm_config: dict,           # {"provider","model","region","api_key_env","max_tokens",...}
+    system_prompt: str = "",
+) -> str
+
+# 从 profiles+routing 解析某用途的完整 LLM 配置（ConfigStore 复用同一实现）
+profile: dict = resolve_llm_profile(profiles: dict, routing: dict, use_case: str) -> dict
+
 # 多轮对话（方法名为 ask，非 send）
-from llm_chat import ChatSession
 sess = ChatSession(model="zai.glm-4.7-flash")
-sess.ask("你好")
+sess.ask("你好")   # 失败向上抛出（RuntimeError），由上层转为 HTTP 错误，不返回 [错误] 文本
 ```
 
 可用后端（`llm_chat/backends/`）：`bedrock`（别名 `bedrock_converse`）、`openai`。
+
+后端调用异常统一抛 `RuntimeError`，并附带属性以便重试逻辑判断（不再正则解析异常文本）：
+- `e.status_code` → HTTP 状态码（仅服务端错误，如 503）
+- `e.is_network_error` → 是否网络/超时类错误（布尔）
+
+`ChatSession.ask` 不再把失败吞成 `"[错误] ..."` 字符串返回（旧行为会把错误当正常答案返回给用户），而是向上抛出，由 FastAPI 路由统一映射为 503（LLM 不可用）/ 500（内部错误）。
 
 ### 3. version_diff
 

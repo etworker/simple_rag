@@ -99,7 +99,7 @@ class TestChatSession:
         assert call["messages"][0]["content"] == "测试问题"
 
     def test_backend_error_handling(self):
-        """后端异常时返回错误信息"""
+        """后端异常时应向上抛出，由上层转换为可控的 HTTP 错误（而非返回 [错误] 文本当答案）"""
 
         class ErrorBackend:
             def __init__(self, **kw):
@@ -111,9 +111,8 @@ class TestChatSession:
         with patch("llm_chat.session.get_backend", return_value=ErrorBackend()):
             s = ChatSession(system_prompt="", backend="bedrock", model="t")
 
-        answer = s.ask("会失败的问题")
-        assert "[错误]" in answer
-        assert "网络超时" in answer
+        with pytest.raises(ConnectionError):
+            s.ask("会失败的问题")
 
 
 class TestBackendRegistry:

@@ -37,10 +37,8 @@ async def ask(req: AskRequest):
     try:
         response = await asyncio.to_thread(qa_engine.ask, req.question, session_id=req.session_id)
     except RuntimeError as e:
-        # API Key 未配置等运行时错误
-        if "API Key" in str(e) or "未配置" in str(e):
-            raise HTTPException(status_code=503, detail=f"LLM 服务不可用: {e}") from e
-        raise HTTPException(status_code=500, detail=f"问答引擎错误: {e}") from e
+        # LLM 层错误统一按"服务不可用"处理（API Key 缺失 / 网络超时 / 重试耗尽均抛 RuntimeError）
+        raise HTTPException(status_code=503, detail=f"LLM 服务不可用: {e}") from e
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"内部错误: {e}") from e
     return response.to_dict()
