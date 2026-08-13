@@ -35,10 +35,25 @@ env/
 data/
 uploads/
 
+# ===== rag_demo 运行时 =====
+data/page_cache/
+data/parse_cache/
+data/app.log
+config.json
+uv.err
+uv.out
+uvicorn_err.log
+uvicorn_out.log
+
+# ===== demo 运行时 =====
+reports/
+
 # ===== 缓存 =====
 .pytest_cache/
 .vector_cache/
 *.npy
+*.bin
+*.safetensors
 
 # ===== 测试运行时生成的夹具 =====
 # FAISS 向量缓存（cache_key 命名，运行时自动重建）
