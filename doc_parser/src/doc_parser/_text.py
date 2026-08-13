@@ -5,8 +5,11 @@ import re
 
 from doc_parser.models import Paragraph
 
+# 以下常量为内置默认值，均可通过 cfg 同名键覆盖，
+# 便于客户定制化场景通过 web 配置注入。
+
 # 列表项特征：以动作动词开头（后面通常跟长描述）
-_LIST_VERB_PREFIXES = (
+_DEFAULT_LIST_VERB_PREFIXES = (
     "负责",
     "建立",
     "整合",
@@ -30,7 +33,7 @@ _LIST_VERB_PREFIXES = (
 )
 
 # 列表项结尾标点（真实章节标题不会以这些结尾）
-_LIST_END_PUNCT = "；，。、；,.；"
+_DEFAULT_LIST_END_PUNCT = "；，。、；,.；"
 
 # 单纯数字编号的正则（用于在 _detect_chapter 中识别并施加更严格的过滤）
 _SINGLE_NUMBER_RE = re.compile(r"^\d+\s+(.+)")
@@ -40,7 +43,42 @@ _CHINESE_NUM_RE = re.compile(r"^（?[一二三四五六七八九十]+[、）)]")
 
 # 标题终止符：标题后紧跟正文时，标题通常以这些符号结尾
 # 遇到这些符号且后面还有内容时，只取终止符前的部分作为标题
-_HEADING_TERMINATORS = ("．", "。", "：", ":")
+_DEFAULT_HEADING_TERMINATORS = ("．", "。", "：", ":")
+
+
+# 句末终止符集合（用于行内标题粘连检测）
+_DEFAULT_SENTENCE_END_CHARS = "。；！？.;!？"
+
+
+def _try_split_inline_title(line, cfg):
+    """检测行内标题粘连，返回 (body, title) 或 None。
+
+    当一行文本中句末终止符之后紧跟章节标题模式时，拆分为正文 + 标题。
+    例如:
+      "…考核合格分数为85分。 第六章 信息安全管理"
+      → ("…考核合格分数为85分。", "第六章 信息安全管理")
+      "…提交《变更完成报告》。 第三章 网络与基础设施管理"
+      → ("…提交《变更完成报告》。", "第三章 网络与基础设施管理")
+
+    要求:
+    - 终止符后至少 4 个字符（避免误拆编号引用如 "参见 1.1"）
+    - 终止符后的部分必须被 detect_chapter 识别为章节标题
+    - 正文部分至少 10 个字符（避免短行误拆）
+    """
+    sentence_end_chars = cfg.get("sentence_end_chars", _DEFAULT_SENTENCE_END_CHARS)
+    min_remainder = cfg.get("inline_title_min_remainder", 4)
+    min_body = cfg.get("inline_title_min_body", 10)
+    for i, ch in enumerate(line):
+        if ch not in sentence_end_chars:
+            continue
+        remainder = line[i + 1 :].strip()
+        if len(remainder) < min_remainder:
+            continue
+        if detect_chapter(remainder, cfg):
+            body = line[:i + 1].strip()
+            if len(body) >= min_body:
+                return (body, remainder)
+    return None
 
 
 def detect_chapter(text, cfg):
@@ -66,7 +104,7 @@ def detect_chapter(text, cfg):
             title = m.group(2).strip()
             # 中文编号：标题含终止符时截断（处理 "（一）恶劣天气运行风险． 7-8 月..." 的情况）
             if _CHINESE_NUM_RE.match(text):
-                for term in _HEADING_TERMINATORS:
+                for term in cfg.get("heading_terminators", _DEFAULT_HEADING_TERMINATORS):
                     idx = title.find(term)
                     if 0 < idx < len(title) - 1:
                         title = title[:idx].strip()
@@ -78,13 +116,17 @@ def detect_chapter(text, cfg):
             if re.search(r"\d{4}[-./]\d{1,2}[-./]\d{1,2}", title):
                 return None
             # 标题含过多列表分隔符 → 可能是正文碎片
-            if title.count("、") + title.count("，") > 2:
+            list_sep_limit = cfg.get("list_separator_limit", 2)
+            if title.count("、") + title.count("，") > list_sep_limit:
                 return None
             # 标题以列表项标点结尾 → 列表项，非章节标题
-            if title[-1] in _LIST_END_PUNCT:
+            list_end_punct = cfg.get("list_end_punct", _DEFAULT_LIST_END_PUNCT)
+            if title[-1] in list_end_punct:
                 return None
             # 标题以动作动词开头且较长 → 列表项描述，非章节标题
-            if len(title) > 12 and title.startswith(_LIST_VERB_PREFIXES):
+            verb_prefixes = cfg.get("list_verb_prefixes", _DEFAULT_LIST_VERB_PREFIXES)
+            verb_min_title_len = cfg.get("list_verb_min_title_length", 12)
+            if len(title) > verb_min_title_len and title.startswith(tuple(verb_prefixes)):
                 return None
             # 单纯数字编号 ^\d+ 的额外过滤：
             # - 编号值过大（如 2026）→ 可能是年份，非章节号
@@ -116,6 +158,7 @@ def split_stream(full_text, cfg):
 
     分割信号（优先级从高到低）：
     1. 章节标题行前断开
+    1b. 行内标题粘连：正文句号/分号后紧跟章节标题 → 拆分
     2. 连续空行
     3. 句末终止符 + 换行（段落已达一定长度）
     4. 长度上限强制断开
@@ -131,7 +174,6 @@ def split_stream(full_text, cfg):
     for line in lines:
         line_start = char_pos
         char_pos += len(line) + 1  # +1 for \n
-
         stripped = line.strip()
 
         # 空行 → 断开
@@ -167,16 +209,36 @@ def split_stream(full_text, cfg):
             current_start = char_pos
             continue
 
+        # ★ 行内标题粘连检测：正文 + 句末终止符 + 章节标题 → 拆分
+        # 例: "…考核合格分数为85分。 第六章 信息安全管理"
+        #     → 正文 "…考核合格分数为85分。" + 标题 "第六章 信息安全管理"
+        split_result = _try_split_inline_title(stripped, cfg)
+        if split_result:
+            body_text, title_text = split_result
+            # 先追加正文部分到 current_lines 并断开
+            if body_text:
+                current_lines.append(body_text)
+                para_text = " ".join(current_lines)
+                if len(para_text.strip()) > 0:
+                    paragraphs.append((para_text, current_start, char_pos))
+                current_lines = []
+            # 标题独占一段
+            paragraphs.append((title_text, line_start, char_pos))
+            current_start = char_pos
+            continue
+
         # 正文行 → 先累积到 current_lines
         current_lines.append(stripped)
         current_text = " ".join(current_lines)
 
         # 句末终止符 + 段落已有一定长度 → 断开
+        sentence_end_chars = cfg.get("sentence_end_chars", _DEFAULT_SENTENCE_END_CHARS)
+        soft_break_chars = cfg.get("soft_break_chars", "。.;；，,")
         if (
             stripped
-            and stripped[-1] in "。；！？.;!?"
+            and stripped[-1] in sentence_end_chars
             and len(current_text) >= cfg.get("sentence_break_min_length", 40)
-        ) or (len(current_text) > max_len and stripped and stripped[-1] in "。.;；，,"):
+        ) or (len(current_text) > max_len and stripped and stripped[-1] in soft_break_chars):
             paragraphs.append((current_text, current_start, char_pos))
             current_lines = []
             current_start = char_pos

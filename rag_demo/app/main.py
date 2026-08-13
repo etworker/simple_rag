@@ -7,6 +7,7 @@ RAG 文档问答系统 — FastAPI 主入口
 """
 
 import os
+import sys
 
 from loguru import logger
 
@@ -32,7 +33,9 @@ def _load_secrets():
                     line = line.strip()
                     if line and not line.startswith("#") and "=" in line:
                         k, v = line.split("=", 1)
-                        os.environ.setdefault(k.strip(), v.strip())
+                        # .env 为权威来源：覆盖已存在的同名环境变量，避免 shell 中遗留的
+                        # 失效 token（如 AWS_BEARER_TOKEN_BEDROCK）遮蔽项目配置导致 403。
+                        os.environ[k.strip()] = v.strip()
             break  # 只加载第一个找到的
 
 
@@ -51,15 +54,41 @@ from app.services.config_store import CONFIG_DESCRIPTIONS, ConfigStore
 from app.services.doc_store import DocStore
 from app.services.qa_engine import QAEngine
 
-# 日志
-log = logger
 # 缓存根目录（可配置，默认 ~/.simple_rag/）
 _CACHE_ROOT = os.path.join(os.path.expanduser("~"), ".simple_rag")
-# 日志统一用 loguru，写到 ~/.cache/simple_rag/log/simple_rag.log
-from version_diff.logging_setup import DEFAULT_LOG_PATH, setup_logging
 
-setup_logging()
-LOG_FILE = DEFAULT_LOG_PATH
+# 日志：统一在应用入口配置一次（loguru 为进程级全局单例，各库内部不配置 sink）
+# 位置可用环境变量 SIMPLE_RAG_LOG_DIR 覆盖，级别用 SIMPLE_RAG_LOG_LEVEL。
+_LOG_DIR = os.environ.get("SIMPLE_RAG_LOG_DIR", os.path.join(_CACHE_ROOT, "log"))
+os.makedirs(_LOG_DIR, exist_ok=True)
+_LEVEL = os.environ.get("SIMPLE_RAG_LOG_LEVEL", "INFO")
+_FMT = "{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {name}:{line} | {message}"
+
+log = logger
+logger.remove()  # 去掉默认 stderr，避免重复输出
+# 统一文件（供 /api/logs/tail 读取）+ 每模块独立文件（按运行时模块前缀过滤）
+logger.add(os.path.join(_LOG_DIR, "simple_rag.log"), level=_LEVEL, encoding="utf-8", format=_FMT)
+logger.add(sys.stderr, level=_LEVEL, format=_FMT)
+_module_filters = {
+    "llm_chat": "llm_chat",
+    "doc_parser": "doc_parser",
+    "version_diff": "version_diff",
+    "rag_demo": "app",  # 应用运行时模块前缀为 "app"
+}
+for _label, _prefix in _module_filters.items():
+    logger.add(
+        os.path.join(_LOG_DIR, f"{_label}.log"),
+        level=_LEVEL,
+        filter=lambda r, p=_prefix: r["name"] == p or r["name"].startswith(p + "."),
+        rotation="10 MB",
+        retention=3,
+        encoding="utf-8",
+        format=_FMT,
+    )
+LOG_FILE = os.path.join(_LOG_DIR, "simple_rag.log")
+# 开启各库的日志（库默认通过 logger.disable 关闭，避免污染宿主日志）
+for _mod in ("llm_chat", "doc_parser", "version_diff"):
+    logger.enable(_mod)
 
 # 每次启动打印分隔线，方便区分不同运行会话
 import time as _time
@@ -195,7 +224,7 @@ class WebSocketLogHandler:
                 pass
 
 
-# 通过 setup_logging 的 extra_sink 挂到 loguru（WebSocket 实时推送）
+# WebSocket 实时日志 sink 挂到 loguru（前端实时推送）
 _ws_handler = WebSocketLogHandler()
 logger.add(
     _ws_handler,

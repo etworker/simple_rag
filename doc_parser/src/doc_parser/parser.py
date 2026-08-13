@@ -43,6 +43,8 @@ from doc_parser.models import Document
 
 # 默认配置
 DEFAULT_CONFIG = {
+    # PDF 后端: "auto"(默认,MinerU优先) / "mineru" / "pdfplumber"
+    "backend": "auto",
     "header_margin_pct": 8,
     "footer_margin_pct": 8,
     "repeat_line_threshold_pct": 30,
@@ -53,6 +55,8 @@ DEFAULT_CONFIG = {
         r"^(\d+\.\d+)\s+(.+)",
         r"^(\d+)\s+(.+)",
         r"^第\s*(\d+)\s*[章节]\s*(.+)",
+        # 中文数字章节/节（如"第六章 信息安全管理"、"第三节 访问控制"）
+        r"^第\s*([一二三四五六七八九十百千]+)\s*[章节]\s*(.+)",
         # 中文数字编号（公文常见格式）
         r"^([一二三四五六七八九十]+)、\s*(.+)",
         r"^（([一二三四五六七八九十]+)）\s*(.+)",
@@ -105,6 +109,53 @@ DEFAULT_CONFIG = {
     "max_chapter_title_length": 80,
     # 句末断句的最小段落长度（段落达到此长度且遇到句末终止符时断开）
     "sentence_break_min_length": 40,
+    # ========== 行内标题粘连 / 句末终止符 / 列表项过滤 ==========
+    # 句末终止符集合（用于行内标题粘连检测 + 句末断句）
+    # 可覆盖以适配不同语言/文档风格
+    "sentence_end_chars": "。；！？.;!？",
+    # 软断句字符（段落超长时遇到这些字符可断开）
+    "soft_break_chars": "。.;；，,",
+    # 标题终止符：标题后紧跟正文时，标题通常以这些符号结尾
+    "heading_terminators": ["．", "。", "：", ":"],
+    # 列表项特征：以动作动词开头且长度超过 list_verb_min_title_length 的不视为标题
+    "list_verb_prefixes": [
+        "负责", "建立", "整合", "加强", "完成", "管理与",
+        "参与", "组织", "规划", "做好", "开展", "制定",
+        "依据", "按照", "定期", "管理维护", "采集", "编制", "审批", "评估",
+    ],
+    # 动词开头的列表项最小标题长度（超过此值且以动词开头 → 列表项而非标题）
+    "list_verb_min_title_length": 12,
+    # 列表项结尾标点（真实章节标题不会以这些结尾）
+    "list_end_punct": "；，。、；,.；",
+    # 列表分隔符上限（标题含“、”“，”超过此数 → 正文碎片而非标题）
+    "list_separator_limit": 2,
+    # 行内标题粘连拆分：终止符后剩余部分最小长度
+    "inline_title_min_remainder": 4,
+    # 行内标题粘连拆分：正文部分最小长度
+    "inline_title_min_body": 10,
+    # ========== PDF 智能后端选择 ==========
+    # 快速预扫描的页数（0 表示全部页）
+    "scan_sample_pages": 5,
+    # 扫描件判定：平均每页文字低于此值 → 疑似扫描件
+    "scan_text_per_page_threshold": 50,
+    # 大图片覆盖率阈值（超过此比例 → 疑似扫描件）
+    "scan_large_image_ratio": 0.5,
+    # 有绘图线但 pdfplumber 未提取到表格的页数比例阈值
+    "scan_drawings_no_tables_ratio": 0.4,
+    # 低表格提取率阈值（低于此值且有绘图线 → 可能无框线表格）
+    "scan_low_table_rate": 0.3,
+    # 无框线表格检测：文本样本中表头关键词列表
+    "table_keyword_list": [
+        "序号", "名称", "描述", "风险", "措施",
+        "类别", "编号", "责任人", "频率", "要求",
+        "备注", "检查项", "标准",
+    ],
+    # 无框线表格检测：关键词命中比例阈值
+    "table_keyword_hit_ratio": 0.5,
+    # 无框线表格检测：列对齐行命中比例阈值
+    "table_aligned_line_ratio": 0.3,
+    # word 行聚合的 Y 坐标容差（pt）
+    "y_tolerance": 3,
 }
 
 

@@ -223,10 +223,10 @@ def run_similarity_cluster(a, b, args, engine):
 
 
 def main():
-    # 统一日志（loguru）写到 ~/.cache/simple_rag/log/simple_rag.log
-    from version_diff.logging_setup import setup_logging
+    # 独立运行的 demo：用 version_diff 自带的 opt-in 日志配置（写到 ./logs/version_diff.log，可用 VERSION_DIFF_LOG_FILE 覆盖）
+    from version_diff.log import configure_logger
 
-    setup_logging()
+    configure_logger()
 
     parser = argparse.ArgumentParser(description="文档内容差异对比（自动识别类型）")
     parser.add_argument("doc_a")

@@ -11,6 +11,10 @@ version_diff — 文档差异检测引擎
     print(result.inconsistencies)
 """
 
+from loguru import logger
+
+logger.disable("version_diff")  # 库默认安静：由应用入口或 examples 的 configure_logger() 开启
+
 from version_diff.config import Config
 from version_diff.conflict import detect_conflicts
 from version_diff.engine import DiffEngine

@@ -73,6 +73,18 @@ class Config:
                 "min_length": 6,
                 "dir_entry_max_length": 40,
             },
+            # 跟踪表过滤配置（修订记录表/有效页清单等自动更新的行）
+            # 可覆盖 hints / row_patterns / version_stamp_patterns / summary_template
+            "tracking_table": {
+                # 跟踪表提示词正则（location 匹配）
+                # "hints": r"有效页清单|修订记录表|发放清单|修改记录",
+                # 跟踪表行匹配正则列表
+                # "row_patterns": [...],
+                # 版本戳正则列表（strip_revision_noise 用）
+                # "version_stamp_patterns": [...],
+                # 跟踪表行 summary 模板
+                # "summary_template": "[页码跟踪] 跟踪表行自动更新",
+            },
         }
     )
 

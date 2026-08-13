@@ -21,7 +21,7 @@ from doc_parser.models import Document, Table
 # ============================================================
 
 
-def _quick_scan_pdf(filepath, sample_pages=5):
+def _quick_scan_pdf(filepath, sample_pages=5, cfg=None):
     """
     快速预扫描 PDF，收集决策所需的统计信息。
     只读取前 N 页（默认 5 页），耗时通常 < 0.5s。
@@ -72,9 +72,10 @@ def _quick_scan_pdf(filepath, sample_pages=5):
 
                 # 检测大图片（扫描件特征）
                 page_area = page.width * page.height
+                large_img_ratio = (cfg or {}).get("scan_large_image_ratio", 0.5)
                 for img in images:
                     img_area = img.get("width", 0) * img.get("height", 0)
-                    if page_area > 0 and img_area > page_area * 0.5:
+                    if page_area > 0 and img_area > page_area * large_img_ratio:
                         large_image_pages += 1
                         break
 
@@ -87,7 +88,8 @@ def _quick_scan_pdf(filepath, sample_pages=5):
             result["avg_text_per_page"] = total_text / n
             result["avg_tables_per_page"] = total_tables / n
             result["large_image_ratio"] = large_image_pages / n
-            result["has_drawings_no_tables"] = drawings_no_tables_pages > n * 0.4
+            drawings_ratio = (cfg or {}).get("scan_drawings_no_tables_ratio", 0.4)
+            result["has_drawings_no_tables"] = drawings_no_tables_pages > n * drawings_ratio
 
     except Exception as e:
         logger.debug(f"预扫描失败: {e}")
@@ -95,7 +97,7 @@ def _quick_scan_pdf(filepath, sample_pages=5):
     return result
 
 
-def _detect_borderless_table_hint(scan):
+def _detect_borderless_table_hint(scan, cfg=None):
     """
     基于文本样本检测无框线表格的线索。
 
@@ -103,21 +105,12 @@ def _detect_borderless_table_hint(scan):
     - 文本中出现表头关键词（序号、名称、描述/风险/措施…）
     - 短行密集且包含连续空格或制表符（列对齐特征）
     """
-    table_keywords = [
-        "序号",
-        "名称",
-        "描述",
-        "风险",
-        "措施",
-        "类别",
-        "编号",
-        "责任人",
-        "频率",
-        "要求",
-        "备注",
-        "检查项",
-        "标准",
-    ]
+    table_keywords = (cfg or {}).get(
+        "table_keyword_list",
+        ["序号", "名称", "描述", "风险", "措施",
+         "类别", "编号", "责任人", "频率", "要求",
+         "备注", "检查项", "标准"],
+    )
     keyword_hits = 0
     aligned_line_hits = 0
 
@@ -132,7 +125,9 @@ def _detect_borderless_table_hint(scan):
             aligned_line_hits += 1
 
     total = max(1, len(scan.get("text_samples", [])))
-    return (keyword_hits / total >= 0.5) and (aligned_line_hits / total >= 0.3)
+    keyword_ratio = (cfg or {}).get("table_keyword_hit_ratio", 0.5)
+    aligned_ratio = (cfg or {}).get("table_aligned_line_ratio", 0.3)
+    return (keyword_hits / total >= keyword_ratio) and (aligned_line_hits / total >= aligned_ratio)
 
 
 def select_backend(filepath, cfg):
@@ -145,27 +140,34 @@ def select_backend(filepath, cfg):
     3. 文本表格线索 → 文本中出现表头关键词且列对齐 → MinerU
     4. 正常文档    → pdfplumber
 
+    所有阈值均从 cfg 读取，可通过配置覆盖。
+
     返回 (backend_name, reason)
     """
-    scan = _quick_scan_pdf(filepath)
+    sample_pages = cfg.get("scan_sample_pages", 5)
+    scan = _quick_scan_pdf(filepath, sample_pages=sample_pages, cfg=cfg)
 
     if scan["num_pages"] == 0:
         return "pdfplumber", "空 PDF"
 
-    # 1. 扫描件：平均每页文字 < 50 字符
-    if scan["avg_text_per_page"] < 50:
+    text_threshold = cfg.get("scan_text_per_page_threshold", 50)
+    image_ratio = cfg.get("scan_large_image_ratio", 0.5)
+    low_table_rate = cfg.get("scan_low_table_rate", 0.3)
+
+    # 1. 扫描件：平均每页文字低于阈值
+    if scan["avg_text_per_page"] < text_threshold:
         return "mineru", f"疑似扫描件（平均 {scan['avg_text_per_page']:.0f} 字/页）"
 
-    # 2. 大图片覆盖 > 50% 采样页
-    if scan["large_image_ratio"] > 0.5:
+    # 2. 大图片覆盖率超阈值
+    if scan["large_image_ratio"] > image_ratio:
         return "mineru", f"疑似扫描件（大图片覆盖率 {scan['large_image_ratio']:.0%}）"
 
     # 3. 有绘图线但 pdfplumber 提取不到表格 → 可能无框线表格
-    if scan["has_drawings_no_tables"] and scan["avg_tables_per_page"] < 0.3:
+    if scan["has_drawings_no_tables"] and scan["avg_tables_per_page"] < low_table_rate:
         return "mineru", "检测到绘图对象但 pdfplumber 未提取到表格（疑似无框线表格）"
 
     # 4. 文本中出现表头关键词 + 列对齐特征
-    if _detect_borderless_table_hint(scan) and scan["avg_tables_per_page"] < 0.3:
+    if _detect_borderless_table_hint(scan, cfg) and scan["avg_tables_per_page"] < low_table_rate:
         return "mineru", "文本中出现表格关键词及列对齐特征（疑似无框线表格）"
 
     # 5. pdfplumber 足以应对
@@ -266,9 +268,9 @@ def extract_pdf(filepath, config=None, get_config=None):
     → 在正文流上按语义分段 + 反查页码
 
     后端选择：
-    config["extract"]["backend"] = "mineru" → 使用 MinerU VLM/OCR 引擎
-    config["extract"]["backend"] = "auto"   → 智能选择（预扫描后决定）
-    默认使用 pdfplumber
+    config["extract"]["backend"] = "mineru"    → 使用 MinerU VLM/OCR 引擎
+    config["extract"]["backend"] = "pdfplumber" → 强制使用 pdfplumber
+    config["extract"]["backend"] = "auto"        → 智能选择（默认；MinerU 可用时优先）
     """
     if get_config is None:
         from doc_parser.parser import get_extract_config
@@ -276,8 +278,8 @@ def extract_pdf(filepath, config=None, get_config=None):
         get_config = get_extract_config
     cfg = get_config(config)
 
-    # 后端选择
-    backend = cfg.get("backend", "pdfplumber")
+    # 后端选择（默认 auto：MinerU 可用时优先，不可用降级到 pdfplumber）
+    backend = cfg.get("backend", "auto")
     if backend == "mineru":
         from doc_parser.mineru_backend import extract_pdf_with_mineru
 
@@ -325,9 +327,10 @@ def extract_pdf(filepath, config=None, get_config=None):
             # 获取文字对象（带坐标）
             words = page.extract_words(keep_blank_chars=False, use_text_flow=True)
 
-            # 按行聚合（按 top 坐标分组，容差 3pt）
+            # 按行聚合（按 top 坐标分组，容差由配置控制）
+            y_tol = cfg.get("y_tolerance", 3)
             page_lines = _words_to_lines(
-                words, y_tolerance=3, margin_number_x=margin_number_x, margin_number_re=margin_number_re
+                words, y_tolerance=y_tol, margin_number_x=margin_number_x, margin_number_re=margin_number_re
             )
 
             # 收集有效行用于重复统计

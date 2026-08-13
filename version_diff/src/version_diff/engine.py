@@ -648,15 +648,21 @@ class DiffEngine:
         noise_enabled = bool(noise_cfg.get("enabled", True))
         noise_patterns = noise_cfg.get("patterns", [])
 
+        # 跟踪表过滤配置（added/removed 和 modified 共用）
+        tracking_cfg = self.config.diff.get("tracking_table", {}) if self.config.diff else {}
+        tracking_hints = tracking_cfg.get("hints")
+        tracking_row_patterns = tracking_cfg.get("row_patterns")
+        version_stamp_patterns = tracking_cfg.get("version_stamp_patterns")
+
         # added/removed：剥离配置噪声后为空 → 纯元数据噪声；否则保留为 content
         # added/removed 跟踪表行 → minor_changes（页码/修订记录等自动更新）
         for c in changes:
             if c.change_type == "modified":
                 continue
             # 跟踪表行（修订记录表、有效页清单等）→ minor_changes
-            if _is_tracking_table_row(c):
+            if _is_tracking_table_row(c, tracking_hints=tracking_hints, tracking_row_patterns=tracking_row_patterns):
                 c = _classify_change("tracking_table", c)
-                c.summary = "[页码跟踪] 跟踪表行自动更新（修订记录/有效页清单）"
+                c.summary = tracking_cfg.get("summary_template", "[页码跟踪] 跟踪表行自动更新（修订记录/有效页清单）")
                 minor.append(c)
                 continue
             if noise_enabled:
@@ -678,16 +684,22 @@ class DiffEngine:
         need_llm = []
         for c in modified:
             # 1) 跟踪表行（修订记录表、有效页清单等）
-            if _is_tracking_table_row(c):
+            if _is_tracking_table_row(c, tracking_hints=tracking_hints, tracking_row_patterns=tracking_row_patterns):
                 c = _classify_change("tracking_table", c)
                 summary = c.summary or ""
-                c.summary = f"[页码跟踪] {summary}" if summary else "[页码跟踪表自动更新]"
+                if summary:
+                    c.summary = f"[页码跟踪] {summary}"
+                else:
+                    default_tpl = tracking_cfg.get(
+                        "summary_template", "[页码跟踪表自动更新]"
+                    )
+                    c.summary = default_tpl
                 minor.append(c)
                 continue
 
             # 2) 修订日期 / 版本戳噪声剥离后比较
-            old_stripped = _strip_revision_noise(c.old_text)
-            new_stripped = _strip_revision_noise(c.new_text)
+            old_stripped = _strip_revision_noise(c.old_text, version_stamp_patterns=version_stamp_patterns)
+            new_stripped = _strip_revision_noise(c.new_text, version_stamp_patterns=version_stamp_patterns)
 
             if old_stripped and new_stripped and old_stripped == new_stripped:
                 # 剥离噪声后实质相同 → 纯元数据变更

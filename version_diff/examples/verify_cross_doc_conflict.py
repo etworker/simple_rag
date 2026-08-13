@@ -33,6 +33,9 @@ import sys
 import time
 
 from loguru import logger as log
+from version_diff.log import configure_logger
+
+configure_logger()  # 独立 example：开启 version_diff 日志（console + ./logs/version_diff.log）
 
 # 脚本位于 version_diff/examples/ → parents[2] 即项目根（simple_rag）
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]

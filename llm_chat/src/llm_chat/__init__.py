@@ -26,6 +26,10 @@ llm-chat — 轻量多后端 LLM 多轮对话管理
     answer = session.ask("那保留周期呢？")  # 自动带上对话历史
 """
 
+from loguru import logger
+
+logger.disable("llm_chat")  # 库默认安静：由应用入口(rag_demo)或 examples 的 configure_logger() 开启
+
 from llm_chat.defaults import (
     BEDROCK_DEFAULTS,
     DEFAULT_BACKEND,
