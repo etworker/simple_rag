@@ -83,6 +83,18 @@ result = ask_once(
 )
 ```
 
+### 从配置字典单次调用
+
+```python
+from llm_chat import ask_once_with_config
+
+# llm_config 的 "provider" 映射为后端，"model" 单独取出，其余字段透传
+result = ask_once_with_config(
+    {"provider": "openai", "model": "gpt-4o", "api_key": "sk-..."},
+    "这两段话是否矛盾？",
+)
+```
+
 ### Profile 配置
 
 ```python
@@ -137,6 +149,18 @@ def ask_once(
     **kwargs,
 ) -> str
 ```
+
+### `ask_once_with_config`
+
+```python
+def ask_once_with_config(
+    llm_config: dict,   # 含 provider/model/base_url/api_key/... 等字段
+    prompt: str,
+    system_prompt: str = "",
+) -> str
+```
+
+`llm_config` 的 `"provider"` 映射为后端名，`"model"` 单独取出，其余字段透传给后端。
 
 ### `resolve_llm_profile` / `resolve_llm_config`
 
