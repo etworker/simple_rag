@@ -148,6 +148,7 @@ async def run_pre_review(task_id: str):
             log.warning(f"预审核缓存加载失败，重新执行: {e}")
 
     # ====== 2. 慢速路径：完整预审核流程 ======
+    # 步骤列表在加载已有文档后按需调整（空知识库时跳过检索/差异/判定）
     all_steps = [
         {"id": "model", "label": "加载向量模型"},
         {"id": "loading", "label": "加载已有文档"},
@@ -158,7 +159,6 @@ async def run_pre_review(task_id: str):
         {"id": "judging", "label": "LLM 矛盾判定"},
         {"id": "done", "label": "汇总结果"},
     ]
-    task["all_steps"] = all_steps
     task["completed_steps"] = []
 
     step_start_time = time.time()
@@ -195,6 +195,19 @@ async def run_pre_review(task_id: str):
         log.info(f"开始加载已有文档 ({_state.app.doc_store.total_documents} 篇)...")
         await asyncio.to_thread(load_existing_docs, engine)
         log.info("已有文档加载完成")
+
+        # 知识库为空时：精简步骤列表，跳过检索/差异/判定，直接到汇总
+        kb_empty = _state.app.doc_store.total_documents == 0
+        if kb_empty:
+            all_steps = [
+                {"id": "model", "label": "加载向量模型"},
+                {"id": "loading", "label": "加载已有文档"},
+                {"id": "parsing", "label": "解析文档"},
+                {"id": "embedding", "label": "计算语义向量"},
+                {"id": "done", "label": "汇总结果"},
+            ]
+            log.info("知识库为空，跳过跨文档检索/差异/判定步骤")
+        task["all_steps"] = all_steps
 
         from app.services.parse_cache import cached_parse as _parse
 
@@ -277,8 +290,8 @@ async def run_pre_review(task_id: str):
             on_judge_batch=on_judge_batch,
         )
 
-        # 标记知识库是否为空（无任何已有文档可供对比）
-        kb_empty = result.total_candidates == 0 and result.llm_judged == 0 and len(result.inconsistencies) == 0
+        # 确认知识库是否为空（前面已预判，这里用引擎返回值交叉验证）
+        # kb_empty 已在加载已有文档后赋值，引擎空库时返回空 DiffResult 与之一致
 
         # ====== 3. 版本对比（如果存在旧版本文档）======
         old_version_filepath = task.get("old_version_filepath", "")
