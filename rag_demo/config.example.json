@@ -59,9 +59,9 @@
     }
   },
   "llm_routing": {
-    "qa": "self_hosted_glm",
-    "pre_review": "self_hosted_glm",
-    "conflict_detection": "self_hosted_glm"
+    "qa": "bedrock_glm_flash",
+    "pre_review": "bedrock_glm_flash",
+    "conflict_detection": "bedrock_glm_flash"
   },
   "retrieval": {
     "top_k": 15,

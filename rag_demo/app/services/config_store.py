@@ -37,11 +37,24 @@ DEFAULT_CONFIG = {
         # GPU device id (多 GPU 场景)
         "gpu_id": 0,
     },
-    "llm_profiles": {},
+    "llm_profiles": {
+        "bedrock_glm_flash": {
+            "provider": "bedrock",
+            "model": "zai.glm-4.7-flash",
+            "region": "us-east-1",
+            "api_key_env": "AWS_BEARER_TOKEN_BEDROCK",
+            "max_tokens": 2048,
+            "timeout": 120,
+            "max_retries": 3,
+            "retry_backoff": 2.0,
+            "context_window": 8192,
+            "concurrency": 1,
+        },
+    },
     "llm_routing": {
-        "qa": "default",
-        "pre_review": "default",
-        "conflict_detection": "default",
+        "qa": "bedrock_glm_flash",
+        "pre_review": "bedrock_glm_flash",
+        "conflict_detection": "bedrock_glm_flash",
     },
     "retrieval": {
         "top_k": 5,

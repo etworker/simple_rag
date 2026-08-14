@@ -52,9 +52,9 @@
     }
   },
   "llm_routing": {
-    "version_compare": "self_hosted_glm",
-    "qa": "self_hosted_glm",
-    "pre_review": "self_hosted_glm",
-    "conflict_detection": "self_hosted_glm"
+"version_compare": "bedrock_glm_flash",
+  "qa": "bedrock_glm_flash",
+  "pre_review": "bedrock_glm_flash",
+  "conflict_detection": "bedrock_glm_flash"
   }
 }

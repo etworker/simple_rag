@@ -4,7 +4,7 @@
 验证：version_compare + _filter_substantive_changes 能正确过滤噪音，
 只保留客观事实变更，过滤掉编号重排/等义改写/元数据差异。
 
-需要 LLM 在线（使用 config.json 中的 self_hosted_glm 配置）
+需要 LLM 在线（使用 config.json 中的 bedrock_glm_flash 配置）
 """
 
 import json

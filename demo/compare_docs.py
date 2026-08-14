@@ -22,7 +22,7 @@
 LLM（默认启用，从共享 llm_profiles 文件按名字选择，对「修改」类差异生成摘要）:
     --no-llm                  关闭 LLM（纯规则模式）
     --llm-profiles <file>     llm_profiles+routing JSON 文件（缺省 demo/llm_profiles.json）
-    --profile <name>          要使用的 LLM profile 名（缺省 self_hosted_glm）
+    --profile <name>          要使用的 LLM profile 名（缺省 bedrock_glm_flash）
     --llm-provider/model/     兜底单配置（仅当无 profile 文件时用）
     --llm-base-url/--llm-key
 
@@ -245,25 +245,25 @@ def main():
     )
     parser.add_argument(
         "--profile",
-        default="self_hosted_glm",
-        help="要使用的 LLM profile 名（缺省 self_hosted_glm）",
+        default="bedrock_glm_flash",
+        help="要使用的 LLM profile 名（缺省 bedrock_glm_flash）",
     )
     # 兜底单配置（仅在无 --llm-profiles 时用）
     parser.add_argument(
-        "--llm-provider", default="openai", help="LLM 服务商（无 profile 文件时兜底）"
+        "--llm-provider", default="bedrock", help="LLM 服务商（无 profile 文件时兜底）"
     )
     parser.add_argument(
         "--llm-model",
-        default="GLM-4.7-Flash-Q4_K_M.gguf",
+        default="zai.glm-4.7-flash",
         help="LLM 模型名（无 profile 文件时兜底）",
     )
     parser.add_argument(
         "--llm-base-url",
-        default="http://a10bj.etworker.tech:8731/v1",
-        help="LLM base_url（无 profile 文件时兜底）",
+        default="",
+        help="LLM base_url（无 profile 文件时兜底，Bedrock 不需要）",
     )
     parser.add_argument(
-        "--llm-key", default="dummy", help="LLM api_key（无 profile 文件时兜底）"
+        "--llm-key", default="", help="LLM api_key（无 profile 文件时兜底，Bedrock 用 api_key_env）"
     )
     parser.add_argument("--top", type=int, default=20, help="跨文档模式列出前 N 条")
     parser.add_argument("--embedding", default="BAAI/bge-small-zh-v1.5")
