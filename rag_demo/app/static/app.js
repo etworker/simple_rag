@@ -478,6 +478,10 @@ uploadZone.addEventListener('drop',e=>{e.preventDefault();uploadZone.style.borde
 
 async function handleUpload(file){
 if(!file)return;
+// 清理上一轮预审核结果，避免在 SSE 首个事件到达前仍显示旧结果
+reviewResult=null;reviewTaskId=null;
+const oldBtn=document.getElementById('reviewBtn');if(oldBtn){oldBtn.classList.remove('show');oldBtn.textContent='';}
+const oldPanel=document.getElementById('reviewPanel');if(oldPanel)oldPanel.classList.remove('active');
 newDocFile=file.name;newDocHash='';activeFileName=file.name;
 uploadZone.classList.add('disabled');
 document.getElementById('stepArea').classList.add('show');
@@ -614,14 +618,15 @@ if(r.phase && r.phase!=='done'){
     const tot=r.judge_total_batches||0;
     const batchInfo=tot>0?` batch ${cur}/${tot}`:'';
     const lastNew=r.last_batch_new_count||0;
-    const pulseColor = r.phase==='candidates_ready' ? 'var(--primary)' : 'var(--warn)';
-    const icon = r.phase==='candidates_ready' ? '🔍' : '🧠';
-    const label = r.phase==='candidates_ready' ? '检索完成' : 'LLM 判定中';
+    const pulseColor = r.phase==='candidates_ready' ? 'var(--primary)' : r.phase==='version_compare' ? '#722ed1' : 'var(--warn)';
+    const icon = r.phase==='candidates_ready' ? '🔍' : r.phase==='version_compare' ? '📝' : '🧠';
+    const label = r.phase==='candidates_ready' ? '检索完成' : r.phase==='version_compare' ? '版本差异识别中' : 'LLM 判定中';
     judgingBanner=`<div class="judging-banner" style="padding:8px 10px;margin-bottom:8px;border-radius:4px;font-size:12px;display:flex;align-items:center;gap:8px;background:rgba(255,170,0,0.08);">`;
     judgingBanner+=`<span class="pulse-dot" style="width:8px;height:8px;background:${pulseColor};border-radius:50%;animation:pulse 1s infinite;display:inline-block;"></span>`;
     judgingBanner+=`<span><b>${icon} ${label}</b>${batchInfo}`;
     if(items.length>0) judgingBanner+=` — 已发现 <b>${items.length}</b> 处矛盾`;
     if(lastNew>0 && r.phase==='judging') judgingBanner+=` <span style="color:var(--text3);font-size:10px;">(+${lastNew})</span>`;
+    if(r.phase==='version_compare') judgingBanner+=` <span style="color:var(--text3);font-size:10px;">（内容矛盾判定已完成，正在对比新旧版本差异，请稍候...）</span>`;
     judgingBanner+=`</span></div>`;
 }
 
@@ -769,14 +774,16 @@ async function showVersionDiff(idx){
     const typeLabel = vc.type==='modified'?'修改':vc.type==='added'?'新增':'删除';
     const diffPage = extractPageFromLoc(vc.location||vc.old_location)||1;
 
-    // 顶部信息条
+    // 顶部标题栏（固定不滚动）
     let html = '';
     html += `<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 14px;border-bottom:1px solid var(--border);background:var(--card);flex-shrink:0;">`;
     html += `<span style="font-weight:600;">${typeIcon} ${typeLabel} · 差异 #${idx+1}</span>`;
     html += `<button onclick="closeVersionCompare()" style="background:none;border:1px solid var(--border);border-radius:4px;padding:3px 12px;cursor:pointer;font-size:11px;">✕ 返回列表</button>`;
     html += `</div>`;
 
-    // ★ 差异定位（大而醒目）
+    // ★ sticky 区域：差异定位 + 摘要 + 文字差异 + 页面切换（滚动时固定在顶部）
+    html += `<div class="vc-sticky-header">`;
+    // 差异定位
     const oldLoc = parseLoc(vc.old_location||'');
     const newLoc = parseLoc(vc.location||'');
     html += `<div class="vc-loc-bar">`;
@@ -784,11 +791,9 @@ async function showVersionDiff(idx){
     html += `<div class="vc-loc-arrow">→</div>`;
     html += `<div class="vc-loc-side vc-loc-new"><span class="vc-loc-tag">N 新</span><span class="vc-loc-page">第 ${newLoc.page||diffPage} 页</span><span class="vc-loc-section">${esc(newLoc.section||'—')}</span></div>`;
     html += `</div>`;
-
-    // ★ LLM 摘要
+    // LLM 摘要
     if(vc.summary) html += `<div class="vc-summary-bar">💡 ${esc(vc.summary)}</div>`;
-
-    // ★ 文字差异高亮（双栏 diff）
+    // 文字差异高亮（双栏 diff）
     html += `<div class="vc-text-diff">`;
     html += `<div style="font-size:11px;font-weight:600;color:var(--text3);margin-bottom:8px;">📝 文字差异对比</div>`;
     const oldText = vc.old_text||'';
@@ -800,19 +805,20 @@ async function showVersionDiff(idx){
         html += `<div class="vc-diff-row vc-diff-old-row"><span class="vc-diff-tag">旧</span><span class="vc-diff-text">${diffMark(newText, oldText, 'b')}</span></div>`;
         html += `<div class="vc-diff-empty">（新版已删除此段落）</div>`;
     } else {
-        // modified: show both
         html += `<div class="vc-diff-row vc-diff-old-row"><span class="vc-diff-tag">旧</span><span class="vc-diff-text">${diffMark(newText, oldText, 'b')}</span></div>`;
         html += `<div class="vc-diff-row vc-diff-new-row"><span class="vc-diff-tag">新</span><span class="vc-diff-text">${diffMark(newText, oldText, 'a')}</span></div>`;
     }
     html += `</div>`;
-
-    // ★ 默认定位页的双面预览
-    html += `<div style="padding:8px 14px;background:var(--card);border-top:1px solid var(--border);flex-shrink:0;display:flex;align-items:center;gap:8px;">`;
+    // 页面切换按钮
+    html += `<div style="padding:8px 14px;background:var(--card);border-top:1px solid var(--border);display:flex;align-items:center;gap:8px;">`;
     html += `<span style="font-size:11px;font-weight:600;color:var(--text3);">📄 页面定位：第 ${diffPage} 页</span>`;
     html += `<div style="margin-left:auto;display:flex;gap:6px;">`;
     html += `<button class="vc-quick-tab active" data-side="new" onclick="switchVcTab('new')" style="padding:4px 14px;border:1px solid var(--border);border-radius:4px;background:var(--primary);color:#fff;cursor:pointer;font-size:11px;">N 新版</button>`;
     html += `<button class="vc-quick-tab" data-side="old" onclick="switchVcTab('old')" style="padding:4px 14px;border:1px solid var(--border);border-radius:4px;background:transparent;cursor:pointer;font-size:11px;color:var(--text3);">B 旧版</button>`;
     html += `</div></div>`;
+    html += `</div>`; // 关闭 vc-sticky-header
+
+    // 滚动区域：PDF 页面预览（可上下滚动看完整文档）
     html += `<div class="vc-scroll-area" id="vcPagesContainer" data-diff-page="${diffPage}"><div style="padding:20px;text-align:center;color:var(--text3);">正在加载文档预览...</div></div>`;
 
     panel.innerHTML = html;
@@ -1009,28 +1015,56 @@ const bLoc=c.doc_b?.location||c.doc_b_location||'';
 const loc = side==='a'?aLoc:bLoc;
 const page = extractPage(loc)||1;
 
-// 构建差异文本高亮（双栏对比）
+// 文字差异高亮（sticky 固定在顶部）
 const textDiffHtml = `<div class="diff-compare">`+
     `<div class="diff-row"><span class="diff-label">N</span><span class="diff-text">${diffMark(aSays,bSays,'a')}</span></div>`+
     `<div class="diff-row"><span class="diff-label">B</span><span class="diff-text">${diffMark(aSays,bSays,'b')}</span></div>`+
     `</div>`;
 
+// 页面导航条
+const navBar = `<div style="padding:6px 10px;background:var(--card);border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px;font-size:11px;color:var(--text3);">
+    <span>📄 第 ${page} 页</span>
+    <div style="margin-left:auto;display:flex;gap:4px;">
+        <button onclick="cmpPrevPage()" style="padding:2px 10px;border:1px solid var(--border);border-radius:3px;background:none;cursor:pointer;font-size:11px;">◀</button>
+        <input type="number" id="cmpPageInput" value="${page}" min="1" style="width:40px;text-align:center;font-size:11px;" onchange="cmpGoToPage()" onkeydown="if(event.key==='Enter')cmpGoToPage()">
+        <button onclick="cmpNextPage()" style="padding:2px 10px;border:1px solid var(--border);border-radius:3px;background:none;cursor:pointer;font-size:11px;">▶</button>
+    </div></div>`;
+
 let imgUrl;
 if(side==='a'){
     // N 侧 → 新文档（待审核），使用 review/page API
-    imgUrl = `/api/documents/review/page?task_id=${reviewTaskId}&page=${page}`;
+    imgUrl = `/api/documents/review/page?task_id=${reviewTaskId}&page=`;
 } else {
     // B 侧 → 已有文档（在知识库中），使用 documents/page API
     const bFile = resolveFileName(c.doc_b?.file||c.doc_b_file||'') || '';
     if(bFile){
         const fullName = Object.keys(docMap).find(k=>docMap[k]===bFile) || bFile;
-        imgUrl = `/api/documents/page?name=${encodeURIComponent(fullName)}&page=${page}`;
+        imgUrl = `/api/documents/page?name=${encodeURIComponent(fullName)}&page=`;
     } else {
         body.innerHTML=`<div style="color:#aaa;padding:20px;text-align:center;">${textDiffHtml}<br>⚠️ 旧文档信息缺失，无法定位预览</div>`;
         return;
     }
 }
-body.innerHTML=`<div>${textDiffHtml}<img src="${imgUrl}" style="max-width:100%;border-radius:4px;margin-top:8px;" onerror="this.outerHTML='<div style=\\'color:#aaa;padding:20px;\\'>页面渲染失败</div>'"></div>`;
+
+// 构建可滚动的预览区域：sticky 文字差异 + 导航条 + PDF 页面
+body.innerHTML=`<div style="display:flex;flex-direction:column;width:100%;max-width:700px;gap:6px;">${textDiffHtml}${navBar}<div id="cmpPdfArea" style="flex:1;overflow-y:auto;"><img src="${imgUrl}${page}" style="width:100%;border-radius:4px;" onerror="this.outerHTML='<div style=\\'padding:20px;text-align:center;color:#aaa;\\'>页面渲染失败</div>'"></div></div>`;
+// 保存当前页和 URL 前缀供翻页使用
+body.dataset.page=page;
+body.dataset.imgBase=imgUrl;
+}
+
+// 内容矛盾预览翻页
+function cmpPrevPage(){const body=document.getElementById('compareBody');if(!body)return;const p=Math.max(1,parseInt(body.dataset.page||'1')-1);cmpSetPage(p);}
+function cmpNextPage(){const body=document.getElementById('compareBody');if(!body)return;const p=parseInt(body.dataset.page||'1')+1;cmpSetPage(p);}
+function cmpGoToPage(){const inp=document.getElementById('cmpPageInput');if(!inp)return;cmpSetPage(Math.max(1,parseInt(inp.value)||1));}
+function cmpSetPage(p){
+    const body=document.getElementById('compareBody');if(!body)return;
+    const base=body.dataset.imgBase||'';if(!base)return;
+    body.dataset.page=p;
+    const inp=document.getElementById('cmpPageInput');if(inp)inp.value=p;
+    const nav=document.querySelector('#compareBody > div > div[style*="padding:6px"] > span');if(nav)nav.textContent=`📄 第 ${p} 页`;
+    const area=document.getElementById('cmpPdfArea');if(!area)return;
+    area.innerHTML=`<img src="${base}${p}" style="width:100%;border-radius:4px;" onerror="this.outerHTML='<div style=\\'padding:20px;text-align:center;color:#aaa;\\'>第${p}页加载失败</div>'">`;
 }
 
 function extractPage(loc){const m=(loc||'').match(/第(\d+)/);return m?parseInt(m[1]):1;}

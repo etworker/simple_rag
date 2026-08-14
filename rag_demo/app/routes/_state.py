@@ -33,14 +33,16 @@ class AppState:
         self._load_review_cache()
 
     def save_review_cache(self):
-        """将已完成的 review task 持久化（含段落与版本对比信息）"""
+        """将已完成的 review task 持久化（含段落、版本对比信息与确认状态）"""
         try:
             os.makedirs(os.path.dirname(self.review_cache_path), exist_ok=True)
             to_save = {}
             for tid, task in self.review_tasks.items():
-                if task.get("status") == "done" and task.get("result"):
+                # 保存 done / confirmed / rejected 状态的 task
+                status = task.get("status")
+                if status in ("done", "confirmed", "rejected") and task.get("result"):
                     to_save[tid] = {
-                        "status": task["status"],
+                        "status": status,
                         "filename": task["filename"],
                         "filepath": task["filepath"],
                         "file_hash": task.get("file_hash", ""),
@@ -49,20 +51,28 @@ class AppState:
                         "old_version_filepath": task.get("old_version_filepath", ""),
                         "old_doc_filename": task.get("old_doc_filename", ""),
                     }
+            # 同时持久化 confirmed_or_rejected 集合，重启后恢复
+            cache = {"tasks": to_save, "confirmed_or_rejected": list(self.confirmed_or_rejected)}
             with open(self.review_cache_path, "w", encoding="utf-8") as f:
-                json.dump(to_save, f, ensure_ascii=False)
+                json.dump(cache, f, ensure_ascii=False)
         except Exception:
             pass
 
     def _load_review_cache(self):
-        """启动时恢复已完成的 review task"""
+        """启动时恢复已完成的 review task 及确认状态"""
         if os.path.exists(self.review_cache_path):
             try:
                 with open(self.review_cache_path, encoding="utf-8") as f:
-                    data = json.load(f)
-                for tid, task in data.items():
+                    cache = json.load(f)
+                # 兼容旧格式（直接是 task dict）和新格式（{tasks, confirmed_or_rejected}）
+                if isinstance(cache, dict) and "tasks" in cache:
+                    tasks = cache["tasks"]
+                    self.confirmed_or_rejected = set(cache.get("confirmed_or_rejected", []))
+                else:
+                    tasks = cache
+                for tid, task in tasks.items():
                     self.review_tasks[tid] = task
-                log.info(f"恢复 {len(data)} 个审核任务缓存")
+                log.info(f"恢复 {len(tasks)} 个审核任务缓存")
             except Exception:
                 pass
 

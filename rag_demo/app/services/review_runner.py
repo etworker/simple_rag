@@ -282,6 +282,39 @@ async def run_pre_review(task_id: str):
 
         # ====== 3. 版本对比（如果存在旧版本文档）======
         old_version_filepath = task.get("old_version_filepath", "")
+
+        # 如果有旧版本文档，先推送"版本对比进行中"状态给前端
+        if old_version_filepath and os.path.exists(old_version_filepath):
+            task["result"] = {
+                "phase": "version_compare",
+                "is_safe": result.is_safe,
+                "new_filename": task["filename"],
+                "inconsistencies": [
+                    {
+                        "point": inc.point,
+                        "doc_a_file": inc.doc_a_file,
+                        "doc_a_location": inc.doc_a_location,
+                        "doc_a_says": inc.doc_a_says,
+                        "doc_b_file": inc.doc_b_file,
+                        "doc_b_location": inc.doc_b_location,
+                        "doc_b_says": inc.doc_b_says,
+                    }
+                    for inc in result.inconsistencies
+                ],
+                "total_candidates": result.total_candidates,
+                "rule_filtered": result.rule_filtered,
+                "llm_judged": result.llm_judged,
+                "message": "内容矛盾判定完成，正在识别版本差异，请稍候...",
+                "version_changes": [],
+                "minor_changes": [],
+                "has_version_changes": False,
+                "has_minor_changes": False,
+                "kb_empty": kb_empty,
+                "no_candidates": (not kb_empty and result.total_candidates == 0 and result.llm_judged == 0),
+            }
+            _bump_result()
+            log.info("内容矛盾判定完成，开始版本对比...")
+
         version_compare_result = _run_version_compare(engine, old_version_filepath, filepath)
 
         task["progress"] = 100

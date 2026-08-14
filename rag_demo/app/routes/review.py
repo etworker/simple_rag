@@ -21,8 +21,18 @@ router = APIRouter()
 
 @router.get("/review/active")
 async def get_active_review():
-    """获取当前活跃的预审核任务（如果有）"""
-    for task_id, task in _state.app.review_tasks.items():
+    """获取当前活跃的预审核任务（如果有）
+
+    优先级:
+      1. 最新 pending/running 任务（正在处理中）
+      2. 最新 done 且未确认/拒绝的任务（待用户确认）
+
+    已 confirmed/rejected/cancelled/error 的任务会被跳过，
+    确保用户上传新文档时不会看到旧文档的预审核结果。
+    """
+    # 先查找 pending/running（按插入逆序，取最新的）
+    items = list(_state.app.review_tasks.items())
+    for task_id, task in reversed(items):
         if task["status"] in ("pending", "running"):
             return {
                 "task_id": task_id,
@@ -34,8 +44,13 @@ async def get_active_review():
                 "all_steps": task.get("all_steps", []),
                 "completed_steps": task.get("completed_steps", []),
             }
-        if task["status"] == "done" and task.get("result") and task_id not in _state.app.confirmed_or_rejected:
-            # 解析旧版文档信息
+    # 再查找 done 且未确认/拒绝的（按插入逆序，取最新的）
+    for task_id, task in reversed(items):
+        if (
+            task["status"] == "done"
+            and task.get("result")
+            and task_id not in _state.app.confirmed_or_rejected
+        ):
             old_vf = task.get("old_version_filepath", "")
             old_vf_basename = os.path.basename(old_vf) if old_vf else ""
             old_doc_filename = task.get("old_doc_filename", "")
@@ -47,7 +62,7 @@ async def get_active_review():
                 "result": task["result"],
                 "old_version_filepath": old_vf_basename,
                 "old_doc_filename": old_doc_filename,
-                "old_version_fullpath": old_vf,  # 完整路径，用于预览旧文档PDF
+                "old_version_fullpath": old_vf,
             }
     return {"task_id": None}
 
@@ -225,6 +240,7 @@ async def confirm_review(task_id: str):
 
     task["status"] = "confirmed"
     _state.app.confirmed_or_rejected.add(task_id)
+    _state.app.save_review_cache()  # 持久化确认状态，重启后不会旧任务被当作未确认
     log.info(f"入库成功: {meta.filename} ({meta.paragraph_count} paras) @ {filepath}")
     return {
         "message": "文档已入库",
@@ -241,6 +257,7 @@ async def reject_review(task_id: str):
     task = _state.app.review_tasks[task_id]
     task["status"] = "rejected"
     _state.app.confirmed_or_rejected.add(task_id)
+    _state.app.save_review_cache()  # 持久化拒绝状态
     if os.path.exists(task["filepath"]):
         os.remove(task["filepath"])
     return {"message": "已拒绝，文档不入库"}

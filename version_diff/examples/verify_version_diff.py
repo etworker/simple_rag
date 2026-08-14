@@ -30,6 +30,7 @@ import sys
 import time
 
 from loguru import logger as log
+
 from version_diff.log import configure_logger
 
 configure_logger()  # 独立 example：开启 version_diff 日志（console + ./logs/version_diff.log）
