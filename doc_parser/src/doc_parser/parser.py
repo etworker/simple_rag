@@ -43,7 +43,10 @@ from doc_parser.models import Document
 
 # 默认配置
 DEFAULT_CONFIG = {
-    # PDF 后端: "auto"(默认,MinerU优先) / "mineru" / "pdfplumber"
+    # PDF 后端: "auto"(默认,pdfplumber优先) / "mineru" / "docling" / "pdfplumber"
+    # - mineru   : MinerU VLM/OCR（扫描件/复杂版面，CPU 慢）
+    # - docling  : IBM Docling TableFormer（复杂版面/跨页表，CPU 约 1.4s/页）
+    # - auto     : 智能路由（扫描件→mineru，正常→pdfplumber）
     "backend": "auto",
     "header_margin_pct": 8,
     "footer_margin_pct": 8,
@@ -140,6 +143,9 @@ DEFAULT_CONFIG = {
     "scan_text_per_page_threshold": 50,
     # 大图片覆盖率阈值（超过此比例 → 疑似扫描件）
     "scan_large_image_ratio": 0.5,
+    # 大图片判定需与文本量联合：仅当"大图覆盖高 且 每页文本仍低于此值"才判扫描件。
+    # 避免公文红头/印章/配图（大图但文本充足）被误判为扫描件走 MinerU。
+    "scan_image_text_per_page_threshold": 300,
     # 有绘图线但 pdfplumber 未提取到表格的页数比例阈值
     "scan_drawings_no_tables_ratio": 0.4,
     # 低表格提取率阈值（低于此值且有绘图线 → 可能无框线表格）
@@ -156,6 +162,20 @@ DEFAULT_CONFIG = {
     "table_aligned_line_ratio": 0.3,
     # word 行聚合的 Y 坐标容差（pt）
     "y_tolerance": 3,
+    # PDF 文本层数字断字后处理：把 "28. 55" 修复为 "28.55"
+    # （部分 PDF 数字按字符拆成独立 text run，所有文本后端都会断字）。
+    # 设为 False 可关闭。
+    "normalize_number_spacing": True,
+    # MinerU 后端：起始/结束页（0-based，None=全部）。无 GPU 时建议限定页数。
+    "mineru_start_page": 0,
+    "mineru_end_page": None,
+    # Docling 后端：起始/结束页（1-based，None=全部，用于限页省时）
+    "docling_start_page": None,
+    "docling_end_page": None,
+    # Docling 后端：文本型 PDF 关闭 OCR（True 仅当扫描件）
+    "docling_ocr": False,
+    # Docling 后端：推理设备 auto/cpu/cuda/mps（auto=自动探测，有 CUDA torch 即用 GPU）
+    "docling_device": "auto",
 }
 
 

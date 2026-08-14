@@ -38,6 +38,18 @@ _DEFAULT_LIST_END_PUNCT = "；，。、；,.；"
 # 单纯数字编号的正则（用于在 _detect_chapter 中识别并施加更严格的过滤）
 _SINGLE_NUMBER_RE = re.compile(r"^\d+\s+(.+)")
 
+# 数字编号后紧跟的量词/统计单位前缀：
+# 正文统计数据（"3 万人次"/"6 月份"/"28. 55 万小时"/"10 万架次"）以数字开头，
+# 但紧跟量词单位，不是章节标题；而真实章节标题（"2 职责分工"/"3 网络管理"）
+# 数字后紧跟的是名词性内容。
+# 命中这些前缀 → 视为统计数字正文，非章节标题。
+_NUM_UNIT_PREFIXES = (
+    "万人次", "人月", "人年", "万小时", "小时", "万架次", "架次", "万公里", "公里",
+    "万米", "万吨", "吨", "亿元", "万元", "千元", "元", "万方", "立方米", "平米",
+    "平方米", "平方公里", "个月", "月份", "月", "年度", "季度", "天", "日", "号",
+    "人次", "次", "个", "名", "家", "岁", "分", "秒", "‰", "%", "％", "‰",
+)
+
 # 中文编号正则（用于判断是否为中文数字编号模式，施加标题终止符截断）
 _CHINESE_NUM_RE = re.compile(r"^（?[一二三四五六七八九十]+[、）)]")
 
@@ -48,6 +60,24 @@ _DEFAULT_HEADING_TERMINATORS = ("．", "。", "：", ":")
 
 # 句末终止符集合（用于行内标题粘连检测）
 _DEFAULT_SENTENCE_END_CHARS = "。；！？.;!？"
+
+
+def normalize_number_spacing(text, cfg=None):
+    """修复 PDF 文本层数字断字。
+
+    部分 PDF 将数字按字符拆成独立 text run（字距与词距无区分），
+    文本后端拼接后出现 "28. 55 万小时"、"0. 18%"、"2632. 3 万人次"。
+    本函数按确定性模式把小数点后的空格去掉：
+      - "28. 55"   → "28.55"   （小数，点前有数字）
+      - "0. 18%"   → "0.18%"
+      - "2632. 3"  → "2632.3"
+    """
+    if not text:
+        return text
+    out = re.sub(r"(\d)\.\s+(\d)", r"\1.\2", text)
+    # "N N. 万/亿..."（如 "57 10. 万架次" → "57.10 万架次"、"26 63. 万吨" → "26.63 万吨"）
+    out = re.sub(r"(\d+)\s+(\d+)\.(?=\s*(?:万|亿|％|%|吨|米|公里))", r"\1.\2", out)
+    return out
 
 
 def _try_split_inline_title(line, cfg):
@@ -139,6 +169,9 @@ def detect_chapter(text, cfg):
                 if num_val > cfg.get("single_number_max_value", 999):
                     return None
                 if len(title) > cfg.get("single_number_title_max_length", 20):
+                    return None
+                # 数字紧跟量词/统计单位（"3 万人次"/"6 月份"）→ 正文统计数据，非章节标题
+                if title.startswith(cfg.get("num_unit_prefixes", _NUM_UNIT_PREFIXES)):
                     return None
             return (chapter, title)
     return None

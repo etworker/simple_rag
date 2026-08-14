@@ -178,6 +178,8 @@ def extract_pdf_with_mineru(filepath: str, config: dict | None = None):
             f_dump_model_output=False,
             f_dump_orig_pdf=False,
             f_dump_content_list=True,
+            start_page_id=cfg.get("mineru_start_page", 0),
+            end_page_id=cfg.get("mineru_end_page", None),
         )
 
         # ── 查找并解析输出 ──

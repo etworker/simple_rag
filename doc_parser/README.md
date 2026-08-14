@@ -8,6 +8,7 @@
 
 - **PDF 解析**（`pdfplumber`）：提取正文段落 + 表格，自动过滤页眉/页脚/水印噪声
 - **MinerU 后端**（可选）：使用 VLM/OCR 引擎解析复杂排版（无框线表格、多栏布局、扫描件），准确率 95%+
+- **Docling 后端**（可选）：TableFormer 深度学习表格识别，跨页表不重复表头、章节层级准确
 - **智能后端选择**：`backend: "auto"` 预扫描 PDF 特征，自动在 pdfplumber 和 MinerU 间选择最优后端
 - **Word 解析**（`python-docx`）：提取段落 + 表格，检测章节结构
 - **跨页段落拼接**：不按页分段，全文拼接后按语义信号（空行/章节标题/句末终止符）重新分段
@@ -26,10 +27,11 @@
 
 | 依赖 | 用途 |
 |------|------|
-| `pdfplumber >= 0.11.4` | PDF 文本与表格提取 |
+| `pdfplumber >= 0.11.4` | PDF 文本与表格提取（默认后端） |
 | `python-docx >= 1.1.2` | Word 文档解析 |
 | `loguru >= 0.7.3` | 日志 |
-| `mineru[all]` (可选) | VLM/OCR PDF 解析后端，需 GPU |
+| `docling[pdf]` (可选) | TableFormer 深度学习表格后端（CPU/GPU 均可） |
+| `mineru[all]` (可选) | VLM/OCR PDF 解析后端，GPU 上推荐 vlm 模式 |
 
 Python >= 3.10
 
@@ -38,15 +40,20 @@ Python >= 3.10
 ## 安装
 
 ```bash
-# 在 simple_rag 项目根目录下
-uv sync --project doc_parser
-
-# 或单独安装
+# 方式一：自动安装脚本（推荐，自动检测 GPU 并安装匹配的 torch 构建）
+#   - 有 NVIDIA GPU  → CUDA 版 torch（默认 cu124，可用 --cuda 覆盖）
+#   - 无 GPU        → CPU 版 torch（省 ~2GB 下载）
+#   - 同时安装 docling + mineru 后端依赖
 cd doc_parser
-uv sync
+python scripts/install_deps.py                 # 全量
+python scripts/install_deps.py --no-mineru     # 跳过 mineru
+python scripts/install_deps.py --cuda 121      # 指定 CUDA 版本
 
-# 安装 MinerU 后端（可选，需 GPU）
-uv pip install -U "mineru[all]"
+# 方式二：手动 uv 安装
+cd doc_parser
+uv sync --extra dev
+uv pip install "docling[pdf]"                  # 可选，Docling 表格后端
+uv pip install -U "mineru[all]"                # 可选，MinerU VLM/OCR 后端
 ```
 
 ---
@@ -176,6 +183,31 @@ MinerU 后端特点：
 | 任意 | `pipeline` | pipeline | ~86% |
 
 GPU 推荐：T4 16GB / V100 / A10 / A100 均可，T4 性价比最高
+
+### Docling 后端
+
+Docling 使用 IBM 的 TableFormer 做深度学习表格识别，与 MinerU 相比更轻量（CPU ~1.4s/页），在**跨页表格不重复表头**和**章节层级识别**上表现好：
+
+```python
+# 指定 Docling 后端（并限制页范围以节省时间）
+doc = parse(
+    "manual.pdf",
+    config={
+        "extract": {
+            "backend": "docling",
+            "docling_start_page": 1,
+            "docling_end_page": 180,
+            "docling_device": "auto",  # auto 自动探测：有 CUDA torch 即用 GPU
+        }
+    },
+)
+```
+
+Docling 后端特点：
+- **`docling_device: "auto"`（默认）**：有 CUDA torch 自动用 GPU，否则 CPU
+- **表格识别**：TableFormer 深度学习模型，优于 pdfplumber 的几何启发式
+- **跨页表格**：不重复表头，分页处插入分隔线（MinerU 则完全合并）
+- **无 MSVC 环境**：模块已内置 `TORCH_COMPILE_DISABLE=1` 与 UTF-8 环境变量
 
 ---
 
@@ -377,10 +409,16 @@ json_str = json.dumps(doc.to_dict(), ensure_ascii=False, indent=2)
 | `margin_number_pattern` | `^(?:\d+(?:\.\d+)*\|[A-Z])$` | 编号列匹配正则 |
 | `table_empty_cell_threshold` | `0.6` | 空单元格率阈值（1.0 = 禁用过滤） |
 | `table_empty_placeholders` | `["□", "☐", "○", "——"]` | 视为空单元格的占位符 |
-| `backend` | `"pdfplumber"` | PDF 解析后端：`"pdfplumber"` / `"mineru"` / `"auto"` |
+| `backend` | `"auto"` | PDF 解析后端：`"pdfplumber"` / `"mineru"` / `"docling"` / `"auto"` |
 | `mineru_backend` | `"auto"` | MinerU 后端模式：`"vlm"` / `"pipeline"` / `"auto"` |
 | `mineru_output_dir` | `""` | MinerU 输出目录（空=临时目录） |
 | `mineru_timeout` | `600` | MinerU 解析超时秒数 |
+| `mineru_start_page` | `0` | MinerU 起始页（0-based，None=全部） |
+| `mineru_end_page` | `None` | MinerU 结束页（0-based，None=全部） |
+| `docling_start_page` | `None` | Docling 起始页（1-based，None=全部） |
+| `docling_end_page` | `None` | Docling 结束页（1-based 含端点，None=全部） |
+| `docling_ocr` | `False` | Docling 是否 OCR（仅扫描件需要） |
+| `docling_device` | `"auto"` | Docling 推理设备：`"auto"` / `"cpu"` / `"cuda"` / `"mps"` |
 
 ### 章节匹配模式（默认）
 

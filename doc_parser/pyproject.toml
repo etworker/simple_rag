@@ -11,7 +11,8 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=7.0"]
-mineru = ["mineru[all]"]  # MinerU VLM/OCR 后端（需 GPU）
+docling = ["docling[pdf]>=2.0"]  # Docling TableFormer 深度学习表格后端（GPU/CPU 均可）
+mineru = ["mineru[all]"]  # MinerU VLM/OCR 后端（GPU 上推荐 vlm 模式）
 
 [build-system]
 requires = ["hatchling"]

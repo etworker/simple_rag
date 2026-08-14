@@ -1,20 +1,23 @@
-"""PDF 解析实现（pdfplumber 后端 + 智能后端选择）"""
+"""PDF 解析分发器（后端路由 + 智能选择）与预扫描。
 
-import os
+实际解析由 doc_parser.backend 中的各后端模块完成：
+  - bk_pdfplumber：pdfplumber（默认）
+  - bk_mineru     ：MinerU VLM/OCR
+  - bk_docling    ：IBM Docling
+本模块保留：
+  - 预扫描 _quick_scan_pdf（当前用 pdfplumber 光读取）
+  - 智能后端选择 select_backend
+  - 统一分发 extract_pdf
+  - 向后兼容 re-export（_words_to_lines / _assemble_line / _is_in_table_region）
+"""
+
 import re
-from collections import Counter
 
 import pdfplumber
 from loguru import logger
 
-from doc_parser._tables import (
-    assign_table_chapters,
-    clean_table,
-    filter_template_tables,
-    merge_cross_page_tables,
-)
-from doc_parser._text import detect_chapter, segment_and_locate
-from doc_parser.models import Document, Table
+from doc_parser.models import Document
+from doc_parser.backend.bk_pdfplumber import _assemble_line, _is_in_table_region, _words_to_lines  # noqa: F401
 
 # ============================================================
 # 智能后端选择
@@ -158,9 +161,13 @@ def select_backend(filepath, cfg):
     if scan["avg_text_per_page"] < text_threshold:
         return "mineru", f"疑似扫描件（平均 {scan['avg_text_per_page']:.0f} 字/页）"
 
-    # 2. 大图片覆盖率超阈值
-    if scan["large_image_ratio"] > image_ratio:
-        return "mineru", f"疑似扫描件（大图片覆盖率 {scan['large_image_ratio']:.0%}）"
+    # 2. 大图片覆盖率超阈值，且文本量仍然偏低 → 疑似扫描件
+    #    大图本身不是扫描件证据：公文红头/印章/配图也会触发大图检测，
+    #    但文本型文档（红头+正文）每页文字量通常充足。
+    #    仅当"大图覆盖 + 文本仍少"同时成立才判扫描件，避免公文误走 MinerU。
+    image_text_threshold = cfg.get("scan_image_text_per_page_threshold", 300)
+    if scan["large_image_ratio"] > image_ratio and scan["avg_text_per_page"] < image_text_threshold:
+        return "mineru", f"疑似扫描件（大图片覆盖率 {scan['large_image_ratio']:.0%}，文本仅 {scan['avg_text_per_page']:.0f} 字/页）"
 
     # 3. 有绘图线但 pdfplumber 提取不到表格 → 可能无框线表格
     if scan["has_drawings_no_tables"] and scan["avg_tables_per_page"] < low_table_rate:
@@ -178,99 +185,19 @@ def select_backend(filepath, cfg):
 
 
 # ============================================================
-# PDF 解析（pdfplumber）
+# 统一分发
 # ============================================================
-
-
-def _words_to_lines(words, y_tolerance=3, margin_number_x=0, margin_number_re=None):
-    """
-    将 pdfplumber 的 word 对象按 Y 坐标聚合为行
-    返回: [(line_top_y, line_text), ...]
-
-    当 margin_number_x > 0 时，启用编号列分离：
-    - x0 < margin_number_x 且文本匹配 margin_number_re 的 word → 视为编号
-    - 同一行内，输出格式固定为 "编号 正文"（编号在前）
-    - 保证 chapter_patterns（^\\d+\\.\\d+ xxx）能稳定匹配
-    """
-    if not words:
-        return []
-
-    # 按 top 排序
-    sorted_words = sorted(words, key=lambda w: (w["top"], w["x0"]))
-
-    lines = []
-    current_line_words = [sorted_words[0]]
-    current_top = sorted_words[0]["top"]
-
-    for word in sorted_words[1:]:
-        if abs(word["top"] - current_top) <= y_tolerance:
-            current_line_words.append(word)
-        else:
-            # 新行
-            line_text = _assemble_line(current_line_words, margin_number_x, margin_number_re)
-            lines.append((current_top, line_text))
-            current_line_words = [word]
-            current_top = word["top"]
-
-    # 最后一行
-    if current_line_words:
-        line_text = _assemble_line(current_line_words, margin_number_x, margin_number_re)
-        lines.append((current_top, line_text))
-
-    return lines
-
-
-def _assemble_line(line_words, margin_number_x, margin_number_re):
-    """
-    将同一行的 word 列表拼接为文本。
-
-    如果启用了 margin 编号列（margin_number_x > 0），则分离编号和正文，
-    统一输出为 "编号 正文"，消除 PDF 文字流顺序的不确定性。
-    """
-    sorted_by_x = sorted(line_words, key=lambda w: w["x0"])
-
-    if margin_number_x <= 0 or margin_number_re is None:
-        # 未启用，保持原行为：按 x 坐标顺序拼接
-        return " ".join(w["text"] for w in sorted_by_x)
-
-    # 分离编号列和正文列
-    number_parts = []
-    body_parts = []
-    for w in sorted_by_x:
-        if w["x0"] < margin_number_x and margin_number_re.match(w["text"].strip()):
-            number_parts.append(w["text"].strip())
-        else:
-            body_parts.append(w["text"])
-
-    body_text = " ".join(body_parts)
-
-    if number_parts:
-        # 多段编号片段（极少见）用 . 连接；通常只有一个
-        number_text = ".".join(number_parts) if len(number_parts) > 1 else number_parts[0]
-        return f"{number_text} {body_text}" if body_text else number_text
-    else:
-        return body_text
-
-
-def _is_in_table_region(line_top, table_regions):
-    """判断某行是否在表格区域内"""
-    return any(table_top <= line_top <= table_bottom for table_top, table_bottom in table_regions)
 
 
 def extract_pdf(filepath, config=None, get_config=None):
     """
-    通用 PDF 解析
-
-    策略（单次打开 PDF，两遍遍历）：
-    第一遍：收集每页文字行 + 提取表格 + 获取表格区域坐标
-    → 统计高频重复行
-    第二遍：排除表格区域和重复行，拼接正文流
-    → 在正文流上按语义分段 + 反查页码
+    通用 PDF 解析（后端分发）。
 
     后端选择：
-    config["extract"]["backend"] = "mineru"    → 使用 MinerU VLM/OCR 引擎
+    config["extract"]["backend"] = "mineru"     → 使用 MinerU VLM/OCR 引擎
+    config["extract"]["backend"] = "docling"    → 使用 Docling TableFormer
     config["extract"]["backend"] = "pdfplumber" → 强制使用 pdfplumber
-    config["extract"]["backend"] = "auto"        → 智能选择（默认；MinerU 可用时优先）
+    config["extract"]["backend"] = "auto"        → 智能选择（默认）
     """
     if get_config is None:
         from doc_parser.parser import get_extract_config
@@ -278,135 +205,56 @@ def extract_pdf(filepath, config=None, get_config=None):
         get_config = get_extract_config
     cfg = get_config(config)
 
-    # 后端选择（默认 auto：MinerU 可用时优先，不可用降级到 pdfplumber）
+    # 后端选择（默认 auto）
     backend = cfg.get("backend", "auto")
     if backend == "mineru":
-        from doc_parser.mineru_backend import extract_pdf_with_mineru
+        from doc_parser.backend import load_backend
 
-        return extract_pdf_with_mineru(filepath, config)
+        return load_backend("mineru").extract_pdf_with_mineru(filepath, config)
+    elif backend in ("docling", "docling_cpu"):
+        from doc_parser.backend import load_backend
+
+        return load_backend("docling").extract_pdf_with_docling(filepath, config)
+    elif backend in ("pdfplumber", "pdfplumber_cpu"):
+        from doc_parser.backend import load_backend
+
+        return load_backend("pdfplumber").extract_pdf_with_pdfplumber(filepath, config)
     elif backend == "auto":
         chosen, reason = select_backend(filepath, cfg)
         if chosen == "mineru":
             try:
-                from doc_parser.mineru_backend import extract_pdf_with_mineru
+                from doc_parser.backend import load_backend
 
                 logger.info(f"自动选择 MinerU 后端：{reason}")
-                return extract_pdf_with_mineru(filepath, config)
-            except RuntimeError:
-                # MinerU 未安装，降级到 pdfplumber
-                logger.warning(f"{reason}，但 MinerU 未安装，降级到 pdfplumber")
+                return load_backend("mineru").extract_pdf_with_mineru(filepath, config)
+            except Exception as e:
+                # MinerU 不可用，降级到 pdfplumber
+                logger.warning(f"{reason}，但 MinerU 不可用（{e}），降级到 pdfplumber")
+        elif chosen == "docling":
+            try:
+                from doc_parser.backend import load_backend
+
+                logger.info(f"自动选择 Docling 后端：{reason}")
+                return load_backend("docling").extract_pdf_with_docling(filepath, config)
+            except Exception as e:
+                logger.warning(f"{reason}，但 Docling 不可用（{e}），降级到 pdfplumber")
         else:
             if reason:
                 logger.info(f"自动选择 pdfplumber 后端：{reason}")
+    else:
+        logger.warning(f"未知后端 {backend!r}，使用 pdfplumber")
 
-    with pdfplumber.open(filepath) as pdf:
-        num_pages = len(pdf.pages)
-        if num_pages == 0:
-            return Document(filename=os.path.basename(filepath), paragraphs=[], tables=[])
+    from doc_parser.backend import load_backend
 
-        # 编译 margin 编号正则（一次编译，全页复用）
-        margin_number_x = cfg.get("margin_number_x", 0)
-        margin_number_re = None
-        if margin_number_x > 0:
-            margin_number_re = re.compile(cfg.get("margin_number_pattern", r"^(?:\d+(?:\.\d+)*|[A-Z])$"))
+    return load_backend("pdfplumber").extract_pdf_with_pdfplumber(filepath, config)
 
-        # ========== 第一遍：收集行 + 提取表格 + 获取表格区域 ==========
-        all_lines_flat = []  # 所有行的平面列表（用于统计重复）
-        page_data = []  # [(page_num, page_lines, table_regions)]
-        tables = []
-        current_chapter = ""
-        current_chapter_title = ""
 
-        for page_num, page in enumerate(pdf.pages, 1):
-            page_height = page.height
-
-            # 计算页眉/页脚的 Y 坐标边界
-            header_y = page_height * (cfg["header_margin_pct"] / 100)
-            footer_y = page_height * (1 - cfg["footer_margin_pct"] / 100)
-
-            # 获取文字对象（带坐标）
-            words = page.extract_words(keep_blank_chars=False, use_text_flow=True)
-
-            # 按行聚合（按 top 坐标分组，容差由配置控制）
-            y_tol = cfg.get("y_tolerance", 3)
-            page_lines = _words_to_lines(
-                words, y_tolerance=y_tol, margin_number_x=margin_number_x, margin_number_re=margin_number_re
-            )
-
-            # 收集有效行用于重复统计
-            for line_top, line_text in page_lines:
-                if line_top < header_y or line_top > footer_y:
-                    continue
-                all_lines_flat.append(line_text.strip())
-
-            # 提取表格 + 获取表格区域坐标
-            page_tables = page.find_tables()
-            table_regions = [(t.bbox[1], t.bbox[3]) for t in page_tables]  # (top, bottom)
-
-            # 从页面文字中更新章节追踪
-            text = page.extract_text()
-            if text:
-                for line in text.split("\n"):
-                    ch = detect_chapter(line.strip(), cfg)
-                    if ch:
-                        current_chapter, current_chapter_title = ch
-
-            # 提取表格数据
-            for pt in page_tables:
-                table_data = pt.extract()
-                if table_data and len(table_data) >= 2:
-                    cleaned = clean_table(table_data)
-                    if cleaned and len(cleaned) >= 2:
-                        tables.append(
-                            Table(
-                                rows=cleaned,
-                                page=page_num,
-                                chapter=current_chapter,
-                                chapter_title=current_chapter_title,
-                                source_file=os.path.basename(filepath),
-                                index=len(tables) + 1,
-                            )
-                        )
-
-            page_data.append((page_num, page_lines, table_regions, header_y, footer_y))
-
-        # ========== 统计高频重复行（自动识别页眉页脚残留）==========
-        repeat_threshold = max(3, int(num_pages * cfg["repeat_line_threshold_pct"] / 100))
-        line_counts = Counter(all_lines_flat)
-        repeated_lines = {line for line, count in line_counts.items() if count >= repeat_threshold and len(line) < 100}
-
-        # ========== 第二遍：构建正文流（排除表格区域 + 重复行）==========
-        full_text = ""
-        page_boundaries = []  # [(start_offset, end_offset, page_num)]
-
-        for page_num, page_lines, table_regions, header_y, footer_y in page_data:
-            start_offset = len(full_text)
-            for line_top, line_text in page_lines:
-                # 跳过页眉/页脚
-                if line_top < header_y or line_top > footer_y:
-                    continue
-                # 跳过重复行
-                if line_text.strip() in repeated_lines:
-                    continue
-                # 跳过表格区域内的行
-                if _is_in_table_region(line_top, table_regions):
-                    continue
-                full_text += line_text + "\n"
-
-            end_offset = len(full_text)
-            if end_offset > start_offset:
-                page_boundaries.append((start_offset, end_offset, page_num))
-
-    # ========== 跨页表格合并 (启发式) ==========
-    tables = merge_cross_page_tables(tables)
-
-    # ========== 空白模板表格过滤 ==========
-    tables = filter_template_tables(tables, cfg)
-
-    # ========== 流式分段 + 章节标记 + 反查页码 ==========
-    paragraphs = segment_and_locate(full_text, page_boundaries, filepath, cfg)
-
-    # 为表格分配章节信息
-    assign_table_chapters(tables, paragraphs)
-
-    return Document(filename=os.path.basename(filepath), paragraphs=paragraphs, tables=tables)
+__all__ = [
+    "extract_pdf",
+    "select_backend",
+    "_quick_scan_pdf",
+    "_detect_borderless_table_hint",
+    "_words_to_lines",
+    "_assemble_line",
+    "_is_in_table_region",
+]
