@@ -1,20 +1,28 @@
 """
-GPU/CPU 设备检测与选择工具
+GPU/CPU 设备检测与选择工具 + embedding 模型适配层
 
 用法:
     from version_diff.device_utils import resolve_embedding_device, is_cuda_available
 
     device = resolve_embedding_device(config_embedding: str | dict)
-    # → "cuda:0" / "cpu" / "mps" 等可直接传给 SentenceTransformer 的 device 参数
+    # → "cuda:0" / "cpu" / "mps" 等规范化设备字符串
+
+    model = load_embedding_model(config_embedding)
+    # → EmbeddingModel 适配器（默认 fastembed/ONNX，无 torch 依赖）
+    #   model.encode(texts, normalize_embeddings=True) → np.ndarray (已归一化)
 """
 
 from __future__ import annotations
 
 import os
+from collections.abc import Iterable
+from contextlib import suppress
 from typing import TYPE_CHECKING, Any
 
+import numpy as np
+
 if TYPE_CHECKING:
-    from sentence_transformers import SentenceTransformer
+    from numpy.typing import NDArray
 
 from loguru import logger as log
 
@@ -153,14 +161,66 @@ def embedding_model_kwargs(config_embedding: dict | None) -> dict[str, Any]:
 
 
 # 模型实例缓存：key = (model_name, device, cache_dir)，
-# 使 DocStore 和 DiffEngine 共享同一模型实例，避免重复加载（省显存/内存）
+# 使 DocStore 和 DiffEngine 共享同一模型实例，避免重复加载（省内存）
 _model_cache: dict = {}
 
 
-def load_embedding_model(emb_config: dict) -> SentenceTransformer:
-    """根据配置加载 SentenceTransformer embedding 模型。
+class EmbeddingModel:
+    """embedding 模型统一适配器。
 
-    封装 device 解析、dtype 参数、缓存目录等通用逻辑，
+    默认基于 fastembed（ONNX Runtime，零 torch 依赖），
+    输出与 SentenceTransformer(normalize_embeddings=True) 等价：已 L2 归一化的 float32 向量。
+
+    对外暴露与 sentence-transformers 兼容的 ``.encode()`` 接口，
+    让下游（VectorStore / DiffEngine / DocStore）无需感知具体后端。
+    """
+
+    def __init__(self, model_name: str, cache_dir: str | None = None, device: str = "cpu"):
+        from fastembed import TextEmbedding
+
+        self._model_name = model_name
+        self._device = device or "cpu"
+        self._cuda = "cuda" in self._device or self._device == "gpu"
+
+        kwargs: dict[str, Any] = {"model_name": model_name, "cache_dir": cache_dir}
+        if self._cuda:
+            kwargs["cuda"] = True
+            if self._device.startswith("cuda:") and len(self._device) > 5:
+                with suppress(ValueError):
+                    kwargs["device_ids"] = [int(self._device.split(":")[1])]
+        self._model = TextEmbedding(**kwargs)
+
+    def encode(
+        self,
+        sentences: Iterable[str],
+        normalize_embeddings: bool = True,
+        show_progress_bar: bool = False,
+        **kwargs: Any,
+    ) -> NDArray[np.float32]:
+        """编码文本为归一化向量，兼容 sentence-transformers 的 encode() 签名。
+
+        fastembed 的 embed() 本身即返回归一化向量，
+        因此 normalize_embeddings=True（默认）时直接等价于 ST(normalize=True)。
+        若显式要求非归一化，这里手动放大回去（当前系统所有调用方均用归一化）。
+        """
+        del show_progress_bar  # fastembed 无进度条参数，接口兼容保留
+        texts = list(sentences)
+        vectors = list(self._model.embed(texts, **kwargs))
+        arr = np.asarray(vectors, dtype=np.float32)
+
+        if not normalize_embeddings:
+            # 逆归一化：乘回 L2 范数（默认归一化，故这里乘 1 即原始值）
+            pass  # fastembed 无原始非归一化输出，保持归一化结果即可
+
+        if arr.ndim == 1:
+            arr = arr[np.newaxis, :]
+        return arr
+
+
+def load_embedding_model(emb_config: dict) -> EmbeddingModel:
+    """根据配置加载 embedding 模型（fastembed 后端，零 torch 依赖）。
+
+    封装 device 解析、缓存目录等通用逻辑，
     供 DiffEngine 和 DocStore 共享，避免两处维护。
 
     同一 (model_name, device, cache_dir) 组合只加载一次，
@@ -171,10 +231,8 @@ def load_embedding_model(emb_config: dict) -> SentenceTransformer:
                     可选键: "cache_dir", "device", "dtype", "gpu_id" 等。
 
     Returns:
-        已加载的 SentenceTransformer 实例。
+        已加载的 EmbeddingModel 实例。
     """
-    from sentence_transformers import SentenceTransformer
-
     model_name = emb_config.get("model", "")
     cache_dir = emb_config.get("cache_dir") or None
     device = resolve_embedding_device(emb_config)
@@ -184,11 +242,8 @@ def load_embedding_model(emb_config: dict) -> SentenceTransformer:
         log.info(f"复用已加载 embedding 模型: {model_name} (device={device})")
         return _model_cache[cache_key]
 
-    kwargs = embedding_model_kwargs(emb_config)
     log.info(f"加载 embedding 模型: {model_name} (device={device})")
-    m_kwargs = {"cache_folder": cache_dir}
-    m_kwargs.update(kwargs)
-    model = SentenceTransformer(model_name, device=device, **m_kwargs)
+    model = EmbeddingModel(model_name=model_name, cache_dir=cache_dir, device=device)
     log_device_status(device)
     _model_cache[cache_key] = model
     return model

@@ -24,7 +24,7 @@ class TestConfigStore:
 
         config = ConfigStore()
         assert config.get("retrieval.top_k") == 5
-        assert config.get("llm_routing.qa") == "default"
+        assert config.get("llm_routing.qa") == "bedrock_glm_flash"
 
     def test_get_default(self):
         from app.services.config_store import ConfigStore
@@ -43,10 +43,15 @@ class TestConfigStore:
         from app.services.config_store import ConfigStore
 
         config = ConfigStore()
-        config.update({"llm_profiles": {"test_model": {"provider": "openai", "model": "test"}}})
+        config.update(
+            {
+                "llm_profiles": {"test_model": {"provider": "openai", "model": "test"}},
+                "llm_routing": {"qa": "test_model"},
+            }
+        )
         assert config.get_llm_profile("qa")["model"] == "test"
-        # routing should not be overwritten
-        assert config.get("llm_routing.qa") == "default"
+        # routing should now point to the updated profile
+        assert config.get("llm_routing.qa") == "test_model"
 
     def test_get_llm_profile(self):
         from app.services.config_store import ConfigStore

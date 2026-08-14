@@ -17,7 +17,6 @@ import faiss
 import numpy as np
 from doc_parser import Paragraph
 from loguru import logger as log
-from sentence_transformers import SentenceTransformer
 from version_diff.vectorstore import VectorStore
 
 from app.services.parse_cache import cached_parse as parse
@@ -68,7 +67,7 @@ class DocStore:
             config: 包含 embedding/retrieval/pre_review 配置段的字典
         """
         self._config = config
-        self._model: SentenceTransformer | None = None
+        self._model: object | None = None
         self._documents: dict = {}  # {filename: DocMeta}
         self._paragraphs: list[Paragraph] = []
         self._embeddings: np.ndarray | None = None
@@ -100,8 +99,8 @@ class DocStore:
         """计算文件 SHA-256"""
         return compute_sha256(filepath)
 
-    def _get_model(self) -> SentenceTransformer:
-        """懒加载 embedding 模型"""
+    def _get_model(self):
+        """懒加载 embedding 模型（fastembed 适配器）"""
         if self._model is None:
             from version_diff.device_utils import load_embedding_model
 

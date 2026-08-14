@@ -151,22 +151,26 @@ class TestEmbeddingModelKwargs:
         assert embedding_model_kwargs({"dtype": "auto"}) == {"model_kwargs": {"torch_dtype": "auto"}}
 
     def test_dtype_float16(self):
-        import torch
-
-        result = embedding_model_kwargs({"dtype": "float16"})
-        assert result == {"model_kwargs": {"torch_dtype": torch.float16}}
+        expected = self._expected_dtype("float16")
+        assert embedding_model_kwargs({"dtype": "float16"}) == {"model_kwargs": {"torch_dtype": expected}}
 
     def test_dtype_bfloat16(self):
-        import torch
-
-        result = embedding_model_kwargs({"dtype": "bfloat16"})
-        assert result == {"model_kwargs": {"torch_dtype": torch.bfloat16}}
+        expected = self._expected_dtype("bfloat16")
+        assert embedding_model_kwargs({"dtype": "bfloat16"}) == {"model_kwargs": {"torch_dtype": expected}}
 
     def test_dtype_float32(self):
-        import torch
+        expected = self._expected_dtype("float32")
+        assert embedding_model_kwargs({"dtype": "float32"}) == {"model_kwargs": {"torch_dtype": expected}}
 
-        result = embedding_model_kwargs({"dtype": "float32"})
-        assert result == {"model_kwargs": {"torch_dtype": torch.float32}}
+    @staticmethod
+    def _expected_dtype(name: str):
+        """有 torch 时返回真实 enum（原语义），无 torch 时回退为字符串。"""
+        try:
+            import torch
+
+            return getattr(torch, name)
+        except ImportError:
+            return f"torch.{name}"
 
     def test_dtype_skip_when_empty_string(self):
         assert embedding_model_kwargs({"dtype": ""}) == {}

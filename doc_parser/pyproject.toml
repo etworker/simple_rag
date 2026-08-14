@@ -11,8 +11,8 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=7.0"]
-docling = ["docling[pdf]>=2.0"]  # Docling TableFormer 深度学习表格后端（GPU/CPU 均可）
-mineru = ["mineru[all]"]  # MinerU VLM/OCR 后端（GPU 上推荐 vlm 模式）
+docling = ["docling>=2.0"]  # Docling TableFormer 深度学习表格后端（PDF 支持为核心内置，GPU/CPU 均可）
+mineru = ["mineru[pipeline,vlm]"]  # MinerU VLM/OCR 后端：pipeline=OCR布局, vlm=VLM（不装lmdeploy/vllm，Windows/Linux均可用）
 
 [build-system]
 requires = ["hatchling"]

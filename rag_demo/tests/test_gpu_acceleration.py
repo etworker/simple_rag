@@ -2,7 +2,7 @@
 GPU 加速 — rag_demo 集成测试
 
 策略:
-  - 尽量真实调用: device_utils 检测、实际 FAISS 运算、SentenceTransformer 实例化
+  - 尽量真实调用: device_utils 检测、实际 FAISS 运算、EmbeddingModel（fastembed）实例化
   - 无法真实执行的环境（无 GPU、模型未缓存）打印状态后跳过，不 mock
   - 只对"模型加载超慢/无网络"场景 fallback 跳过，不 mock 结果
 """
@@ -70,20 +70,25 @@ class TestDeviceUtilsReal:
         assert result == {"model_kwargs": {"torch_dtype": "auto"}}
 
     def test_embedding_model_kwargs_real_torch_dtype(self):
-        """dtype=float16 应映射到真实 torch.float16 枚举 (包裹在 model_kwargs 内)"""
+        """dtype=float16 有 torch 时返回真实 enum，无 torch 时回退为字符串"""
         from version_diff.device_utils import embedding_model_kwargs
 
         result = embedding_model_kwargs({"dtype": "float16"})
-        import torch
+        torch_dtype = result.get("model_kwargs", {}).get("torch_dtype")
+        try:
+            import torch
 
-        assert result == {"model_kwargs": {"torch_dtype": torch.float16}}
+            assert torch_dtype == torch.float16
+        except ImportError:
+            # 无 torch（纯 fastembed 环境）：回退为字符串
+            assert torch_dtype == "torch.float16"
 
     def test_model_loads_on_resolved_device(self):
-        """实际用 resolve_embedding_device 的返回值实例化 SentenceTransformer ——
-        验证配置的设备字符串可被 SentenceTransformer 接受。
+        """实际用 resolve_embedding_device 的返回值实例化 EmbeddingModel ——
+        验证配置的设备字符串可被 fastembed 适配器接受。
         模型未缓存时跳过；加载成功则打印设备。"""
         from version_diff.device_utils import (
-            embedding_model_kwargs,
+            load_embedding_model,
             resolve_embedding_device,
         )
 
@@ -91,28 +96,27 @@ class TestDeviceUtilsReal:
 
         emb_cfg = ConfigStore().get_section("embedding")
         device = resolve_embedding_device(emb_cfg)
-        kwargs = embedding_model_kwargs(emb_cfg)
         model_name = emb_cfg.get("model", "")
 
         if not model_name:
             pytest.skip("未配置 embedding.model")
 
         try:
-            from sentence_transformers import SentenceTransformer
+            import os
 
             # 设置超时常量，避免无网络时挂起
             os.environ.setdefault("HF_HUB_DOWNLOAD_TIMEOUT", "30")
-            m = SentenceTransformer(model_name, device=device, **kwargs)
+            m = load_embedding_model(emb_cfg)
             assert m is not None
             # 验证一条简单推理
             emb = m.encode(["测试句子"], show_progress_bar=False)
             assert emb.shape[1] > 0
-            print(f"\n  [INFO] SentenceTransformer OK: device={device}, shape={emb.shape}")
+            print(f"\n  [INFO] EmbeddingModel OK: device={device}, shape={emb.shape}")
         except OSError as e:
             # 模型未缓存 / 无网络 / token 缺失
             pytest.skip(f"模型未缓存 ({type(e).__name__}: {e})")
         except ImportError as e:
-            pytest.skip(f"sentence_transformers 不可用 ({e})")
+            pytest.skip(f"fastembed 不可用 ({e})")
 
     def test_faiss_cpu_index_real(self):
         """真实 IndexFlatIP 检索"""
@@ -203,7 +207,7 @@ class TestDocStoreDeviceConfig:
         except OSError as e:
             pytest.skip(f"模型未缓存 ({type(e).__name__}: {e})")
         except ImportError as e:
-            pytest.skip(f"sentence_transformers 不可用: {e}")
+            pytest.skip(f"fastembed 不可用: {e}")
 
     def test_docstore_rebuild_index_works(self):
         """DocStore 在真实模型加载后能重建 FAISS 索引"""
