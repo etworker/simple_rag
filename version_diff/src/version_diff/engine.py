@@ -525,6 +525,11 @@ class DiffEngine:
             top_k=self.config.diff.get("top_k", 3),
         )
 
+        log.info(
+            f"  版本对比: 旧版 {len(old_doc.paragraphs)} 段, 新版 {len(new_doc.paragraphs)} 段, "
+            f"配对 {len(pairs)} 对 (threshold={threshold})"
+        )
+
         changes = []
         paired_old = set()
         paired_new = set()
@@ -690,9 +695,7 @@ class DiffEngine:
                 if summary:
                     c.summary = f"[页码跟踪] {summary}"
                 else:
-                    default_tpl = tracking_cfg.get(
-                        "summary_template", "[页码跟踪表自动更新]"
-                    )
+                    default_tpl = tracking_cfg.get("summary_template", "[页码跟踪表自动更新]")
                     c.summary = default_tpl
                 minor.append(c)
                 continue
@@ -777,4 +780,6 @@ class DiffEngine:
                     keep.append(_classify_change("content", c))
 
         log.info(f"  版本diff过滤完成: {len(changes)} → {len(keep)} 实质性 + {len(minor)} 细微变更")
+        for i, c in enumerate(keep, 1):
+            log.info(f"    [{i}] {c.change_type} @ {c.location} | {c.summary[:80]}")
         return keep, minor

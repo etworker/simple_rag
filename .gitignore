@@ -75,5 +75,6 @@ Thumbs.db
 blog/
 
 bench/
+backend_compare/
 
 *.log

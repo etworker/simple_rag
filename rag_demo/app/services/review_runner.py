@@ -191,22 +191,37 @@ async def run_pre_review(task_id: str):
         await asyncio.to_thread(engine._get_model)
         log.info("向量模型加载完成")
 
-        on_progress("loading", 0.1, "加载已有文档到引擎...")
-        log.info(f"开始加载已有文档 ({_state.app.doc_store.total_documents} 篇)...")
-        await asyncio.to_thread(load_existing_docs, engine)
-        log.info("已有文档加载完成")
+        # 版本更新场景：同名文档新版本上传，只需版本对比，无需跨文档矛盾检测
+        old_version_filepath = task.get("old_version_filepath", "")
+        is_version_update = bool(old_version_filepath and os.path.exists(old_version_filepath))
+
+        if not is_version_update:
+            on_progress("loading", 0.1, "加载已有文档到引擎...")
+            log.info(f"开始加载已有文档 ({_state.app.doc_store.total_documents} 篇)...")
+            await asyncio.to_thread(load_existing_docs, engine)
+            log.info("已有文档加载完成")
 
         # 知识库为空时：精简步骤列表，跳过检索/差异/判定，直接到汇总
         kb_empty = _state.app.doc_store.total_documents == 0
-        if kb_empty:
-            all_steps = [
-                {"id": "model", "label": "加载向量模型"},
-                {"id": "loading", "label": "加载已有文档"},
-                {"id": "parsing", "label": "解析文档"},
-                {"id": "embedding", "label": "计算语义向量"},
-                {"id": "done", "label": "汇总结果"},
-            ]
-            log.info("知识库为空，跳过跨文档检索/差异/判定步骤")
+        if kb_empty or is_version_update:
+            if is_version_update:
+                all_steps = [
+                    {"id": "model", "label": "加载向量模型"},
+                    {"id": "parsing", "label": "解析文档"},
+                    {"id": "embedding", "label": "计算语义向量"},
+                    {"id": "diffing", "label": "版本差异对比"},
+                    {"id": "done", "label": "汇总结果"},
+                ]
+                log.info("检测到版本更新，跳过跨文档矛盾检测，直接执行版本对比")
+            else:
+                all_steps = [
+                    {"id": "model", "label": "加载向量模型"},
+                    {"id": "loading", "label": "加载已有文档"},
+                    {"id": "parsing", "label": "解析文档"},
+                    {"id": "embedding", "label": "计算语义向量"},
+                    {"id": "done", "label": "汇总结果"},
+                ]
+                log.info("知识库为空，跳过跨文档检索/差异/判定步骤")
         task["all_steps"] = all_steps
 
         from app.services.parse_cache import cached_parse as _parse
@@ -232,6 +247,73 @@ async def run_pre_review(task_id: str):
             """原子地递增 _result_seq，让 SSE 推送此次 result 变更"""
             task["_result_seq"] = task.get("_result_seq", 0) + 1
 
+        # ====== 版本更新快速路径：跳过跨文档矛盾检测，直接版本对比 ======
+        if is_version_update:
+            on_progress("diffing", 0.5, "版本差异对比中...")
+            task["result"] = {
+                "phase": "version_compare",
+                "is_safe": True,
+                "new_filename": task["filename"],
+                "inconsistencies": [],
+                "total_candidates": 0,
+                "rule_filtered": 0,
+                "llm_judged": 0,
+                "message": "正在对比版本差异...",
+                "version_changes": [],
+                "minor_changes": [],
+                "has_version_changes": False,
+                "has_minor_changes": False,
+                "kb_empty": False,
+                "is_version_update": True,
+                "old_doc_filename": task.get("old_doc_filename", ""),
+            }
+            _bump_result()
+
+            version_compare_result = _run_version_compare(engine, old_version_filepath, filepath)
+
+            task["progress"] = 100
+            task["current_step"] = "版本对比完成"
+            task["status"] = "done"
+            n_changes = len(version_compare_result["changes"])
+            task["result"] = {
+                "phase": "done",
+                "is_safe": True,
+                "new_filename": task["filename"],
+                "inconsistencies": [],
+                "total_candidates": 0,
+                "rule_filtered": 0,
+                "llm_judged": 0,
+                "message": f"版本对比完成：{n_changes} 处实质性变更",
+                "version_changes": version_compare_result["changes"],
+                "minor_changes": version_compare_result["minor_changes"],
+                "has_version_changes": n_changes > 0,
+                "has_minor_changes": len(version_compare_result["minor_changes"]) > 0,
+                "kb_empty": False,
+                "is_version_update": True,
+                "old_doc_filename": task.get("old_doc_filename", ""),
+                "no_candidates": False,
+            }
+            _bump_result()
+            _state.app.save_review_cache()
+
+            # 写入预审核结果缓存
+            try:
+                doc_sig = _compute_doc_signature()
+                cache_data = {
+                    "result": task["result"],
+                    "parsed_paragraphs": task.get("parsed_paragraphs", []),
+                    "filename": task["filename"],
+                    "cached_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                    "doc_signature": doc_sig,
+                }
+                with open(cached_result_path, "w", encoding="utf-8") as _f:
+                    json.dump(cache_data, _f, ensure_ascii=False)
+                log.info(f"💾 已缓存版本对比结果: {task['filename']} (SHA256={file_md5[-8:].upper()})")
+            except Exception as e:
+                log.warning(f"版本对比结果缓存写入失败: {e}")
+            return
+
+        # ====== 正常流程：跨文档矛盾检测 ======
         # 初始化 result 结构（前端可据此渲染"等待中"状态）
         task["result"] = {
             "phase": "embedding",
@@ -294,6 +376,7 @@ async def run_pre_review(task_id: str):
         # kb_empty 已在加载已有文档后赋值，引擎空库时返回空 DiffResult 与之一致
 
         # ====== 3. 版本对比（如果存在旧版本文档）======
+        # 注意：版本更新场景已在上面快速路径中处理，不会走到这里
         old_version_filepath = task.get("old_version_filepath", "")
 
         # 如果有旧版本文档，先推送"版本对比进行中"状态给前端
