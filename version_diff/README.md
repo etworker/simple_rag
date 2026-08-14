@@ -12,8 +12,12 @@
 ## 安装
 
 ```bash
+# 推荐：仓库根目录一键安装（uv workspace，自动装齐 4 模块 + 匹配 GPU 的 torch）
+cd .. && python scripts/install_system.py
+
+# 或仅同步本模块（uv workspace 自动解析 doc_parser + llm_chat）
 cd version_diff
-uv sync          # 安装依赖（含 doc_parser + llm_chat）
+uv sync
 ```
 
 ## 快速开始
@@ -94,12 +98,14 @@ engine = DiffEngine(config: dict | None = None)
 
 ## 配置
 
+> embedding 基于 **fastembed（ONNX Runtime）**，`device_utils.EmbeddingModel` 统一封装，输出与 SentenceTransformer(normalize_embeddings=True) 等价。
+
 ```python
 config = {
     "embedding": {
         "model": "BAAI/bge-small-zh-v1.5",
         "device": "auto",  # auto / cpu / cuda / mps
-        "dtype": "auto",  # auto / float16 / float32
+        "dtype": "auto",  # auto / float16 / bfloat16 / float32（无 torch 时回退为字符串）
     },
     "llm": {
         "provider": "bedrock",  # bedrock / openai

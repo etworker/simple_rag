@@ -1,6 +1,6 @@
 # API 参考（API Reference）
 
-> simple_rag 接口文档 ｜ 代码状态：2026-08 全量重构 + 08-12/08-13 迭代优化（详见 [设计文档 §迭代记录](设计文档.md)）
+> simple_rag 接口文档 ｜ 代码状态：2026-08 全量重构 + 08-12 ~ 08-15 迭代优化（详见 [设计文档 §迭代记录](设计文档.md)）
 > 基础路径：服务运行于 `http://localhost:8000`
 
 ---
@@ -160,7 +160,7 @@ incons: list[Inconsistency] = engine.check_conflicts(retrieved_passages: list[di
 # 对 version_compare 的 added/removed 段落，剥离下列正则后为空 → 判为纯元数据噪声，
 # 归入 VersionDiffResult.minor_changes（而非 changes）。默认值通用、可被覆盖。
 cfg = Config.from_dict({
-    "embedding": {"model": "BAAI/bge-small-zh-v1.5"},
+    "embedding": {"model": "BAAI/bge-small-zh-v1.5"},  # 基于 fastembed/ONNX，零 torch 依赖
     "llm": {"provider": "bedrock", "model": "zai.glm-4.7-flash"},
     "diff": {
         "similarity_threshold": 0.80, "top_k": 3, "batch_size": 5,

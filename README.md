@@ -44,9 +44,12 @@ llm_chat   ─┘        │
 
 ## 快速开始
 
+> 本项目用 **uv workspace** 管理：根目录 `pyproject.toml` 声明 4 个模块成员 + 根级 `uv.lock`，四个模块统一在一个 `.venv` 中。安装推荐用根级脚本 `scripts/install_system.py`（自动检测 GPU 安装匹配的 torch 构建后统一 `uv sync`）。
+
 ```bash
-# 1. 安装依赖（至少同步 rag_demo 即可运行 Web）
-cd rag_demo && uv sync
+# 1. 安装全部依赖（4 模块 + dev/docling/mineru extras + 匹配 GPU 的 torch）
+#    有 NVIDIA GPU → CUDA 版 torch；无 GPU → CPU 版 torch（docling/mineru 均可用）
+python scripts/install_system.py              # 或用 uv run --no-project python scripts/install_system.py
 
 # 2. 配置环境变量（LLM 凭证等）
 #    复制并修改 .env（已有示例），或参考 docs/使用手册.md 第 2 节
@@ -59,6 +62,12 @@ cp rag_demo/config.example.json rag_demo/config.json
 # 4. 访问
 #    Web UI:      http://localhost:8000
 #    API 文档:    http://localhost:8000/docs
+```
+
+也可只同步某个模块（uv workspace 自动解析兄弟包）：
+
+```bash
+uv sync --project rag_demo       # 仅同步 rag_demo 所需（含三个兄弟包）
 ```
 
 ### 命令行 / 脚本化验证版本差异 + LLM 归纳
@@ -82,10 +91,11 @@ uv run python examples/verify_version_diff.py <旧版.pdf> <新版.pdf> --model 
 
 ## 配置
 
-- 各模块用 `pyproject.toml` 声明依赖。
+- 项目为 **uv workspace**：根 `pyproject.toml` 声明 `members`（doc_parser / llm_chat / version_diff / rag_demo），各模块 `pyproject.toml` 通过 `[tool.uv.sources] ... { workspace = true }` 引用兄弟包，根级 `uv.lock` 统一锁版本。
 - `rag_demo/config.json` 是**本地配置，不入库**（已被 `.gitignore` 排除）。新克隆时复制 `config.example.json` 为 `config.json` 再修改。
 - LLM / embedding 的默认值集中在 `llm_chat/src/llm_chat/defaults.py` 与 `version_diff/src/version_diff/config.py`，可用环境变量覆盖（详见 [使用手册](docs/使用手册.md) 与 [开发指南](docs/开发指南.md)）。
 - `rag_demo` 采用 **profiles + routing** 配置：在 `config.json` 的 `llm_profiles` 定义多模型，在 `llm_routing` 中按用途（qa / pre_review / conflict_detection）路由。
+- **Embedding 基于 fastembed（ONNX Runtime，零 torch 依赖）**：`version_diff/device_utils.py::EmbeddingModel` 统一封装，输出与 `SentenceTransformer(normalize_embeddings=True)` 等价（L2 归一化），默认模型 `BAAI/bge-small-zh-v1.5`。
 
 ## 提示词（prompts）
 
@@ -96,22 +106,25 @@ uv run python examples/verify_version_diff.py <旧版.pdf> <新版.pdf> --model 
 
 ---
 
-## 近期迭代（2026-08-12 ~ 08-13）
+## 近期迭代（2026-08-12 ~ 08-15）
 
 - **llm_chat**：后端异常挂 `status_code` / `is_network_error` 属性，`retry` 据此判断重试（不再正则解析异常文本）；公共字段初始化上提到 `_init_common`。
 - **跨模块去重**：`version_diff.llm_util` 改用新增的 `llm_chat.ask_once_with_config`；`rag_demo` 的 PDF 页数计算统一为 `get_pdf_page_count`（fitz）。
 - **错误处理契约**：`ChatSession.ask` 失败改为向上抛出（不再把 `"[错误]..."` 当答案返回），`/api/qa/ask` 将 LLM 不可用映射为 503。
+- **依赖管理重构**（08-14）：四个独立模块改为 **uv workspace**（根 pyproject.toml + 根 uv.lock），模块间依赖用 `[tool.uv.sources] { workspace = true }`，新增根级一键安装脚本 `scripts/install_system.py`（自动检测 GPU → 装匹配 torch 构建 → `uv sync --all-extras`）。
+- **Embedding 改 fastembed**（08-14）：`sentence-transformers` → `fastembed`（ONNX Runtime），`device_utils.py` 新增 `EmbeddingModel` 适配器，零 torch 依赖也能跑 embedding。
+- **torch 策略**（08-15）：无 GPU 也安装 **CPU 版 torch** + 全量 extras —— docling / mineru 均可用（mineru 用 pipeline 模式，慢但能跑；已用 9 页真实 PDF 端到端验证，CPU 解析 86s）。mineru extra 改为 `mineru[pipeline,vlm]`（不再 `mineru[all]`，不装 lmdeploy/vllm）。
 - 详细决策与原理见 [设计文档 §迭代记录](docs/设计文档.md)。
 
 ## 测试
 
-各模块独立 `pytest`：
+各模块独立 `pytest`（uv workspace 下共用根 `.venv`）：
 
 ```bash
-cd doc_parser   && uv run pytest
-cd llm_chat    && uv run pytest
-cd version_diff && uv run pytest
-cd rag_demo     && uv run pytest          # 排除需 GPU/模型的用例： -k "not gpu and not e2e"
+cd doc_parser   && uv run pytest            # 71 passed
+cd llm_chat     && uv run pytest            # 39 passed
+cd version_diff && uv run pytest            # 124 passed
+cd rag_demo     && uv run pytest            # 69 passed, 5 skipped（-k "not gpu and not e2e" 跳过 GPU/端到端）
 ```
 
 > 注：依赖外部 LLM 端点的测试（如 `version_diff/tests/test_version_filter.py`）在离线环境下可能不稳定，建议加 `@pytest.mark.online` 或在无 LLM 时跳过。Windows 下个别用例因临时目录/超大环境变量触发环境性失败（与代码无关），详见 [开发指南](docs/开发指南.md) 第 2 节。

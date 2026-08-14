@@ -30,8 +30,8 @@
 | `pdfplumber >= 0.11.4` | PDF 文本与表格提取（默认后端） |
 | `python-docx >= 1.1.2` | Word 文档解析 |
 | `loguru >= 0.7.3` | 日志 |
-| `docling[pdf]` (可选) | TableFormer 深度学习表格后端（CPU/GPU 均可） |
-| `mineru[all]` (可选) | VLM/OCR PDF 解析后端，GPU 上推荐 vlm 模式 |
+| `docling` (可选, extra) | TableFormer 深度学习表格后端（CPU/GPU 均可） |
+| `mineru[pipeline,vlm]` (可选, extra) | MinerU VLM/OCR PDF 解析后端；vlm 需要 GPU，pipeline 在 CPU 上可跑 |
 
 Python >= 3.10
 
@@ -39,21 +39,26 @@ Python >= 3.10
 
 ## 安装
 
-```bash
-# 方式一：自动安装脚本（推荐，自动检测 GPU 并安装匹配的 torch 构建）
-#   - 有 NVIDIA GPU  → CUDA 版 torch（默认 cu124，可用 --cuda 覆盖）
-#   - 无 GPU        → CPU 版 torch（省 ~2GB 下载）
-#   - 同时安装 docling + mineru 后端依赖
-cd doc_parser
-python scripts/install_deps.py                 # 全量
-python scripts/install_deps.py --no-mineru     # 跳过 mineru
-python scripts/install_deps.py --cuda 121      # 指定 CUDA 版本
+> 本项目使用 **uv workspace**：根 `pyproject.toml` 声明 4 模块成员 + 根 `uv.lock`。推荐在仓库根目录用一键脚本安装，自动检测 GPU 并安装匹配的 torch 构建（docling / mineru 均需要 torch；无 GPU 时装 CPU 版，mineru 用 pipeline 模式可运行）。
 
-# 方式二：手动 uv 安装
-cd doc_parser
-uv sync --extra dev
-uv pip install "docling[pdf]"                  # 可选，Docling 表格后端
-uv pip install -U "mineru[all]"                # 可选，MinerU VLM/OCR 后端
+```bash
+# 方式一：一键安装（推荐，在 simple_rag 仓库根目录）
+#   - 有 NVIDIA GPU  → CUDA 版 torch（默认 cu124，可用 --cuda 覆盖）
+#   - 无 GPU        → CPU 版 torch（docling/mineru 均可用，仅推理较慢）
+#   - 同时安装 dev + docling + mineru 全部 extras
+
+# 机器有系统 Python 时：
+python scripts/install_system.py                 # 全量
+
+# 机器只有 uv、没有系统 Python 时（uv 会自动下载托管 Python，无需先装 python）：
+uv run --no-project python scripts/install_system.py
+
+python scripts/install_system.py --sync-only     # 跳过 torch 步骤，仅 uv sync
+python scripts/install_system.py --cuda 121      # 指定 CUDA 版本
+
+# 方式二：手动 uv 安装（在仓库根目录执行，uv workspace 统一解析）
+uv sync --project doc_parser                     # doc_parser 基础依赖
+uv sync --project doc_parser --extra docling --extra mineru   # 含深度学习后端
 ```
 
 ---
