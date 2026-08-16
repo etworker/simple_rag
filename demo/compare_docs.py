@@ -19,9 +19,10 @@
 用法:
     uv run --project version_diff python demo/compare_docs.py <文档A> <文档B> [--out 报告] [阈值参数...]
 
-默认配置与 web 流程（rag_demo）对齐：embedding=jina-v2-base-zh、解析=docling（页眉
-前缀剥离+碎尾合并）、device=auto。实测相同 docling 解析下 bge-small-zh-v1.5 与 jina
-版本对比结果完全一致，差异主要来自解析后端与吸收逻辑而非 embedding 模型。
+默认配置与 web 流程（rag_demo）对齐：embedding=bge-small-zh-v1.5（GPU 自动加速）、
+解析=docling（页眉前缀剥离+碎尾合并）、device=auto。实测相同 docling 解析下
+bge-small-zh-v1.5 与 jina-v2-base-zh 版本对比结果完全一致（6 条逐条相同），
+差异主要来自解析后端与吸收逻辑而非 embedding 模型；纯 CPU 下 bge-small 也可跑（~44s）。
 
 LLM（默认启用，从共享 llm_profiles 文件按名字选择，对「修改」类差异生成摘要）:
     --no-llm                  关闭 LLM（纯规则模式）
@@ -31,9 +32,9 @@ LLM（默认启用，从共享 llm_profiles 文件按名字选择，对「修改
     --llm-base-url/--llm-key
 
 解析与 embedding（均有缺省值，可覆盖）:
-    --embedding <model>       embedding 模型（缺省 jinaai/jina-embeddings-v2-base-zh）
+    --embedding <model>       embedding 模型（缺省 BAAI/bge-small-zh-v1.5）
     --embedding-device <d>    embedding 设备 auto/cuda/cpu（缺省 auto，有 GPU 用 GPU）
-    --parse-backend <b>       解析后端 docling/pymupdf/pdfplumber/auto（缺省 docling）
+    --parse-backend <b>       解析后端 pdfplumber/docling/pymupdf/auto（缺省 pdfplumber，与 web 一致）
     --parse-device <d>        docling 推理设备 cuda/cpu（缺省 cuda）
 
 可配置阈值（均有缺省值）:
@@ -284,16 +285,16 @@ def main():
         "--llm-key", default="", help="LLM api_key（无 profile 文件时兜底，Bedrock 用 api_key_env）"
     )
     parser.add_argument("--top", type=int, default=20, help="跨文档模式列出前 N 条")
-    # 默认与 web 流程（rag_demo）一致：jina-v2-base-zh（768 维）+ docling 后处理。
-    # 实测（网络手册 R5-21→R5-22）：相同 docling 解析下 bge-small-zh-v1.5 与 jina
-    # 版本对比结果完全一致（removed=0/added=1/modified=5），仅耗时不同；
+    # 默认与 web 流程（rag_demo）一致：bge-small-zh-v1.5（512 维，GPU 自动加速）+ docling 后处理。
+    # 实测（网络手册 R5-21→R5-22）：相同 docling 解析下 bge-small-zh-v1.5 与 jina-v2-base-zh
+    # 版本对比结果完全一致（removed=0/added=1/modified=5），仅耗时不同（CPU 44s / GPU 9s）；
     # 差异主要来自解析后端与吸收逻辑，而非 embedding 模型。--embedding 可覆盖。
-    parser.add_argument("--embedding", default="jinaai/jina-embeddings-v2-base-zh")
+    parser.add_argument("--embedding", default="BAAI/bge-small-zh-v1.5")
     # embedding 设备：auto（有 GPU 用 GPU，无则 CPU）。显式 device=cpu 时
     # device_utils 会强制 CPU provider（fastembed 默认 Device.AUTO 会抢 GPU）。
     parser.add_argument("--embedding-device", default="auto", help="embedding 设备: auto/cuda/cpu（缺省 auto）")
     # 解析后端：与 web 流程一致缺省 docling（含页眉前缀剥离/碎尾合并）。
-    parser.add_argument("--parse-backend", default="docling", help="解析后端: docling/pymupdf/pdfplumber/auto（缺省 docling）")
+    parser.add_argument("--parse-backend", default="pdfplumber", help="解析后端: pdfplumber/docling/pymupdf/auto（缺省 pdfplumber，与 web 流程 rag_demo 一致；docling 对部分文档有碎句问题）")
     parser.add_argument("--parse-device", default="cuda", help="docling 推理设备: cuda/cpu（缺省 cuda）")
     # 可配置阈值（均有缺省值）
     parser.add_argument(
@@ -320,10 +321,10 @@ def main():
 
     load_dotenv()
 
-    # 解析配置（与 web 流程 build_parse_config 同构）：docling 后端启用
-    # 页眉前缀剥离 + 碎尾合并，二者进解析缓存签名，保证与 web 流程
-    # （rag_demo）解析结果一致。重叠度评估与 version_compare 共用同一
-    # 解析配置，避免 auto 路由在评估/对比两阶段结果不一致。
+    # 解析配置（与 web 流程 build_parse_config 同构）：缺省 pdfplumber（与
+    # rag_demo 默认一致）；docling 后端额外启用页眉前缀剥离 + 碎尾合并，
+    # 二者进解析缓存签名。重叠度评估与 version_compare 共用同一解析配置，
+    # 避免 auto 路由在评估/对比两阶段结果不一致。
     extract = {"backend": args.parse_backend}
     if args.parse_backend == "docling":
         extract["docling_device"] = args.parse_device

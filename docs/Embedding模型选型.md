@@ -1,7 +1,7 @@
 # Embedding 模型选型（中文 RAG）
 
 > 面向本项目（simple_rag）中文制度文档 RAG 的文本向量模型选型。
-> 更新日期：2026-08-16 ｜ 状态：本机（T4 GPU）已实测 jina-v2-base-zh 并切换为默认；其余候选按推测标注。
+> 更新日期：2026-08-16 ｜ 状态：本机（T4 GPU）实测 bge-small-zh-v1.5 与 jina-v2-base-zh 版本对比结果完全一致，默认定为 **bge-small-zh-v1.5**（GPU 自动加速）；其余候选按推测标注。
 
 ---
 
@@ -57,8 +57,8 @@
 
 | 模型 | 维度 | 加载+编码（GPU） | 同文本相似度 | 结论 |
 |------|------|----------------|-------------|------|
-| BAAI/bge-small-zh-v1.5 | 512 | 秒级（轻量） | 1.0000 | 原默认；轻量、快 |
-| jinaai/jina-embeddings-v2-base-zh | 768 | 45s（含首次模型下载 0.64GB） | 1.0000 | **已切换为默认**；base 级更准、8K 上下文 |
+| BAAI/bge-small-zh-v1.5 | 512 | 秒级（轻量） | 1.0000 | **当前默认**；轻量、快、版本对比与 jina 结果一致 |
+| jinaai/jina-embeddings-v2-base-zh | 768 | 45s（含首次模型下载 0.64GB） | 1.0000 | 备选；base 级更准、8K 上下文 |
 
 ### 4.1 版本对比实测：jina vs bge-small（2026-08-16 网络手册 R5-21→R5-22）
 
@@ -77,11 +77,11 @@
   差异（如 removed 半句）由解析碎片 + 吸收逻辑决定，与 embedding 无关。
 - 耗时差异：GPU 8-9s vs CPU 44s（约 5 倍）；纯 CPU 用 bge-small 完全可接受（单次对比 <1 分钟）。
 
-**切换决策**：
-- jina-v2-base-zh 维度 768 > small 的 512，检索区分度更高（业界评测 base 级普遍优于 small 级）；
-  中文专项 + 8K 上下文（制度文档段落较长时优于短上下文模型）。
-- 代价：模型 0.64GB（vs 0.09GB）、编码稍慢、与 docling 共享 T4 显存需观察（onnxruntime arena 峰值待观察）。
-- **bge-small 可作纯 CPU 环境的推荐降级**：版本对比结果与 jina 一致；RAG 检索对语义区分度要求更高时仍建议 jina。
+**切换决策（08-16 更新：默认切 bge-small）**：
+- 版本对比实测（网络手册 R5-21→R5-22、信息技术手册 R3-2→R3-3）：**bge-small 与 jina 结果完全一致**
+  （removed 吸收、modified 配对逐条相同），差异主要来自解析后端与吸收逻辑而非 embedding 模型。
+- bge-small 优势：模型 0.09GB（vs 0.64GB）、GPU 8.9s / 纯 CPU 44.3s（单次对比 <1 分钟）均可跑；
+  GPU 环境 auto 自动加速。RAG 检索如遇长尾语义区分度不足，可再切换 jina（768 维 + 8K 上下文）。
 
 ---
 
@@ -89,8 +89,8 @@
 
 | 场景 | 推荐 | 依据 |
 |------|------|------|
-| **当前（默认）** | **jinaai/jina-embeddings-v2-base-zh** | base 级准确度/成本/显存甜点位，已实测可用 |
-| 资源紧张（纯 CPU / 小内存） | BAAI/bge-small-zh-v1.5 | 90MB、512 维、最快 |
+| **当前（默认）** | **BAAI/bge-small-zh-v1.5** | 轻量（0.09GB）、GPU/CPU 均可、版本对比与 jina 完全一致，实测可用 |
+| RAG 检索要求更高语义区分度 | jinaai/jina-embeddings-v2-base-zh | 768 维 + 8K 上下文，base 级评测更优（版本对比无差异，RAG 长尾可选） |
 | 追求多语言最强 | multilingual-e5-large（⚠️ 需实测显存） | 1024 维，T4 与 docling 共存偏紧 |
 | 极致中文（未来） | Qwen3-Embedding / BGE-M3 | 需扩展 embedding 后端（fastembed → transformers/ONNX 直载），⚠️ 未实测 |
 
@@ -107,7 +107,7 @@
 // rag_demo/config.json
 {
   "embedding": {
-    "model": "jinaai/jina-embeddings-v2-base-zh",   // 切换后需重置知识库
+    "model": "BAAI/bge-small-zh-v1.5",             // 默认；GPU 环境 auto 自动加速
     "device": "auto",                                  // auto/cuda/cpu
     "dtype": "auto"
   }
