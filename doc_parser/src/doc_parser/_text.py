@@ -59,7 +59,7 @@ _DEFAULT_HEADING_TERMINATORS = ("．", "。", "：", ":")
 
 
 # 句末终止符集合（用于行内标题粘连检测）
-_DEFAULT_SENTENCE_END_CHARS = "。；！？.;!？"
+_DEFAULT_SENTENCE_END_CHARS = "。！？.!？"
 
 
 def join_cjk_lines(parts: list[str]) -> str:
@@ -115,11 +115,14 @@ def _try_split_inline_title(line, cfg):
     - 终止符后的部分必须被 detect_chapter 识别为章节标题
     - 正文部分至少 10 个字符（避免短行误拆）
     """
-    sentence_end_chars = cfg.get("sentence_end_chars", _DEFAULT_SENTENCE_END_CHARS)
+    # 行内标题拆分用独立终止符集合（含"；"）：
+    # 段落断点（sentence_end_chars）不含"；"（列表项不打断段落），
+    # 但"正文…；第二章 标题"同行时仍需按"；"拆分出标题。
+    inline_end = cfg.get("inline_title_end_chars", "。；！？.!？")
     min_remainder = cfg.get("inline_title_min_remainder", 4)
     min_body = cfg.get("inline_title_min_body", 10)
     for i, ch in enumerate(line):
-        if ch not in sentence_end_chars:
+        if ch not in inline_end:
             continue
         remainder = line[i + 1 :].strip()
         if len(remainder) < min_remainder:
@@ -240,14 +243,12 @@ def split_stream(full_text, cfg):
             continue
 
         # 元数据行剥离：整行匹配配置的版本管理元数据模式 → 跳过（不进正文段落）
-        # 避免"修订日期：2026-05-08"这类独立行被并入相邻正文造成句子拼接。
+        # 注意：仅在"段落尚未开始"时跳过该行；若当前正在累积正文段落
+        # （列表项跨页时中间夹着页脚"修订日期"行），跳过该行继续累积，
+        # 不打断段落——否则列表项（如 §5.1.7 巡检项 a-g）被页脚行拆碎。
         if noise_line_re and any(p.match(stripped) for p in noise_line_re):
-            if current_lines:
-                para_text = join_cjk_lines(current_lines)
-                if len(para_text.strip()) > 0:
-                    paragraphs.append((para_text, current_start, line_start))
-                current_lines = []
-            current_start = char_pos
+            if not current_lines:
+                current_start = char_pos
             continue
 
         # 章节标题 → 独占一段（先断开前面的，标题自身也单独成段）

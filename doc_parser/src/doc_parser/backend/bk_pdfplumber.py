@@ -146,8 +146,11 @@ def extract_pdf_with_pdfplumber(filepath, config=None, get_config=None):
             )
 
             # 收集有效行用于重复统计
+            # 页眉常恰好落在 header_y 边界下方（如 top=68 vs header_y=67.36），
+            # 严格 < 会把它排除出统计 → repeated_lines 抓不到重复页眉 → 第二遍
+            # 混入正文流拆断列表。加 y_tolerance 容差覆盖边界附近的行。
             for line_top, line_text in page_lines:
-                if line_top < header_y or line_top > footer_y:
+                if line_top < header_y + y_tol or line_top > footer_y - y_tol:
                     continue
                 all_lines_flat.append(line_text.strip())
 
@@ -194,8 +197,8 @@ def extract_pdf_with_pdfplumber(filepath, config=None, get_config=None):
         for page_num, page_lines, table_regions, header_y, footer_y in page_data:
             start_offset = len(full_text)
             for line_top, line_text in page_lines:
-                # 跳过页眉/页脚
-                if line_top < header_y or line_top > footer_y:
+                # 跳过页眉/页脚（+y_tol 容差覆盖恰好落在边界下方的页眉）
+                if line_top < header_y + y_tol or line_top > footer_y - y_tol:
                     continue
                 # 跳过重复行
                 if line_text.strip() in repeated_lines:

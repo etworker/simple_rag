@@ -122,6 +122,7 @@ def extract_pdf_with_pymupdf(filepath, config=None, get_config=None):
         current_chapter = ""
         current_chapter_title = ""
 
+        y_tol = cfg.get("y_tolerance", 3)
         for page_num in range(num_pages):
             page = doc.load_page(page_num)
             page_height = page.rect.height
@@ -132,7 +133,8 @@ def extract_pdf_with_pymupdf(filepath, config=None, get_config=None):
             page_lines = _extract_lines(page, cfg)
 
             for top, _bottom, line_text in page_lines:
-                if top < header_y or top > footer_y:
+                # +y_tol 容差覆盖恰好落在 header_y 边界下方的页眉（top=68 vs 67.36）
+                if top < header_y + y_tol or top > footer_y - y_tol:
                     all_lines_flat.append(line_text)
 
             # find_tables()：PyMuPDF 内置线段检测表格（框线表格）
@@ -185,7 +187,7 @@ def extract_pdf_with_pymupdf(filepath, config=None, get_config=None):
         for page_num, page_lines, table_regions, header_y, footer_y in page_data:
             start_offset = len(full_text)
             for top, _bottom, line_text in page_lines:
-                if top < header_y or top > footer_y:
+                if top < header_y + y_tol or top > footer_y - y_tol:
                     continue
                 if line_text in repeated_lines:
                     continue
