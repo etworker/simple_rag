@@ -87,11 +87,26 @@ class DocStore:
         os.makedirs(self._parse_cache_dir, exist_ok=True)
 
         # 向量缓存（复用 version_diff 的 VectorStore，避免重复计算 embedding）
+        # ★ config_hash 必须与 review_runner._build_engine_config 一致：
+        #   两者都按「注入 parse_config 后的 embedding 段」计算哈希，否则同一文档
+        #   在预审核阶段写入的向量缓存（key 含 hash）与入库时查询的 key 不同，
+        #   导致入库时缓存未命中、重新计算全部 embedding。
+        #   doc_store 的 config 来自 config_store.to_dict()，embedding 段不含
+        #   parse_config，这里按 build_parse_config 同构逻辑注入后参与哈希。
         vector_cache_dir = config.get("vector_cache_dir", "")
-        cfg_hash = VectorStore.compute_config_hash(
-            config.get("embedding", {}).get("parse_config", {}),
-            config.get("embedding", {}),
-        )
+        _emb_cfg = dict(config.get("embedding", {}))
+        _pre_review = config.get("pre_review") or {}
+        _parse_backend = _pre_review.get("parse_backend", "auto")
+        _extract = {"backend": _parse_backend}
+        if _parse_backend == "docling":
+            _extract["docling_device"] = _pre_review.get("docling_device", "auto")
+            _batch = _pre_review.get("docling_batch_size", 0)
+            if _batch:
+                _extract["docling_batch_size"] = int(_batch)
+            _extract["docling_merge_split_paras"] = True
+            _extract["docling_strip_header_prefix"] = True
+        _emb_cfg["parse_config"] = {"extract": _extract}
+        cfg_hash = VectorStore.compute_config_hash(_emb_cfg.get("parse_config", {}), _emb_cfg)
         self._vector_store = VectorStore(cache_dir=vector_cache_dir, config_hash=cfg_hash)
 
         # 解析配置（与预审核一致：pre_review.parse_backend，默认 docling）。
