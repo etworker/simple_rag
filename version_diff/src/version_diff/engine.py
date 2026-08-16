@@ -640,10 +640,21 @@ class DiffEngine:
         if not removed or not added:
             return changes
 
+        # 表格行（location 形如 "行: xxx"）的删除/新增是真实变更（如某设备行被整行
+        # 替换成另一设备行），不应参与"改写/移动"二次配对——否则会被错误合并成一条
+        # modified，丢失"旧行删除 + 新行新增"的信息。仅对正文段落做二次配对。
+        def _is_table_row(c) -> bool:
+            loc = c.location or ""
+            return loc.startswith("行:") or loc.startswith("表格")
+
         # 计算所有 removed×added 相似度，贪心合并
         candidates = []
         for ri, r in enumerate(removed):
+            if _is_table_row(r):
+                continue
             for ai, a in enumerate(added):
+                if _is_table_row(a):
+                    continue
                 old_t = (r.old_text or "").strip()
                 new_t = (a.new_text or "").strip()
                 if not old_t or not new_t:
@@ -651,9 +662,6 @@ class DiffEngine:
                 sim = difflib.SequenceMatcher(None, old_t, new_t).ratio()
                 if sim >= threshold:
                     candidates.append((sim, ri, ai))
-        if not candidates:
-            return changes
-
         candidates.sort(reverse=True)
         used_r, used_a = set(), set()
         merged = []
@@ -676,13 +684,37 @@ class DiffEngine:
                     similarity=round(sim, 3),
                 )
             )
-        if not merged:
-            return changes
 
         # 未被合并的 removed/added 保留；被合并的剔除
         keep_removed = [c for i, c in enumerate(removed) if i not in used_r]
         keep_added = [c for i, c in enumerate(added) if i not in used_a]
         others = [c for c in changes if c.change_type not in ("removed", "added")]
+
+        # ── removed×modified 二次配对：removed 内容已被某 modified 包含 → 剔除 removed ──
+        # 场景：旧版某段落（半句/整句）移动到新版另一章节并被并入改写后的段落，
+        # 语义配对未成功 → 旧版内容标 removed、新位置标 modified（两条，用户看到
+        # "删除 X + 新增 X" 矛盾）。若 removed.old_text 是某 modified 的 new_text 或
+        # old_text 的子串（长度 >= min_len），说明该内容已体现在 modified 中 → 剔除 removed。
+        if keep_removed:
+            # 注意：merged 是本次 removed×added 二次配对新合并出的 modified，
+            # 其 new_text 也可能包含被二次配对遗漏的 removed 内容（如旧版半句被新版
+            # 并入改写段落的开头），必须一并纳入吸收检查。
+            _mods = [c for c in others if c.change_type == "modified"] + merged
+            _min_len = int(self.config.diff.get("removed_in_modified_min_len", 15))
+            _absorbed = set()
+            for i, r in enumerate(keep_removed):
+                if _is_table_row(r):
+                    continue
+                old_t = (r.old_text or "").strip()
+                if len(old_t) < _min_len:
+                    continue
+                for m in _mods:
+                    if old_t in (m.new_text or "") or old_t in (m.old_text or ""):
+                        _absorbed.add(i)
+                        break
+            if _absorbed:
+                keep_removed = [c for i, c in enumerate(keep_removed) if i not in _absorbed]
+
         return others + keep_removed + keep_added + merged
 
     def _compare_tables(self, old_tables: list, new_tables: list) -> list[VersionChange]:
