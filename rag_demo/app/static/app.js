@@ -1095,7 +1095,7 @@ async function confirmIngest(){
     if(noBtn){noBtn.disabled=true;}
     // 在面板上显示进度提示
     const info=document.getElementById('reviewInfo');
-    if(info){info.textContent='⏳ 正在入库（解析文档 + 计算向量 + 构建索引），预计 1-3 分钟，请勿离开...';}
+    if(info){info.textContent='⏳ 正在入库（解析/向量复用预审核缓存，首次稍慢），请稍候...';}
     console.log('confirmIngest: confirming task',reviewTaskId);
     try{
         const res=await fetch(`/api/documents/review/${reviewTaskId}/confirm`,{method:'POST'});

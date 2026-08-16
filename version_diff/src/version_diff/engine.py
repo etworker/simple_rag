@@ -602,6 +602,13 @@ class DiffEngine:
         table_changes = self._compare_tables(old_doc.tables, new_doc.tables)
         changes.extend(table_changes)
 
+        # ====== removed/added 二次配对：改写/移动段落合并为 modified ======
+        # 语义配对阈值（0.80）对"改写/移动"段落太严：同一段落被大改（如"OKAIR 无线连接"
+        # →"VPN 连接"）或移动到其他章节时相似度 < 阈值 → 未配对 → 拆成 removed+added，
+        # 用户看到的是"删除 X + 新增 Y"而非"X 改写成 Y"。这里对未配对的 removed/added
+        # 做文本相似度二次配对，显著相似者合并为 modified。
+        changes = self._merge_rewritten_pairs(changes)
+
         # ====== 过滤：保留实质性变更，噪声归入 minor_changes ======
         self._notify(on_progress, "filtering", 0.9, "过滤非实质性差异...")
         changes, minor_changes = self._filter_substantive_changes(changes)
@@ -614,6 +621,69 @@ class DiffEngine:
             old_paragraph_count=len(old_doc.paragraphs),
             new_paragraph_count=len(new_doc.paragraphs),
         )
+
+    def _merge_rewritten_pairs(self, changes: list) -> list:
+        """removed/added 二次配对：文本显著相似的删除/新增合并为修改（改写/移动）。
+
+        用 difflib.SequenceMatcher 计算 removed.old_text 与 added.new_text 的相似度，
+        超过阈值（默认 0.45）视为同一段落的改写/移动 → 合并为一条 modified。
+        每段只合并一次（贪心，最高分优先）。
+
+        Returns:
+            合并后的 changes 列表
+        """
+        import difflib
+
+        threshold = self.config.diff.get("rewrite_pair_threshold", 0.45)
+        removed = [c for c in changes if c.change_type == "removed"]
+        added = [c for c in changes if c.change_type == "added"]
+        if not removed or not added:
+            return changes
+
+        # 计算所有 removed×added 相似度，贪心合并
+        candidates = []
+        for ri, r in enumerate(removed):
+            for ai, a in enumerate(added):
+                old_t = (r.old_text or "").strip()
+                new_t = (a.new_text or "").strip()
+                if not old_t or not new_t:
+                    continue
+                sim = difflib.SequenceMatcher(None, old_t, new_t).ratio()
+                if sim >= threshold:
+                    candidates.append((sim, ri, ai))
+        if not candidates:
+            return changes
+
+        candidates.sort(reverse=True)
+        used_r, used_a = set(), set()
+        merged = []
+        for sim, ri, ai in candidates:
+            if ri in used_r or ai in used_a:
+                continue
+            used_r.add(ri)
+            used_a.add(ai)
+            r, a = removed[ri], added[ai]
+            merged.append(
+                VersionChange(
+                    change_type="modified",
+                    section=a.section or r.section,
+                    location=a.location or r.location,
+                    old_section=r.section or r.old_section,
+                    old_location=r.location,
+                    old_text=r.old_text,
+                    new_text=a.new_text,
+                    summary="",
+                    similarity=round(sim, 3),
+                )
+            )
+        if not merged:
+            return changes
+
+        # 未被合并的 removed/added 保留；被合并的剔除
+        keep_removed = [c for i, c in enumerate(removed) if i not in used_r]
+        keep_added = [c for i, c in enumerate(added) if i not in used_a]
+        others = [c for c in changes if c.change_type not in ("removed", "added")]
+        return others + keep_removed + keep_added + merged
 
     def _compare_tables(self, old_tables: list, new_tables: list) -> list[VersionChange]:
         """
