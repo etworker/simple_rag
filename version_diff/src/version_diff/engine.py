@@ -828,13 +828,20 @@ class DiffEngine:
                 minor.append(c)
                 continue
 
-            # 3b) 一方是另一方的严格前缀（长度差 < 50）→ 疑似解析截断/跨页断句
+            # 3b) 新版是旧版的严格前缀（长度差 < 50）→ 新版疑似解析截断/跨页断句
             # 例：新版段落被截断成旧版前缀（旧 162 字 vs 新 142 字且以"更"结尾半句话）。
             # 这类是解析噪声（PDF 跨页/断句），不是真实内容删除，归入 minor。
-            _short, _long = (old_norm, new_norm) if len(old_norm) <= len(new_norm) else (new_norm, old_norm)
-            if _short and _long.startswith(_short) and len(_long) - len(_short) < 50:
+            # ★ 仅此方向归 minor：新版短、旧版长且新版是旧版前缀 → 新版疑似截断。
+            # 反向（旧版短、新版长且旧版是新版前缀）→ 新版补全/新增了内容，
+            # 是真实版本变更（如 §5.1.9.7 新版补全"法规、政策和公司相关规定…"、
+            # §5.1.6.5 新版新增"A 网络安全设备开启漏洞…"），必须保留为实质性。
+            if (
+                len(new_norm) < len(old_norm)
+                and old_norm.startswith(new_norm)
+                and len(old_norm) - len(new_norm) < 50
+            ):
                 c = _classify_change("metadata", c)
-                c.summary = "[解析] 疑似跨页断句/文本截断（一方是另一方前缀），非实质性变更"
+                c.summary = "[解析] 新版疑似跨页断句/文本截断（新版是旧版前缀），非实质性变更"
                 minor.append(c)
                 continue
 
