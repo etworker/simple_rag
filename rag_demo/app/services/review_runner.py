@@ -251,7 +251,7 @@ async def run_pre_review(task_id: str):
                 # 步骤与 engine.version_compare 内部 on_progress 一致
                 # （parsing/embedding/diffing/filtering/done），保证前端列表与实际执行同步
                 all_steps = [
-                    {"id": "parsing", "label": "解析文档（新旧两版）"},
+                    {"id": "parsing", "label": "解析文档"},
                     {"id": "embedding", "label": "计算语义向量"},
                     {"id": "diffing", "label": "版本差异对比"},
                     {"id": "filtering", "label": "过滤非实质性差异"},
