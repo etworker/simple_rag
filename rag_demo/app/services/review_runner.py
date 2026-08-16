@@ -49,18 +49,35 @@ def _compute_doc_signature() -> str:
 
 
 def _build_engine_config() -> dict:
-    """构造 DiffEngine 配置（embedding / llm / diff / judge / cache）"""
+    """构造 DiffEngine 配置（embedding / llm / diff / judge / cache）
+
+    解析后端：pre_review.parse_backend（默认 docling——准确度最高，GPU 加速；
+    docling_device 控制推理设备）。embedding 段注入 parse_config 供 doc_parser 使用。
+    """
+    embedding = _state.app.config.get_section("embedding")
+    pre_review = _state.app.config.get_section("pre_review")
+    parse_backend = pre_review.get("parse_backend", "auto")
+    docling_device = pre_review.get("docling_device", "auto")
+    # 解析配置注入 embedding.parse_config（DiffEngine 用它传给 doc_parser.parse）
+    parse_config = {"backend": parse_backend}
+    if parse_backend == "docling":
+        parse_config["docling_device"] = docling_device
+    embedding = {**embedding, "parse_config": parse_config}
     return {
-        "embedding": _state.app.config.get_section("embedding"),
+        "embedding": embedding,
         "llm": _state.app.config.get_llm_profile("pre_review"),
-        "diff": _state.app.config.get_section("pre_review"),
+        "diff": pre_review,
         "judge": _state.app.config.get_section("judge"),
         "cache": {"vector_cache_dir": os.path.join(_state.app.cache_dir, "vector_cache")},
     }
 
 
-def _run_version_compare(engine, old_version_filepath: str, new_filepath: str) -> dict:
+def _run_version_compare(engine, old_version_filepath: str, new_filepath: str, on_progress=None) -> dict:
     """若提供旧版本文档，执行版本对比并返回变更列表（失败返回空结果）
+
+    Args:
+        on_progress: 进度回调（透传给 engine.version_compare，步骤:
+            parsing/embedding/diffing/filtering/done），使前端进度列表与实际执行一致。
 
     返回: {
         "changes": [...],         # 实质性变更
@@ -88,7 +105,7 @@ def _run_version_compare(engine, old_version_filepath: str, new_filepath: str) -
     version_changes = []
     minor_changes = []
     try:
-        version_result = engine.version_compare(old_version_filepath, new_filepath)
+        version_result = engine.version_compare(old_version_filepath, new_filepath, on_progress=on_progress)
         for change in version_result.changes:
             version_changes.append(_serialize(change))
         for change in version_result.minor_changes:
@@ -205,11 +222,13 @@ async def run_pre_review(task_id: str):
         kb_empty = _state.app.doc_store.total_documents == 0
         if kb_empty or is_version_update:
             if is_version_update:
+                # 步骤与 engine.version_compare 内部 on_progress 一致
+                # （parsing/embedding/diffing/filtering/done），保证前端列表与实际执行同步
                 all_steps = [
-                    {"id": "model", "label": "加载向量模型"},
-                    {"id": "parsing", "label": "解析文档"},
+                    {"id": "parsing", "label": "解析新旧版本"},
                     {"id": "embedding", "label": "计算语义向量"},
                     {"id": "diffing", "label": "版本差异对比"},
+                    {"id": "filtering", "label": "过滤非实质性差异"},
                     {"id": "done", "label": "汇总结果"},
                 ]
                 log.info("检测到版本更新，跳过跨文档矛盾检测，直接执行版本对比")
@@ -269,7 +288,7 @@ async def run_pre_review(task_id: str):
             }
             _bump_result()
 
-            version_compare_result = _run_version_compare(engine, old_version_filepath, filepath)
+            version_compare_result = _run_version_compare(engine, old_version_filepath, filepath, on_progress=on_progress)
 
             task["progress"] = 100
             task["current_step"] = "版本对比完成"
@@ -411,7 +430,7 @@ async def run_pre_review(task_id: str):
             _bump_result()
             log.info("内容矛盾判定完成，开始版本对比...")
 
-        version_compare_result = _run_version_compare(engine, old_version_filepath, filepath)
+        version_compare_result = _run_version_compare(engine, old_version_filepath, filepath, on_progress=on_progress)
 
         task["progress"] = 100
         task["current_step"] = "预审核完成"
