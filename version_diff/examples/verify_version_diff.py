@@ -119,18 +119,72 @@ def main(old_path, new_path, model, do_summary):
     print(f"旧版: {old_path}")
     print(f"新版: {new_path}")
 
-    cfg = {
-        "embedding": {"model": "BAAI/bge-small-zh-v1.5", "device": "cpu"},
-        "llm": {
+    # 与 web 流程（rag_demo）对齐：从 rag_demo/config.json 读取 embedding /
+    # LLM / pre_review 配置，解析后端用 pdfplumber（页眉剥离 + 碎尾合并），
+    # embedding device=auto（有 GPU 用 GPU）。保证脚本结果与 web 一致。
+    # 兜底：无 config.json 时退回内置默认（bge-small + bedrock_converse + cpu）。
+    import json as _json
+
+    _repo = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    _config_path = os.path.join(_repo, "rag_demo", "config.json")
+    _llm = None
+    _parse_cfg = None
+    if os.path.exists(_config_path):
+        try:
+            with open(_config_path, encoding="utf-8") as _f:
+                _app_cfg = _json.load(_f)
+            _emb = dict(_app_cfg.get("embedding", {}))
+            _pre_review = _app_cfg.get("pre_review", {})
+            _pb = _pre_review.get("parse_backend", "pdfplumber")
+            _extract = {"backend": _pb}
+            if _pb == "docling":
+                _extract["docling_device"] = _pre_review.get("docling_device", "auto")
+                _batch = _pre_review.get("docling_batch_size", 0)
+                if _batch:
+                    _extract["docling_batch_size"] = int(_batch)
+                _extract["docling_merge_split_paras"] = True
+                _extract["docling_strip_header_prefix"] = True
+            _parse_cfg = {"extract": _extract}
+            _emb.setdefault("device", "auto")
+            _emb["parse_config"] = _parse_cfg
+            _profiles = _app_cfg.get("llm_profiles", {})
+            _routing = _app_cfg.get("llm_routing", {})
+            _llm = _profiles.get(_routing.get("pre_review", ""), None)
+            if _llm:
+                # 保留 --model 覆盖能力（默认 zai.glm-4.7-flash 与 profile 一致）
+                _llm = dict(_llm)
+                _llm["model"] = model
+            _diff = dict(_pre_review)
+            _diff.setdefault("similarity_threshold", 0.80)
+            _diff.setdefault("top_k", 3)
+            _diff.setdefault("batch_size", 5)
+        except Exception as e:
+            log.warning(f"加载 rag_demo/config.json 失败，使用内置默认: {e}")
+            _llm, _parse_cfg = None, None
+
+    if _llm is None:
+        _emb = {"model": "BAAI/bge-small-zh-v1.5", "device": "auto"}
+        _diff = {"similarity_threshold": 0.80, "top_k": 3, "batch_size": 5}
+        _llm = {
             "provider": "bedrock_converse",
             "model": model,
             "max_tokens": 2048,
             "timeout": 120,
             "max_retries": 3,
             "retry_backoff": 2.0,
+        }
+
+    cfg = {
+        "embedding": _emb,
+        "llm": _llm,
+        "diff": _diff,
+        "cache": {
+            "vector_cache_dir": os.path.join(os.path.expanduser("~"), ".simple_rag", "vector_cache"),
+            "parse_cache_dir": os.path.join(os.path.expanduser("~"), ".simple_rag", "parse_cache"),
         },
-        "diff": {"similarity_threshold": 0.80, "top_k": 3, "batch_size": 5},
     }
+    if _parse_cfg is not None:
+        print(f"解析后端: {_parse_cfg['extract']['backend']} | embedding: {_emb.get('model')} (device={_emb.get('device')})")
 
     engine = DiffEngine(config=cfg)
 
