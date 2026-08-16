@@ -1562,6 +1562,8 @@ function renderSettingsForm(){
   const pr=_settingsConfig.pre_review||{};
   document.getElementById('pr-threshold').value=pr.similarity_threshold||0.8;
   document.getElementById('pr-batch').value=pr.batch_size||0;
+  document.getElementById('pr-parse_backend').value=pr.parse_backend||'auto';
+  document.getElementById('pr-docling_device').value=pr.docling_device||'auto';
   // Conflict detection
   const cd=_settingsConfig.conflict_detection||{};
   document.getElementById('cd-min_score').value=cd.min_score||0.7;
@@ -1748,6 +1750,8 @@ async function saveSettings(){
     pre_review:{
       similarity_threshold:parseFloat(document.getElementById('pr-threshold').value)||0.8,
       batch_size:parseInt(document.getElementById('pr-batch').value)||0,
+      parse_backend:document.getElementById('pr-parse_backend').value||'auto',
+      docling_device:document.getElementById('pr-docling_device').value||'auto',
     },
     conflict_detection:{
       min_score:parseFloat(document.getElementById('cd-min_score').value)||0.7,

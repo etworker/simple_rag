@@ -171,6 +171,18 @@
                 <div class="setting-row"><label>top_k</label><input type="number" id="ret-top_k" style="width:80px"></div>
                 <div class="setting-row"><label>相似度阈值</label><input type="number" step="0.05" id="ret-threshold" style="width:80px"></div>
                 <div class="setting-section-title">预审核</div>
+                <div class="setting-row"><label>PDF 解析后端</label><select id="pr-parse_backend">
+                    <option value="auto">auto（智能路由）</option>
+                    <option value="pymupdf">pymupdf（快）</option>
+                    <option value="docling">docling（准，深度学习表格）</option>
+                    <option value="mineru">mineru（扫描件 OCR）</option>
+                    <option value="pdfplumber">pdfplumber（兜底）</option>
+                </select></div>
+                <div class="setting-row"><label>docling 设备</label><select id="pr-docling_device">
+                    <option value="auto">auto</option>
+                    <option value="cuda">cuda</option>
+                    <option value="cpu">cpu</option>
+                </select></div>
                 <div class="setting-row"><label>相似度阈值</label><input type="number" step="0.05" id="pr-threshold" style="width:80px"></div>
                 <div class="setting-row"><label>batch_size</label><input type="number" id="pr-batch" style="width:80px"><span class="hint">0=自动</span></div>
                 <div class="setting-section-title">冲突检测</div>

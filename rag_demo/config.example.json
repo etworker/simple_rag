@@ -70,6 +70,8 @@
   "pre_review": {
     "similarity_threshold": 0.8,
     "batch_size": 0,
+    "parse_backend": "auto",
+    "docling_device": "auto",
     "noise_filter": {
       "enabled": true,
       "patterns": [

@@ -114,6 +114,8 @@ CONFIG_DESCRIPTIONS = {
     "retrieval.similarity_threshold": "检索相似度下限。低于此分数的段落不会返回给用户。",
     "pre_review.similarity_threshold": "版本对比时的段落配对相似度阈值。只有向量相似度超过此值的段落对才会进入差异比较流程。",
     "pre_review.batch_size": "版本对比时LLM批量调用大小。每批发送多少对差异给LLM判断。设为0表示根据模型上下文窗口自动计算。",
+    "pre_review.parse_backend": "PDF 解析后端。auto=智能路由（扫描件→mineru，无框线表格→docling，数字文本→pymupdf）；pymupdf=快路径；docling=深度学习版面+表格（最准，GPU 加速）；mineru=中文扫描件 OCR；pdfplumber=轻量兜底。",
+    "pre_review.docling_device": "docling 推理设备。auto=自动探测（有 GPU 用 cuda）；cuda=强制 GPU；cpu=强制 CPU。仅 parse_backend=docling 时生效。",
     "conflict_detection.min_score": "冲突检测最低置信度。LLM返回的冲突置信度低于此值时不报告为冲突。",
     "conflict_detection.min_similarity": "冲突检测段落配对最低相似度。只有超过此相似度的跨文档段落对才进入冲突检测。",
     "conflict_detection.max_similarity": "冲突检测段落配对最高相似度。超过此值的段落对被视为内容相同（非冲突），不进入检测。",
