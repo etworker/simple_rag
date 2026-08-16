@@ -12,6 +12,7 @@ import difflib
 import re
 from dataclasses import dataclass, field
 
+import faiss
 from loguru import logger as log
 
 from version_diff.vectorstore import VectorStore
@@ -62,6 +63,7 @@ def pair_paragraphs(
     用 FAISS 找到两篇文档中"说同一件事"的段落对
 
     流程：
+    0. 精确文本配对（strip 后完全相同优先配对，消除重复短文本的抢占）
     1. 获取/缓存文档 A 和 B 的 embedding + FAISS index
     2. 用 A 的 embedding 在 B 的 index 中检索 top-K
     3. 贪心配对（每段只配一个，优先最高分）
@@ -71,32 +73,66 @@ def pair_paragraphs(
 
     vs = vector_store or _default_vector_store
 
-    # 获取 embedding（命中缓存则跳过计算）
+    # ── 第 0 步：精确文本配对 ──
+    # 相同文本（如"网络与信息安全管理手册"这类每节重复的"支持性文件/记录"短行）
+    # 在两版出现多次时，若走 FAISS 贪心会被"含该文本的正文段"抢占，
+    # 导致相同短段配不上 → 产生大量假 added/removed。
+    # 先按 strip 后文本精确配对，消除这类抢占。
+    exact_pairs = []
+    used_a = set()
+    used_b = set()
+    remaining_a = list(range(len(paras_a)))
+    remaining_b = list(range(len(paras_b)))
+    b_by_text: dict[str, list[int]] = {}
+    for j, p in enumerate(paras_b):
+        b_by_text.setdefault(p.text.strip(), []).append(j)
+    for i in remaining_a:
+        text = paras_a[i].text.strip()
+        bucket = b_by_text.get(text)
+        if bucket:
+            j = bucket.pop(0)
+            exact_pairs.append((i, j, 1.0))
+            used_a.add(i)
+            used_b.add(j)
+            if not bucket:
+                b_by_text.pop(text, None)
+    if exact_pairs:
+        log.info(f"  🎯 精确文本配对: {len(exact_pairs)} 对")
+    remaining_a = [i for i in remaining_a if i not in used_a]
+    remaining_b = [j for j in remaining_b if j not in used_b]
+
+    # 获取 embedding（全量取缓存/计算，再按 remaining 索引切片，保持缓存命中）
     log.info("  📄 文档A:")
-    emb_a, _ = vs.get_or_compute(file_a, paras_a, model)
+    emb_a_full, _ = vs.get_or_compute(file_a, paras_a, model)
 
     log.info("  📄 文档B:")
-    _emb_b, index_b = vs.get_or_compute(file_b, paras_b, model)
+    emb_b_full, index_b_full = vs.get_or_compute(file_b, paras_b, model)
+
+    if not remaining_a or not remaining_b:
+        return exact_pairs
+
+    # 子集切片（emb 行序 = 段落列表序）
+    emb_a = emb_a_full[remaining_a]
+    # 对 B 子集重建 index（子集行序 = remaining_b 顺序）
+    index_b = faiss.IndexFlatIP(emb_b_full.shape[1])
+    index_b.add(emb_b_full[remaining_b])
 
     # 用 FAISS 检索：对 A 中每段，在 B 中找 top-K 最相似
-    top_k = min(top_k, len(paras_b))
-    log.info(f"  🔍 FAISS 检索 (A的{len(paras_a)}段 → B的index, top-{top_k})...")
+    top_k = min(top_k, len(remaining_b))
+    log.info(f"  🔍 FAISS 检索 (A的{len(remaining_a)}段 → B的index, top-{top_k})...")
     similarities, indices = vs.search_similar(emb_a, index_b, top_k)
 
     # 贪心配对
     candidates = []
-    for i in range(len(paras_a)):
+    for idx, i in enumerate(remaining_a):
         for k in range(top_k):
-            j = int(indices[i][k])
-            sim = float(similarities[i][k])
+            j = remaining_b[int(indices[idx][k])]
+            sim = float(similarities[idx][k])
             if sim >= threshold:
                 candidates.append((sim, i, j))
 
     candidates.sort(reverse=True)
-    pairs = []
-    used_a = set()
-    used_b = set()
-
+    pairs = list(exact_pairs)
     for sim, i, j in candidates:
         if i in used_a or j in used_b:
             continue
