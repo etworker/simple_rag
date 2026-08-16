@@ -43,10 +43,11 @@ from doc_parser.models import Document
 
 # 默认配置
 DEFAULT_CONFIG = {
-    # PDF 后端: "auto"(默认,pdfplumber优先) / "mineru" / "docling" / "pdfplumber"
+    # PDF 后端: "auto"(默认) / "pdfplumber" / "pymupdf" / "mineru" / "docling"
+    # - pymupdf  : PyMuPDF 极速文本+规则表格（数字文本 PDF 快路径，0.01-0.1s/页）
     # - mineru   : MinerU VLM/OCR（扫描件/复杂版面，CPU 慢）
-    # - docling  : IBM Docling TableFormer（复杂版面/跨页表，CPU 约 1.4s/页）
-    # - auto     : 智能路由（扫描件→mineru，正常→pdfplumber）
+    # - docling  : IBM Docling TableFormer（复杂版面/跨页表/深度学习表格，GPU 加速）
+    # - auto     : 智能路由（扫描件→mineru，无框线表格→docling，正常→pymupdf）
     "backend": "auto",
     "header_margin_pct": 8,
     "footer_margin_pct": 8,

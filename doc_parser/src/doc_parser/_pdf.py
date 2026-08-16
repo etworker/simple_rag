@@ -139,9 +139,9 @@ def select_backend(filepath, cfg):
 
     决策流程：
     1. 扫描件检测  → 文本量极低 或 大图片覆盖页面 → MinerU
-    2. 无框线表格  → 有绘图对象但 pdfplumber 提取不到表格 → MinerU
-    3. 文本表格线索 → 文本中出现表头关键词且列对齐 → MinerU
-    4. 正常文档    → pdfplumber
+    2. 无框线表格  → 有绘图对象但规则后端提取不到表格 → Docling（深度学习表格）
+    3. 文本表格线索 → 文本中出现表头关键词且列对齐 → Docling
+    4. 正常文档    → PyMuPDF（快路径；不可用时降级 pdfplumber）
 
     所有阈值均从 cfg 读取，可通过配置覆盖。
 
@@ -169,19 +169,19 @@ def select_backend(filepath, cfg):
     if scan["large_image_ratio"] > image_ratio and scan["avg_text_per_page"] < image_text_threshold:
         return "mineru", f"疑似扫描件（大图片覆盖率 {scan['large_image_ratio']:.0%}，文本仅 {scan['avg_text_per_page']:.0f} 字/页）"
 
-    # 3. 有绘图线但 pdfplumber 提取不到表格 → 可能无框线表格
+    # 3. 有绘图线但规则后端提取不到表格 → 可能无框线表格 → Docling（深度学习表格识别）
     if scan["has_drawings_no_tables"] and scan["avg_tables_per_page"] < low_table_rate:
-        return "mineru", "检测到绘图对象但 pdfplumber 未提取到表格（疑似无框线表格）"
+        return "docling", "检测到绘图对象但规则后端未提取到表格（疑似无框线表格，用 Docling）"
 
-    # 4. 文本中出现表头关键词 + 列对齐特征
+    # 4. 文本中出现表头关键词 + 列对齐特征（疑似无框线表格）→ Docling
     if _detect_borderless_table_hint(scan, cfg) and scan["avg_tables_per_page"] < low_table_rate:
-        return "mineru", "文本中出现表格关键词及列对齐特征（疑似无框线表格）"
+        return "docling", "文本中出现表格关键词及列对齐特征（疑似无框线表格，用 Docling）"
 
-    # 5. pdfplumber 足以应对
+    # 5. 表格正常 → 数字文本快路径 PyMuPDF（秒级；相比 pdfplumber 快 10-50 倍）
     if scan["avg_tables_per_page"] >= 1:
-        return "pdfplumber", f"表格提取正常（平均 {scan['avg_tables_per_page']:.1f} 表/页）"
+        return "pymupdf", f"数字文本 + 表格提取正常（平均 {scan['avg_tables_per_page']:.1f} 表/页），走快路径"
 
-    return "pdfplumber", "文档特征正常"
+    return "pymupdf", "文档特征正常，走 PyMuPDF 快路径"
 
 
 # ============================================================
@@ -215,6 +215,10 @@ def extract_pdf(filepath, config=None, get_config=None):
         from doc_parser.backend import load_backend
 
         return load_backend("docling").extract_pdf_with_docling(filepath, config)
+    elif backend in ("pymupdf", "pymupdf_cpu"):
+        from doc_parser.backend import load_backend
+
+        return load_backend("pymupdf").extract_pdf_with_pymupdf(filepath, config)
     elif backend in ("pdfplumber", "pdfplumber_cpu"):
         from doc_parser.backend import load_backend
 
@@ -237,7 +241,17 @@ def extract_pdf(filepath, config=None, get_config=None):
                 logger.info(f"自动选择 Docling 后端：{reason}")
                 return load_backend("docling").extract_pdf_with_docling(filepath, config)
             except Exception as e:
+                # Docling 不可用，降级到 pdfplumber
                 logger.warning(f"{reason}，但 Docling 不可用（{e}），降级到 pdfplumber")
+        elif chosen == "pymupdf":
+            try:
+                from doc_parser.backend import load_backend
+
+                logger.info(f"自动选择 PyMuPDF 后端：{reason}")
+                return load_backend("pymupdf").extract_pdf_with_pymupdf(filepath, config)
+            except Exception as e:
+                # PyMuPDF 不可用，降级到 pdfplumber
+                logger.warning(f"{reason}，但 PyMuPDF 不可用（{e}），降级到 pdfplumber")
         else:
             if reason:
                 logger.info(f"自动选择 pdfplumber 后端：{reason}")

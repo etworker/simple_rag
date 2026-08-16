@@ -97,6 +97,14 @@ doc: Document = parse(filepath: str, config: dict = None) -> Document
 # doc.paragraphs: list[Paragraph]
 # doc.tables:     list[Table]
 
+# PDF 后端（config["extract"]["backend"]）：
+#   "auto"(默认) 智能路由：扫描件→mineru，无框线表格→docling，数字文本→pymupdf
+#   "pymupdf"    快路径：PyMuPDF 数字文本解析（0.01-0.1s/页，表格用 find_tables 规则提取）
+#   "pdfplumber" 兜底：轻量文本+规则表格（margin 编号列等定制逻辑）
+#   "docling"    准路径：Docling TableFormer 深度学习表格/版面（docling_device: auto/cuda/cpu）
+#   "mineru"     扫描件/图片 PDF：MinerU VLM/OCR（mineru_backend: vlm/pipeline/auto）
+# 后端不可用时 auto 自动降级 pdfplumber；详见 doc_parser/docs/设计文档.md 与 docs/PDF解析库对比与选型报告.md
+
 # Paragraph / Table 均提供 to_dict() / from_dict() 与只读 location 属性
 p = Paragraph(text="...", page=3, chapter="2.2", chapter_title="备份策略", source_file="a.pdf")
 d = p.to_dict(); p2 = Paragraph.from_dict(d)

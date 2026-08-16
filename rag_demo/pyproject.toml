@@ -11,7 +11,11 @@ dependencies = [
     "uvicorn>=0.23.0",
     "fastembed>=0.6.0",
     "websockets>=12.0",
-    "faiss-cpu>=1.7.4",
+    "faiss-gpu>=1.7.4",
+    # GPU 环境 embedding 加速：onnxruntime-gpu 提供 CUDAExecutionProvider，
+    # 与 fastembed 的 onnxruntime(CPU) 依赖共存（后者被前者同名模块覆盖）。
+    # Windows/无 GPU 环境请删除此行。
+    "onnxruntime-gpu>=1.17.0",
     "numpy>=1.24.0",
     "python-multipart>=0.0.32",
     "pymupdf>=1.24.0",

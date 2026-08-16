@@ -139,11 +139,19 @@ def extract_pdf_with_mineru(filepath: str, config: dict | None = None):
     except ImportError:
         raise RuntimeError('MinerU 未安装。请运行: uv pip install -U "mineru[all]"') from None
 
-    # ── 后端选择 ──
+    # ── 后端选择（mineru 3.x 枚举：pipeline / vlm-engine / hybrid-engine / *-http-client）──
+    # 旧值 "vlm" 兼容映射为 "vlm-engine"（mineru>=3.4 起更名）
+    _BACKEND_MAP = {
+        "vlm": "vlm-engine",
+        "vlm-engine": "vlm-engine",
+        "hybrid-engine": "hybrid-engine",
+        "pipeline": "pipeline",
+    }
     backend = cfg.get("mineru_backend", "auto")
     if backend == "auto":
-        # 自动检测：有 GPU → vlm，无 GPU → pipeline
-        backend = "vlm" if _has_gpu() else "pipeline"
+        # 自动检测：有 GPU → vlm-engine，无 GPU → pipeline
+        backend = "vlm-engine" if _has_gpu() else "pipeline"
+    backend = _BACKEND_MAP.get(backend, backend)
 
     # ── 模型源：优先 HuggingFace（已有缓存），CPU 时用 modelscope 可能更慢 ──
     if not os.environ.get("MINERU_MODEL_SOURCE"):
@@ -180,6 +188,8 @@ def extract_pdf_with_mineru(filepath: str, config: dict | None = None):
             f_dump_content_list=True,
             start_page_id=cfg.get("mineru_start_page", 0),
             end_page_id=cfg.get("mineru_end_page", None),
+            # VLM 推理 batch（0=按显存自动；T4 16GB 建议 1，避免 OOM；多进程并行时每进程 batch=1 更稳）
+            batch_size=cfg.get("mineru_batch_size", 0),
         )
 
         # ── 查找并解析输出 ──

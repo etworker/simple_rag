@@ -62,7 +62,8 @@ class TestSelectBackendNotScanWhenTextRich:
     结构验证 select_backend 的分支（通过 monkeypatch _quick_scan_pdf）。
     """
 
-    def test_rich_text_with_large_images_uses_pdfplumber(self, monkeypatch):
+    def test_rich_text_with_large_images_uses_pymupdf(self, monkeypatch):
+        """大图覆盖但文本充足（公文红头/印章）→ 快路径 PyMuPDF，不误判扫描件。"""
         from doc_parser import _pdf
 
         fake_scan = {
@@ -76,7 +77,7 @@ class TestSelectBackendNotScanWhenTextRich:
         }
         monkeypatch.setattr(_pdf, "_quick_scan_pdf", lambda *a, **k: fake_scan)
         backend, _reason = _pdf.select_backend("fake.pdf", _cfg())
-        assert backend == "pdfplumber"
+        assert backend == "pymupdf"
 
     def test_sparse_text_with_large_images_uses_mineru(self, monkeypatch):
         from doc_parser import _pdf
@@ -95,7 +96,8 @@ class TestSelectBackendNotScanWhenTextRich:
         assert backend == "mineru"
         assert "扫描件" in reason
 
-    def test_rich_text_low_images_uses_pdfplumber(self, monkeypatch):
+    def test_rich_text_low_images_uses_pymupdf(self, monkeypatch):
+        """数字文本 + 表格提取正常 → 快路径 PyMuPDF。"""
         from doc_parser import _pdf
 
         fake_scan = {
@@ -109,4 +111,43 @@ class TestSelectBackendNotScanWhenTextRich:
         }
         monkeypatch.setattr(_pdf, "_quick_scan_pdf", lambda *a, **k: fake_scan)
         backend, _reason = _pdf.select_backend("fake.pdf", _cfg())
-        assert backend == "pdfplumber"
+        assert backend == "pymupdf"
+
+    def test_borderless_table_hint_uses_docling(self, monkeypatch):
+        """文本表格关键词 + 列对齐（疑似无框线表格）→ 深度学习后端 Docling。"""
+        from doc_parser import _pdf
+
+        fake_scan = {
+            "num_pages": 9,
+            "sampled": 5,
+            "avg_text_per_page": 500,
+            "avg_tables_per_page": 0.0,
+            "large_image_ratio": 0.0,
+            "has_drawings_no_tables": False,
+            "text_samples": [
+                "序号   名称   描述   风险   措施",
+                "1     名称   火灾   高     灭火",
+                "2     名称   中断   中     备用",
+            ] * 2,
+        }
+        monkeypatch.setattr(_pdf, "_quick_scan_pdf", lambda *a, **k: fake_scan)
+        backend, reason = _pdf.select_backend("fake.pdf", _cfg())
+        assert backend == "docling"
+        assert "表格" in reason
+
+    def test_drawings_without_tables_uses_docling(self, monkeypatch):
+        """有绘图对象但规则后端提取不到表格 → Docling（替代原 MinerU 路由）。"""
+        from doc_parser import _pdf
+
+        fake_scan = {
+            "num_pages": 9,
+            "sampled": 5,
+            "avg_text_per_page": 500,
+            "avg_tables_per_page": 0.0,
+            "large_image_ratio": 0.0,
+            "has_drawings_no_tables": True,
+            "text_samples": ["样本文本"] * 5,
+        }
+        monkeypatch.setattr(_pdf, "_quick_scan_pdf", lambda *a, **k: fake_scan)
+        backend, _reason = _pdf.select_backend("fake.pdf", _cfg())
+        assert backend == "docling"

@@ -22,7 +22,7 @@
 
 | 模块 | 职责 | 关键入口 |
 |------|------|----------|
-| `doc_parser` | 文档解析（PDF / Word）→ 段落 + 表格 + 定位信息 | `parse(filepath, config)`，`Paragraph`/`Table`/`Document` 模型 |
+| `doc_parser` | 文档解析（PDF / Word）→ 段落 + 表格 + 定位信息；PDF 多后端（pdfplumber / **pymupdf** / mineru / docling） | `parse(filepath, config)`，`Paragraph`/`Table`/`Document` 模型 |
 | `llm_chat` | LLM 调用抽象（bedrock / openai 等多后端）、重试、对话会话 | `ask_once(prompt, backend, ...)`、`ask_once_with_config(prompt, llm_config, ...)`、`resolve_llm_profile(profiles, routing, use_case)`、`ChatSession` |
 | `version_diff` | 差异检测引擎：跨文档语义检索 + 字级 diff + 规则预过滤 + LLM 矛盾判定 + 版本对比 + 统一冲突检测 | `DiffEngine`（add / pre_review / version_compare / check_conflicts）、`judge_pairs`、`detect_conflicts`、`call_llm_json` |
 | `rag_demo` | FastAPI 应用：上传、预审核任务编排、RAG 问答、冲突检测、Web UI | `app/main.py`，`app/services/*`，`app/routes/*` |
@@ -49,7 +49,10 @@ llm_chat   ─┘        │
 ```bash
 # 1. 安装全部依赖（4 模块 + dev/docling/mineru extras + 匹配 GPU 的 torch）
 #    有 NVIDIA GPU → CUDA 版 torch；无 GPU → CPU 版 torch（docling/mineru 均可用）
+#    默认走清华 PyPI 镜像（AWS 宁夏/国内网络友好）；可用 --pypi-index/--torch-index 覆盖
 python scripts/install_system.py              # 或用 uv run --no-project python scripts/install_system.py
+#   python scripts/install_system.py --sync-only                    # 跳过 torch 仅 uv sync
+#   python scripts/install_system.py --pypi-index https://mirrors.aliyun.com/pypi/simple  # 换阿里云镜像
 
 # 2. 配置环境变量（LLM 凭证等）
 #    复制并修改 .env（已有示例），或参考 docs/使用手册.md 第 2 节
@@ -106,8 +109,11 @@ uv run python examples/verify_version_diff.py <旧版.pdf> <新版.pdf> --model 
 
 ---
 
-## 近期迭代（2026-08-12 ~ 08-15）
+## 近期迭代（2026-08-12 ~ 08-16）
 
+- **PDF 解析后端选型与新增 PyMuPDF 快路径**（08-16）：基于 opendataloader-bench（200 份真实 PDF）与中文真实文档实测，新增 doc_parser 的 **pymupdf** 后端（数字文本 PDF 秒级解析，实测比 pdfplumber 快约 2 倍；116 页手册 4.99s vs 9.75s）；select_backend auto 路由升级为：扫描件→MinerU、无框线表格→Docling（深度学习表格，TEDS 开源最强）、数字文本→PyMuPDF；详见 docs/PDF解析库对比与选型报告.md 与 temp/pdf_parsers_verification.md。
+- **GPU 全链路加速**（08-16）：faiss-cpu → faiss-gpu、embedding 推理经 onnxruntime-gpu（CUDA provider）走 GPU；torch CUDA 构建 + docling docling_device=cuda 实测 0.56s/页（116 页手册 64s，表格识别 29 张 vs 规则后端 17 张）。
+- **国内镜像安装**（08-16）：scripts/install_system.py 默认走清华 PyPI 镜像（AWS 宁夏/国内网络友好），支持 --pypi-index / --torch-index 覆盖；UV_DEFAULT_INDEX 让 uv sync 也走同一镜像。
 - **llm_chat**：后端异常挂 `status_code` / `is_network_error` 属性，`retry` 据此判断重试（不再正则解析异常文本）；公共字段初始化上提到 `_init_common`。
 - **跨模块去重**：`version_diff.llm_util` 改用新增的 `llm_chat.ask_once_with_config`；`rag_demo` 的 PDF 页数计算统一为 `get_pdf_page_count`（fitz）。
 - **错误处理契约**：`ChatSession.ask` 失败改为向上抛出（不再把 `"[错误]..."` 当答案返回），`/api/qa/ask` 将 LLM 不可用映射为 503。
@@ -121,10 +127,10 @@ uv run python examples/verify_version_diff.py <旧版.pdf> <新版.pdf> --model 
 各模块独立 `pytest`（uv workspace 下共用根 `.venv`）：
 
 ```bash
-cd doc_parser   && uv run pytest            # 71 passed
+cd doc_parser   && uv run pytest            # 77 passed（含新增 pymupdf 后端测试）
 cd llm_chat     && uv run pytest            # 39 passed
-cd version_diff && uv run pytest            # 124 passed
-cd rag_demo     && uv run pytest            # 69 passed, 5 skipped（-k "not gpu and not e2e" 跳过 GPU/端到端）
+cd version_diff && uv run pytest            # 96 passed（data/docx 缺失时部分用例环境性失败）
+cd rag_demo     && uv run pytest            # 58 passed, 5 skipped（-k "not gpu and not e2e" 跳过 GPU/端到端）
 ```
 
-> 注：依赖外部 LLM 端点的测试（如 `version_diff/tests/test_version_filter.py`）在离线环境下可能不稳定，建议加 `@pytest.mark.online` 或在无 LLM 时跳过。Windows 下个别用例因临时目录/超大环境变量触发环境性失败（与代码无关），详见 [开发指南](docs/开发指南.md) 第 2 节。
+> 注：`data/docx/v1|v2`（版本对比测试数据）不入库，缺失时 version_diff 的 test_version_compare / test_version_filter 会环境性失败/报错（与代码无关），需从原项目复制该目录后重跑。依赖外部 LLM 端点的测试（如 test_version_filter.py）离线时可能不稳定。Windows 下个别用例因临时目录/超大环境变量触发环境性失败，详见 [开发指南](docs/开发指南.md) 第 2 节。

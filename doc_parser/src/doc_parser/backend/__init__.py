@@ -6,8 +6,9 @@ doc_parser 后端插件包。
 
 内置后端：
   - bk_pdfplumber : pdfplumber（默认，表格+跨页合并）
+  - bk_pymupdf    : PyMuPDF（极速文本+规则表格，数字文本 PDF 快路径）
   - bk_mineru     : MinerU VLM/OCR（扫描件/复杂版面，CPU 慢）
-  - bk_docling    : IBM Docling TableFormer（复杂版面/跨页表）
+  - bk_docling    : IBM Docling TableFormer（复杂版面/跨页表/深度学习表格）
 
 后端模块按需懒加载：import 本包不会引入 docling/torch 等重依赖，
 只有实际调用 extract() 时才加载对应驱动。
@@ -18,6 +19,7 @@ import importlib
 # 后端注册表：name -> 模块名（backend 包内）
 BACKENDS = {
     "pdfplumber": "bk_pdfplumber",
+    "pymupdf": "bk_pymupdf",
     "mineru": "bk_mineru",
     "docling": "bk_docling",
 }
