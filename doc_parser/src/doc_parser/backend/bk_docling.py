@@ -96,6 +96,14 @@ def extract_pdf_with_docling(filepath: str, config: dict | None = None):
     }.get(device_cfg, AcceleratorDevice.AUTO)
     opts.accelerator_options = AcceleratorOptions(device=device)
 
+    # 推理 batch：默认 4；T4/较大显存可调大（layout/table/ocr 多页一起推理，
+    # 提升 GPU 利用率，减少逐页小 batch 的算力浪费）。0=docling 默认（4）。
+    batch_size = int(cfg.get("docling_batch_size", 0) or 0)
+    if batch_size > 0:
+        opts.layout_batch_size = batch_size
+        opts.table_batch_size = batch_size
+        opts.ocr_batch_size = batch_size
+
     fmt = PdfFormatOption(pipeline_options=opts)
     conv = DocumentConverter(format_options={fmt.backend: fmt})
 

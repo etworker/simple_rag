@@ -1564,6 +1564,7 @@ function renderSettingsForm(){
   document.getElementById('pr-batch').value=pr.batch_size||0;
   document.getElementById('pr-parse_backend').value=pr.parse_backend||'auto';
   document.getElementById('pr-docling_device').value=pr.docling_device||'auto';
+  document.getElementById('pr-docling_batch').value=pr.docling_batch_size||0;
   // Conflict detection
   const cd=_settingsConfig.conflict_detection||{};
   document.getElementById('cd-min_score').value=cd.min_score||0.7;
@@ -1752,6 +1753,7 @@ async function saveSettings(){
       batch_size:parseInt(document.getElementById('pr-batch').value)||0,
       parse_backend:document.getElementById('pr-parse_backend').value||'auto',
       docling_device:document.getElementById('pr-docling_device').value||'auto',
+      docling_batch_size:parseInt(document.getElementById('pr-docling_batch').value)||0,
     },
     conflict_detection:{
       min_score:parseFloat(document.getElementById('cd-min_score').value)||0.7,

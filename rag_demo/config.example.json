@@ -72,6 +72,7 @@
     "batch_size": 0,
     "parse_backend": "auto",
     "docling_device": "auto",
+    "docling_batch_size": 0,
     "noise_filter": {
       "enabled": true,
       "patterns": [

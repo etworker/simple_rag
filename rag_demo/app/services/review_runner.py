@@ -81,6 +81,10 @@ def build_parse_config(pre_review: dict) -> dict:
     extract = {"backend": parse_backend}
     if parse_backend == "docling":
         extract["docling_device"] = pre_review.get("docling_device", "auto")
+        # 推理 batch（0=docling 默认 4；T4 可调 16-32 提升 GPU 利用率）
+        batch = pre_review.get("docling_batch_size", 0)
+        if batch:
+            extract["docling_batch_size"] = int(batch)
     return {"extract": extract}
 
 
