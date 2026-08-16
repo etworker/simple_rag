@@ -1,8 +1,8 @@
-# PDF 解析库实测报告（T4 GPU / CPU 占坑）
+# PDF 解析库实测报告（T4 GPU / CPU 均已完成）
 
 > 目的：用项目目标文档（中文制度手册/通报）实测各 PDF 解析库，判定"能完整精确解析目标 PDF"的候选后端列表。
-> 环境：AWS 宁夏 EC2（g5 系，Tesla T4 15.6GB / CUDA 13.2 驱动 / torch 2.13.0+cu130）。
-> 状态：GPU 结论已完成（2026-08-16）；**CPU 结论占坑，待下一步**。
+> 环境：AWS 宁夏 EC2（g5 系，Tesla T4 15.6GB / CUDA 13.2 驱动 / torch 2.13.0+cu130，8 核 CPU / 30GB 内存）。
+> 状态：**GPU 结论与 CPU 结论均已完成**（2026-08-16；CPU 通过 CUDA_VISIBLE_DEVICES="" 强制 CPU 实测）。
 
 ---
 
@@ -91,20 +91,21 @@
 
 ---
 
-## 7. CPU 结论（占坑，待下一步）
+## 7. CPU 结论（CUDA_VISIBLE_DEVICES="" 强制 CPU 实测）
 
-> ⚠️ 本环境为 GPU 机，CPU 结论留待后续在无 GPU 环境（或强制 CPU）补测后填入。
+> 说明：本机为 GPU 机，CPU 测试通过 `CUDA_VISIBLE_DEVICES=""` 禁用 GPU（torch.cuda.is_available()=False）模拟无 GPU 环境；8 核 CPU / 30GB 内存。
 
-| 库 | CPU 结论 | 备注 |
+| 库 | CPU 结论 | 实测（notice548=9 页 / manual=116 页） |
 |----|---------|------|
-| pdfplumber | ✅ 已测（纯 CPU） | 116p 9.75s（T4 上 CPU 执行）；17 表/6 跨页表 |
-| pymupdf | ✅ 已测（纯 CPU） | 116p 4.99s（T4 上 CPU 执行）；17 表/6 跨页表 |
-| docling_cpu | ✅ 已测（强制 cpu） | 116p 65.5s，29 表/9 跨页表——**与 CUDA 结果一致，CPU 可跑** |
-| mineru | 待补 | pipeline 模式（RapidOCR+布局模型，CPU 慢）；VLM 仅 GPU |
-| marker | 待补 | 1.x 本地模式无 GPU 慢 5-10 倍；2.x 需 docker+GPU |
-| 其余排除库 | 无需补 | 已按 GPU 实测排除（表格/章节/中文能力缺失，与 CPU/GPU 无关） |
+| pdfplumber | ✅ 可用 | 纯 CPU 库：notice 1.09s / manual 9.75s；17 表/6 跨页表 |
+| pymupdf | ✅ 可用 | 纯 CPU 库：notice 0.16s / manual 4.99s；17 表/6 跨页表 |
+| docling_cpu | ✅ 可用 | 强制 cpu：manual 65.5s，29 表/9 跨页表——**与 CUDA 结果一致，CPU 可跑** |
+| mineru(pipeline) | ✅ 可用（慢） | pipeline 模式 notice 111.9s（12.4s/页），33 段/1 表/4 章节——**CPU 也能识别无框线表格**；VLM 引擎仅 GPU |
+| marker(1.x) | ✅ 可用（慢） | notice 326.1s（36s/页，比 GPU 90s 慢 3.6 倍），1 表/14 章节识别正确 |
+| 其余排除库 | 无需补 | 表格/章节/中文能力缺失，与 CPU/GPU 无关（GPU 实测已排除） |
+
+**CPU 环境结论**：doc_parser 四条路径在 CPU 下全部可用且结果与 GPU 一致——pymupdf/pdfplumber（秒级）、docling（0.56s/页级，29 表/9 跨页表，与 CUDA 相同）、mineru pipeline（12.4s/页，能识别无框线表）、marker 1.x（36s/页，1 表正确）。CPU 无 GPU 时 select_backend 自动路由：扫描件→mineru(pipeline)、无框线表格→docling(cpu)、数字文本→pymupdf。**结论：GPU 不是 doc_parser 解析链路的硬依赖，CPU 可完整运行（仅速度差异）**。
 
 **待办（下一步）**：
-1. 在无 GPU/强制 CPU 环境补测 mineru pipeline、marker(CPU)、olmOCR（如显存允许）
-2. 补充 opendataloader（GitHub 源码安装）评测
-3. 复核 marker 1.x 的 surya 表格拆分参数（若后续需要可调 surya 表格检测阈值）
+1. 补充 opendataloader（GitHub 源码安装）评测
+2. 复核 marker 1.x 的 surya 表格拆分参数（若后续需要可调 surya 表格检测阈值）
