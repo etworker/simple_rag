@@ -114,6 +114,8 @@ uv run python examples/verify_version_diff.py <旧版.pdf> <新版.pdf> --model 
 
 - **PDF 解析后端选型与新增 PyMuPDF 快路径**（08-16）：基于 opendataloader-bench（200 份真实 PDF）与中文真实文档实测，新增 doc_parser 的 **pymupdf** 后端（数字文本 PDF 秒级解析，实测比 pdfplumber 快约 2 倍；116 页手册 4.99s vs 9.75s）；select_backend auto 路由升级为：扫描件→MinerU、无框线表格→Docling（深度学习表格，TEDS 开源最强）、数字文本→PyMuPDF；详见 docs/PDF解析库对比与选型报告.md 与 temp/pdf_parsers_verification.md。
 - **GPU 全链路加速**（08-16）：faiss-cpu → faiss-gpu、embedding 推理经 onnxruntime-gpu（CUDA provider）走 GPU；torch CUDA 构建 + docling docling_device=cuda 实测 0.56s/页（116 页手册 64s，表格识别 29 张 vs 规则后端 17 张）。
+- **默认解析后端切 pdfplumber**（08-16）：基于信息技术管理手册 R3-2→R3-3 的 LLM 研判——docling 布局模型偶把标题行插入段落造成碎句，pdfplumber 段落完整且找到真实修改（§6.1.4 科室→处室）。默认 pre_review.parse_backend=pdfplumber；docling 保留给无框线表格场景。
+- **解析质量与版本对比准确度**（08-16）：解析缓存（SHA256+配置签名，重复解析秒级）；docling 碎尾合并 + 页眉前缀剥离（168→0 段）；版本对比精确文本优先配对 + removed/added 二次配对（改写归为修改）+ 前缀规则（解析截断归细微）；fastembed parallel=None 修复显存泄漏/OOM；测试隔离根除 config.json 污染。详见 docs/设计文档.md §12.6-12.7 与 docs/文档解析与chunk切分说明.md。
 - **国内镜像安装**（08-16）：scripts/install_system.py 默认走清华 PyPI 镜像（AWS 宁夏/国内网络友好），支持 --pypi-index / --torch-index 覆盖；UV_DEFAULT_INDEX 让 uv sync 也走同一镜像。
 - **llm_chat**：后端异常挂 `status_code` / `is_network_error` 属性，`retry` 据此判断重试（不再正则解析异常文本）；公共字段初始化上提到 `_init_common`。
 - **跨模块去重**：`version_diff.llm_util` 改用新增的 `llm_chat.ask_once_with_config`；`rag_demo` 的 PDF 页数计算统一为 `get_pdf_page_count`（fitz）。

@@ -96,10 +96,10 @@ doc_parser 现有架构（doc_parser/docs/设计文档.md §2）：后端插件�
 
 | 路径 | 后端 | 定位 | 依据 |
 |------|------|------|------|
-| **快路径（默认）** | **PyMuPDF（新增 bk_pymupdf）** | 数字文本 PDF：秒级解析，阅读顺序好，表格用 `find_tables()` 规则提取 | 0.091s/页、NID 0.885；比 pdfplumber 快 10-50 倍 |
-| **准路径** | **Docling（已有，增强路由）** | 复杂版面/密集表格/章节层级：TableFormer 表格识别，跨页表不重复表头，GPU 加速 | TEDS 0.887、MHS 0.824、MIT |
-| **中文扫描件路径** | **MinerU（已有）** | 扫描件/图片 PDF/VLM：中文 OCR 最强，GPU 加速 | 表格 TEDS 0.873、中文场景实测最优 |
-| **兜底路径** | **pdfplumber（已有）** | 无深度学习依赖时的轻量兜底；doc_parser 既有深度定制逻辑 | MIT、轻量 |
+| **默认路径** | **pdfplumber（默认）** | 文本型制度文档段落切分最稳（R3-2→R3-3 LLM 研判：找到真实修改、无碎句） | MIT、轻量、margin 编号列定制 |
+| **快路径** | **PyMuPDF（新增 bk_pymupdf）** | 数字文本 PDF：秒级解析，阅读顺序好，表格用 `find_tables()` 规则提取 | 0.091s/页、NID 0.885；比 pdfplumber 快 10-50 倍 |
+| **准路径** | **Docling（无框线表格场景）** | 复杂版面/无框线表格：TableFormer 表格识别，跨页表不重复表头，GPU 加速（注意：布局模型偶把标题行插入段落造成碎句） | TEDS 0.887、MHS 0.824、MIT |
+| **中文扫描件路径** | **MinerU** | 扫描件/图片 PDF/VLM：中文 OCR 最强，GPU 加速 | 表格 TEDS 0.873、中文场景实测最优 |
 
 **待评估候选（不立即接入）**：opendataloader（总分第一但需结构化适配）、marker/surya（GPL 许可+markdown 输出）、
 PaddleOCR（中文专项）。
