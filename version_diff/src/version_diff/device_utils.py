@@ -205,10 +205,14 @@ class EmbeddingModel:
         """
         del show_progress_bar  # fastembed 无进度条参数，接口兼容保留
         texts = list(sentences)
-        # parallel=False：fastembed 默认可能 spawn multiprocessing worker 编码，
-        # 在 uvicorn --reload / 长驻服务下 worker 进程不会回收，导致 GPU 显存泄漏
-        # （实测残留进程占满 T4 15.6GB）。单进程编码（GPU 下 batch=256 依然很快）。
-        kwargs.setdefault("parallel", False)
+        # parallel=None（显式）：fastembed 语义 = 不用 data-parallel，走 onnxruntime
+        # 内部线程（稳定）。
+        #   - parallel>1/0 → data-parallel pool：spawn 外部进程在长驻服务下不回收，
+        #     导致 GPU 显存泄漏（实测残留进程占满 T4 15.6GB）
+        #   - parallel=False → 1-worker pool：worker 线程里 onnxruntime 运行
+        #     bfc_arena 崩溃（实测 MatMul 报 CUDA 显存分配失败）
+        # 显式传 None 覆盖调用方可能的 parallel 值，保证稳定。
+        kwargs.setdefault("parallel", None)
         vectors = list(self._model.embed(texts, **kwargs))
         arr = np.asarray(vectors, dtype=np.float32)
 

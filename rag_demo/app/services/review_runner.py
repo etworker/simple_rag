@@ -64,7 +64,10 @@ def _build_engine_config() -> dict:
         "llm": _state.app.config.get_llm_profile("pre_review"),
         "diff": pre_review,
         "judge": _state.app.config.get_section("judge"),
-        "cache": {"vector_cache_dir": os.path.join(_state.app.cache_dir, "vector_cache")},
+        "cache": {
+            "vector_cache_dir": os.path.join(_state.app.cache_dir, "vector_cache"),
+            "parse_cache_dir": os.path.join(_state.app.cache_dir, "parse_cache"),
+        },
     }
 
 

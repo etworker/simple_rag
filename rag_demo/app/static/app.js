@@ -748,7 +748,7 @@ if(vChanges.length>0){
 // 无任何结果时的提示（区分库空 vs 真正通过）
 if(items.length===0&&vChanges.length===0&&mChanges.length===0){
     if(r.kb_empty){
-        html='<div style="padding:30px;text-align:center;color:var(--text3);">📭 知识库为空，暂无可比文档。可直接入库。</div>';
+        html='<div style="padding:30px;text-align:center;color:var(--text3);">📭 首篇文档，无对比对象，可入库</div>';
     } else if(r.no_candidates){
         html='<div style="padding:30px;text-align:center;color:var(--text3);">📭 未在知识库中找到相似文档。建议确认该文档是否已入库。</div>';
     } else {

@@ -103,6 +103,8 @@ class DiffEngine:
         self._all_embeddings = None  # 全局 embedding 矩阵
         self._model = None  # SentenceTransformer (lazy load)
         cache_dir = self.config.cache.get("vector_cache_dir", "")
+        # 解析缓存目录（version_compare 用，避免重复解析慢后端）
+        self._parse_cache_dir = self.config.cache.get("parse_cache_dir", "")
         # 根据配置计算缓存哈希，配置变化时缓存自动失效
         cfg_hash = VectorStore.compute_config_hash(
             self.config.embedding.get("parse_config", {}),
@@ -503,8 +505,10 @@ class DiffEngine:
         self._notify(on_progress, "parsing", 0.1, "解析新旧版本...")
 
         parse_config = self.config.embedding.get("parse_config")
-        old_doc = parse(old_filepath, config=parse_config)
-        new_doc = parse(new_filepath, config=parse_config)
+        from version_diff.parse_cache import cached_parse
+
+        old_doc = cached_parse(old_filepath, config=parse_config, cache_dir=self._parse_cache_dir)
+        new_doc = cached_parse(new_filepath, config=parse_config, cache_dir=self._parse_cache_dir)
 
         self._notify(on_progress, "embedding", 0.3, "计算语义向量...")
 

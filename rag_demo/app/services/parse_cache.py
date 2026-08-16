@@ -7,6 +7,7 @@ SHA-256 不变则直接读缓存，跳过耗时的 PDF 解析。
 缓存结构：~/.simple_rag/parse_cache/{sha256}.json
 """
 
+import hashlib
 import json
 import os
 
@@ -18,6 +19,13 @@ from app.services.utils import compute_sha256
 
 # 默认缓存目录（~/.simple_rag/parse_cache/）
 _CACHE_DIR = os.path.join(os.path.expanduser("~"), ".simple_rag", "parse_cache")
+
+
+def _config_sig(config) -> str:
+    """解析配置签名：切换解析后端（pymupdf/docling/...）时缓存自动失效。"""
+    return hashlib.sha256(
+        json.dumps(config or {}, sort_keys=True, ensure_ascii=False).encode("utf-8")
+    ).hexdigest()[:8]
 
 
 def cached_parse(filepath: str, config: dict | None = None, cache_dir: str | None = None) -> Document:
@@ -37,7 +45,8 @@ def cached_parse(filepath: str, config: dict | None = None, cache_dir: str | Non
     os.makedirs(base_dir, exist_ok=True)
 
     file_hash = compute_sha256(filepath)
-    cache_path = os.path.join(base_dir, f"{file_hash}.json")
+    # key 含解析配置签名：切换解析后端（pymupdf/docling/...）时缓存自动失效
+    cache_path = os.path.join(base_dir, f"{file_hash}_{_config_sig(config)}.json")
 
     # 命中缓存
     if os.path.exists(cache_path):
