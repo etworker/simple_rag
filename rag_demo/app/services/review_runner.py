@@ -112,8 +112,8 @@ def _run_version_compare(engine, old_version_filepath: str, new_filepath: str, o
             "location": change.location,
             "old_section": change.old_section,
             "old_location": change.old_location,
-            "old_text": change.old_text[:300],
-            "new_text": change.new_text[:300],
+            "old_text": change.old_text,
+            "new_text": change.new_text,
             "summary": change.summary,
             "similarity": change.similarity,
         }
@@ -251,7 +251,7 @@ async def run_pre_review(task_id: str):
                 # 步骤与 engine.version_compare 内部 on_progress 一致
                 # （parsing/embedding/diffing/filtering/done），保证前端列表与实际执行同步
                 all_steps = [
-                    {"id": "parsing", "label": "解析新旧版本"},
+                    {"id": "parsing", "label": "解析文档（新旧两版）"},
                     {"id": "embedding", "label": "计算语义向量"},
                     {"id": "diffing", "label": "版本差异对比"},
                     {"id": "filtering", "label": "过滤非实质性差异"},
