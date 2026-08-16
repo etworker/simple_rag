@@ -579,7 +579,7 @@ class DiffEngine:
                         old_location=para.location,
                         old_text=old_text,
                         new_text="",
-                        summary=f"[删除] {old_text[:60]}{'...' if len(old_text) > 60 else ''}",
+                        summary=f"[删除] {old_text[:160]}{'...' if len(old_text) > 160 else ''}",
                     )
                 )
 
@@ -594,7 +594,7 @@ class DiffEngine:
                         location=para.location,
                         old_text="",
                         new_text=new_text,
-                        summary=f"[新增] {new_text[:60]}{'...' if len(new_text) > 60 else ''}",
+                        summary=f"[新增] {new_text[:160]}{'...' if len(new_text) > 160 else ''}",
                     )
                 )
 

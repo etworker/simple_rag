@@ -85,8 +85,9 @@ def build_parse_config(pre_review: dict) -> dict:
         batch = pre_review.get("docling_batch_size", 0)
         if batch:
             extract["docling_batch_size"] = int(batch)
-        # 显式带上碎尾合并开关（进缓存签名，逻辑变更时缓存自动失效）
+        # 显式带上后处理开关（进缓存签名，逻辑变更时缓存自动失效）
         extract["docling_merge_split_paras"] = True
+        extract["docling_strip_header_prefix"] = True
     return {"extract": extract}
 
 

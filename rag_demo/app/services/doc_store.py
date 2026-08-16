@@ -105,9 +105,10 @@ class DocStore:
             _batch = pre_review.get("docling_batch_size", 0)
             if _batch:
                 _extract["docling_batch_size"] = int(_batch)
-            # 与 review_runner.build_parse_config 保持同构（含 merge 开关），
+            # 与 review_runner.build_parse_config 保持同构（含后处理开关），
             # 保证 confirm 入库命中预审核阶段的 parse_cache（签名一致）
             _extract["docling_merge_split_paras"] = True
+            _extract["docling_strip_header_prefix"] = True
         self._parse_config = {"extract": _extract}
 
     @staticmethod

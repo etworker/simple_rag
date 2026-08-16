@@ -227,6 +227,34 @@ def extract_pdf_with_docling(filepath: str, config: dict | None = None):
         for i, p in enumerate(paragraphs, 1):
             p.index = i
 
+    # ── 剥离高频页眉前缀（docling 把每页顶部的手册名拼到段落开头）──
+    # 例："网络与信息安全管理手册"在每页顶部作为页眉出现，docling 未剥离，
+    # 导致多个段落以手册名开头 → 版本对比时产生大量"手册名前缀增删"假差异。
+    # 统计段落开头的稳定前缀：按长度 20→8 递减统计，捕获"完整手册名"（11 字）
+    # 而非被正文污染的固定长度片段（如 [:18] 含正文导致频率分散）。
+    if cfg.get("docling_strip_header_prefix", True) and len(paragraphs) >= 8:
+        from collections import Counter
+
+        _min_cnt = max(3, int(len(paragraphs) * 0.08))
+        _common = set()
+        for _L in range(20, 7, -1):
+            _cnt = Counter(p.text[:_L] for p in paragraphs)
+            for _h, _n in _cnt.items():
+                if _n >= _min_cnt and _h.strip() and len(_h.strip()) >= 8:
+                    _common.add(_h)
+        if _common:
+            # 按长度降序剥离（先剥离长前缀，避免残留）
+            _common_sorted = sorted(_common, key=len, reverse=True)
+            for p in paragraphs:
+                for h in _common_sorted:
+                    if p.text.startswith(h):
+                        p.text = p.text[len(h):].lstrip()
+                        break
+            # 剥离后清空段重排
+            paragraphs = [p for p in paragraphs if p.text.strip()]
+            for i, p in enumerate(paragraphs, 1):
+                p.index = i
+
     # ── 后处理：跨页表格合并 / 模板表过滤 / 章节分配 ──
     from doc_parser._tables import (
         assign_table_chapters,
