@@ -578,11 +578,13 @@ function renderSteps(d){
         let time='';
         if(isDone&&cs){time='<span class="time">'+Math.round(cs.elapsed)+'s</span>';}
         else if(isAct){time='<span class="time" id="activeTimer">'+Math.floor(d.current_elapsed||0)+'s</span>';}
-        // 进度条：active 步骤显示 cs.pct（若后端上报），done 显示 100%
+        // 进度条：done 显示满条；active 显示流动动画（docling 无进度回调，
+        // pct 只有阶段起止点，用 indeterminate 动画表达'进行中'，避免静止误导）
         let bar='';
-        if(isAct||isDone){
-            const pct=isDone?100:(cs&&cs.pct!=null?cs.pct:0);
-            bar='<div class="step-bar"><div class="step-bar-fill" style="width:'+pct+'%"></div></div>';
+        if(isDone){
+            bar='<div class="step-bar"><div class="step-bar-fill" style="width:100%"></div></div>';
+        }else if(isAct){
+            bar='<div class="step-bar"><div class="step-bar-fill indeterminate"></div></div>';
         }
         html+='<div class="step-item"><div class="dot '+cls+'">'+icon+'</div><span>'+esc(s.label)+'</span>'+time+bar+'</div>';
     }
