@@ -60,10 +60,28 @@
 | BAAI/bge-small-zh-v1.5 | 512 | 秒级（轻量） | 1.0000 | 原默认；轻量、快 |
 | jinaai/jina-embeddings-v2-base-zh | 768 | 45s（含首次模型下载 0.64GB） | 1.0000 | **已切换为默认**；base 级更准、8K 上下文 |
 
+### 4.1 版本对比实测：jina vs bge-small（2026-08-16 网络手册 R5-21→R5-22）
+
+**结论：解析后端 + 吸收逻辑是版本对比差异的主要来源，embedding 模型影响很小。**
+
+相同 docling 解析（页眉剥离+碎尾合并）+ 相同纯规则 LLM 下：
+
+| 模型 | 设备 | 耗时（含向量计算冷启动） | 结果 |
+|------|------|----------------------|------|
+| jina-v2-base-zh | GPU | 6.3s | 6 条（removed=0/added=1/modified=5） |
+| bge-small-zh-v1.5 | CPU | 44.3s | 6 条（removed=0/added=1/modified=5） **完全一致** |
+| bge-small-zh-v1.5 | GPU | 8.9s | 6 条（removed=0/added=1/modified=5） **完全一致** |
+
+- 三组结果逐条一致：removed=0（半句"用户应自行承担…"被吸收进 modified）、added=1、modified=5、minor=13。
+- **版本对比对 embedding 不敏感**：配对由精确文本哈希桶 + 语义检索兜底，阈值 0.80 下两类模型都能正确配对主要段落；
+  差异（如 removed 半句）由解析碎片 + 吸收逻辑决定，与 embedding 无关。
+- 耗时差异：GPU 8-9s vs CPU 44s（约 5 倍）；纯 CPU 用 bge-small 完全可接受（单次对比 <1 分钟）。
+
 **切换决策**：
 - jina-v2-base-zh 维度 768 > small 的 512，检索区分度更高（业界评测 base 级普遍优于 small 级）；
   中文专项 + 8K 上下文（制度文档段落较长时优于短上下文模型）。
 - 代价：模型 0.64GB（vs 0.09GB）、编码稍慢、与 docling 共享 T4 显存需观察（onnxruntime arena 峰值待观察）。
+- **bge-small 可作纯 CPU 环境的推荐降级**：版本对比结果与 jina 一致；RAG 检索对语义区分度要求更高时仍建议 jina。
 
 ---
 

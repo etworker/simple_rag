@@ -188,6 +188,12 @@ class EmbeddingModel:
             if self._device.startswith("cuda:") and len(self._device) > 5:
                 with suppress(ValueError):
                     kwargs["device_ids"] = [int(self._device.split(":")[1])]
+        elif self._device == "cpu":
+            # 显式禁用 GPU：fastembed 的 cuda 参数默认 Device.AUTO——
+            # 只要 CUDA 可用就抢 GPU（即使调用方请求 cpu）。在 GPU 显存
+            # 已被其他进程（如常驻服务的 docling/embedding worker）占用时，
+            # AUTO 会触发 bfc_arena OOM。显式 cuda=False 强制 CPU provider。
+            kwargs["cuda"] = False
         self._model = TextEmbedding(**kwargs)
 
     def encode(
