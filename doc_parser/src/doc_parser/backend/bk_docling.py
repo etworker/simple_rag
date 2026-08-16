@@ -203,6 +203,30 @@ def extract_pdf_with_docling(filepath: str, config: dict | None = None):
             )
         )
 
+    # ── 合并被 docling 拆碎的相邻 TextItem 段落 ──
+    # docling 布局模型有时把同一视觉段落拆成多个 TextItem（如"…带锁文件柜中。更" +
+    # "换口令后及时更新电子版、纸质版密码本。"被拆成两段）。合并条件：
+    #   同页 + 前段不以句末标点结尾（半句）+ 后段较短（<60 字）→ 拼接合并。
+    _SENT_END = cfg.get("sentence_end_chars", "。；！？.;!？")
+    if cfg.get("docling_merge_split_paras", True):
+        merged_paras = []
+        for p in paragraphs:
+            if p.order and not p.text:  # 跳过空段
+                continue
+            if (
+                merged_paras
+                and p.page == merged_paras[-1].page
+                and merged_paras[-1].text
+                and not merged_paras[-1].text.rstrip().endswith(tuple(_SENT_END))
+                and len(p.text) < 60
+            ):
+                merged_paras[-1].text += p.text
+            else:
+                merged_paras.append(p)
+        paragraphs = merged_paras
+        for i, p in enumerate(paragraphs, 1):
+            p.index = i
+
     # ── 后处理：跨页表格合并 / 模板表过滤 / 章节分配 ──
     from doc_parser._tables import (
         assign_table_chapters,
