@@ -62,6 +62,26 @@ _DEFAULT_HEADING_TERMINATORS = ("．", "。", "：", ":")
 _DEFAULT_SENTENCE_END_CHARS = "。；！？.;!？"
 
 
+def join_cjk_lines(parts: list[str]) -> str:
+    """按行拼接段落文本，消除中文断字产生的多余空格。
+
+    PDF 文本层按视觉行/词拆分，中文跨行断字（如"安全防护策" + "略，阻止…"）
+    在拼接时若统一加空格会得到"策 略"（人眼阅读是"策略"）。
+    本函数按 CJK 字符规则拼接：
+      - 中文↔中文：直接相连，不加空格（消除断字空格）
+      - 中文↔英文/数字：保留空格（"使用 Windows 系统" 中英混排）
+      - 标点后：不加空格（"。略" 不出现）
+    """
+    if not parts:
+        return ""
+    # 先按空格 join（保留原有语义），再收缩 CJK 字符之间的空格
+    text = " ".join(parts)
+    # 中文(含全角标点)与中文之间的空格 → 删除（处理跨行断字）
+    # 覆盖：策 略 / 技术 部 / 有关法 规 等
+    text = re.sub(r"(?<=[一-鿿　-〿＀-￯])\s+(?=[一-鿿　-〿＀-￯])", "", text)
+    return text
+
+
 def normalize_number_spacing(text, cfg=None):
     """修复 PDF 文本层数字断字。
 
@@ -212,7 +232,7 @@ def split_stream(full_text, cfg):
         # 空行 → 断开
         if not stripped:
             if current_lines:
-                para_text = " ".join(current_lines)
+                para_text = join_cjk_lines(current_lines)
                 if len(para_text.strip()) > 0:
                     paragraphs.append((para_text, current_start, line_start))
                 current_lines = []
@@ -223,7 +243,7 @@ def split_stream(full_text, cfg):
         # 避免"修订日期：2026-05-08"这类独立行被并入相邻正文造成句子拼接。
         if noise_line_re and any(p.match(stripped) for p in noise_line_re):
             if current_lines:
-                para_text = " ".join(current_lines)
+                para_text = join_cjk_lines(current_lines)
                 if len(para_text.strip()) > 0:
                     paragraphs.append((para_text, current_start, line_start))
                 current_lines = []
@@ -233,7 +253,7 @@ def split_stream(full_text, cfg):
         # 章节标题 → 独占一段（先断开前面的，标题自身也单独成段）
         if detect_chapter(stripped, cfg):
             if current_lines:
-                para_text = " ".join(current_lines)
+                para_text = join_cjk_lines(current_lines)
                 if len(para_text.strip()) > 0:
                     paragraphs.append((para_text, current_start, line_start))
                 current_lines = []
@@ -251,7 +271,7 @@ def split_stream(full_text, cfg):
             # 先追加正文部分到 current_lines 并断开
             if body_text:
                 current_lines.append(body_text)
-                para_text = " ".join(current_lines)
+                para_text = join_cjk_lines(current_lines)
                 if len(para_text.strip()) > 0:
                     paragraphs.append((para_text, current_start, char_pos))
                 current_lines = []
@@ -262,7 +282,7 @@ def split_stream(full_text, cfg):
 
         # 正文行 → 先累积到 current_lines
         current_lines.append(stripped)
-        current_text = " ".join(current_lines)
+        current_text = join_cjk_lines(current_lines)
 
         # 句末终止符 + 段落已有一定长度 → 断开
         sentence_end_chars = cfg.get("sentence_end_chars", _DEFAULT_SENTENCE_END_CHARS)
@@ -278,7 +298,7 @@ def split_stream(full_text, cfg):
 
     # 尾部
     if current_lines:
-        para_text = " ".join(current_lines)
+        para_text = join_cjk_lines(current_lines)
         if len(para_text.strip()) > 0:
             paragraphs.append((para_text, current_start, char_pos))
 

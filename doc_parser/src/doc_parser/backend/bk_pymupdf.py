@@ -54,9 +54,11 @@ def _extract_lines(page, cfg):
 
     def _assemble(word_list):
         """按 x 坐标排序拼接；margin_number_x > 0 时分离编号列拼到行首。"""
+        from doc_parser._text import join_cjk_lines
+
         s_by_x = sorted(word_list, key=lambda w: w[0])
         if margin_number_re is None:
-            text = " ".join(w[4] for w in s_by_x).strip()
+            text = join_cjk_lines([w[4] for w in s_by_x]).strip()
             return text
         number_parts, body_parts = [], []
         for w in s_by_x:
@@ -64,7 +66,7 @@ def _extract_lines(page, cfg):
                 number_parts.append(w[4].strip())
             else:
                 body_parts.append(w[4])
-        body_text = " ".join(body_parts).strip()
+        body_text = join_cjk_lines(body_parts).strip()
         if number_parts:
             number_text = ".".join(number_parts) if len(number_parts) > 1 else number_parts[0]
             return f"{number_text} {body_text}" if body_text else number_text

@@ -76,7 +76,11 @@ def _assemble_line(line_words, margin_number_x, margin_number_re):
         else:
             body_parts.append(w["text"])
 
-    body_text = " ".join(body_parts)
+    # 中文 word 间不加空格（PDF 文本层按词拆分，中文连续文本会被拆成
+    # "策"、"略" 等多个 word，加空格得到 "策 略"；人眼阅读是 "策略"）。
+    from doc_parser._text import join_cjk_lines
+
+    body_text = join_cjk_lines(body_parts)
 
     if number_parts:
         # 多段编号片段（极少见）用 . 连接；通常只有一个
