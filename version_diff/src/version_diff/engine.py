@@ -132,9 +132,9 @@ class DiffEngine:
 
         解析文档 → 计算 embedding → 追加到全局向量库
         """
-        from doc_parser import parse
+        from version_diff.parse_cache import cached_parse
 
-        doc = parse(filepath, config=self.config.embedding.get("parse_config"))
+        doc = cached_parse(filepath, config=self.config.embedding.get("parse_config"), cache_dir=self._parse_cache_dir)
         self._documents[doc.filename] = doc
 
         # 计算 embedding
@@ -178,10 +178,12 @@ class DiffEngine:
         threshold = self.config.diff.get("similarity_threshold", 0.80)
         top_k = self.config.diff.get("top_k", 3)
 
-        # Step 1: 解析新文档（始终执行）
+        # Step 1: 解析新文档（始终执行，带缓存避免重复解析慢后端）
         self._notify(on_progress, "parsing", 0.0, "解析文档...")
         t0 = time.time()
-        new_doc = parse(filepath, config=self.config.embedding.get("parse_config"))
+        from version_diff.parse_cache import cached_parse
+
+        new_doc = cached_parse(filepath, config=self.config.embedding.get("parse_config"), cache_dir=self._parse_cache_dir)
         # ★ 用可读文件名覆盖 SHA256 哈希名，确保矛盾列表前端显示友好
         if doc_filename:
             new_doc.filename = doc_filename

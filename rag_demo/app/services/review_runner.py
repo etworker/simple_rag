@@ -213,10 +213,11 @@ async def run_pre_review(task_id: str):
                 {"id": step, "message": msg, "started_at": now, "pct": int(pct * 100)}
             )
         else:
-            # 同步骤进度更新：刷新 pct/消息（供前端进度条）
+            # 同步骤进度更新：刷新 pct/消息（供前端进度条）。
+            # pct 只升不降（不同调用方可能以更低 pct 重申同一阶段，如 engine 内部 parsing 0.0）
             for _s in task["completed_steps"]:
                 if _s["id"] == step:
-                    _s["pct"] = int(pct * 100)
+                    _s["pct"] = max(_s.get("pct", 0), int(pct * 100))
                     _s["message"] = msg
         task["steps"].append({"step": step, "progress": int(pct * 100), "message": msg})
 
