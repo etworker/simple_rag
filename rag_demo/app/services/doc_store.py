@@ -94,6 +94,19 @@ class DocStore:
         )
         self._vector_store = VectorStore(cache_dir=vector_cache_dir, config_hash=cfg_hash)
 
+        # 解析配置（与预审核一致：pre_review.parse_backend，默认 docling）。
+        # 入库（confirm）时复用同一解析配置，命中预审核阶段的 parse_cache，
+        # 避免走 auto(PyMuPDF) 重新解析且缓存签名不匹配。
+        pre_review = config.get("pre_review") or {}
+        _parse_backend = pre_review.get("parse_backend", "auto")
+        _extract = {"backend": _parse_backend}
+        if _parse_backend == "docling":
+            _extract["docling_device"] = pre_review.get("docling_device", "auto")
+            _batch = pre_review.get("docling_batch_size", 0)
+            if _batch:
+                _extract["docling_batch_size"] = int(_batch)
+        self._parse_config = {"extract": _extract}
+
     @staticmethod
     def _compute_file_hash(filepath: str) -> str:
         """计算文件 SHA-256"""
@@ -118,8 +131,8 @@ class DocStore:
         Returns:
             DocMeta 文档元数据
         """
-        # 解析（带缓存，使用配置的 parse_cache_dir，保证与 /clear 清理的目录一致）
-        doc = parse(filepath, cache_dir=self._parse_cache_dir)
+        # 解析（带缓存，使用配置的 parse_cache_dir 与解析后端，保证与预审核一致）
+        doc = parse(filepath, config=self._parse_config, cache_dir=self._parse_cache_dir)
         # 用原始文件名覆盖（parse 返回的是磁盘文件名，可能是 SHA-256 安全名）
         if original_filename:
             doc.filename = original_filename

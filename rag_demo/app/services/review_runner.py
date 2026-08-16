@@ -205,10 +205,19 @@ async def run_pre_review(task_id: str):
         task["current_step"] = msg
         completed_ids = [s["id"] for s in task["completed_steps"]]
         if step not in completed_ids:
+            # 新步骤开始：前一步标记完成（elapsed）
             if task["completed_steps"]:
                 task["completed_steps"][-1]["elapsed"] = round(now - step_start_time, 1)
             step_start_time = now
-            task["completed_steps"].append({"id": step, "message": msg, "started_at": now})
+            task["completed_steps"].append(
+                {"id": step, "message": msg, "started_at": now, "pct": int(pct * 100)}
+            )
+        else:
+            # 同步骤进度更新：刷新 pct/消息（供前端进度条）
+            for _s in task["completed_steps"]:
+                if _s["id"] == step:
+                    _s["pct"] = int(pct * 100)
+                    _s["message"] = msg
         task["steps"].append({"step": step, "progress": int(pct * 100), "message": msg})
 
     try:
@@ -265,7 +274,10 @@ async def run_pre_review(task_id: str):
         parse_cache_dir = os.path.join(_state.app.cache_dir, "parse_cache")
         # 解析配置与 version_compare 一致（pre_review.parse_backend，默认 docling）
         parse_config = build_parse_config(_state.app.config.get_section("pre_review"))
+        # 进度推送：解析开始/完成都通知，避免左侧进度滞后于日志（解析期间 active）
+        on_progress("parsing", 0.15, f"解析文档（{parse_config['extract'].get('backend', 'auto')}）...")
         new_doc = await asyncio.to_thread(_parse, filepath, config=parse_config, cache_dir=parse_cache_dir)
+        on_progress("parsing", 0.25, f"解析完成: {len(new_doc.paragraphs)} 段")
         log.info(f"新文档解析完成: {len(new_doc.paragraphs)} 段落")
         # ★ 用 task["filename"]（原始上传名）作为 source_file，
         #   确保前端 /review/paragraphs?file=原名 能匹配到段落

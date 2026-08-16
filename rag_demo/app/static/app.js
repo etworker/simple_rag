@@ -570,18 +570,21 @@ function renderSteps(d){
     lastSSEElapsed=d.current_elapsed||0;lastSSETime=Date.now();
     let html='';
     for(let i=0;i<all.length;i++){
-        const s=all[i],cs=comp.find(x=>x.id===s.id);
-        const hasEl=cs&&cs.elapsed!=null,isIn=compIds.includes(s.id);
-        // isDone: 已完成(在completed中且有elapsed)
-        // isAct: 正在执行(在completed中但还没elapsed)
-        // pending: 尚未开始
+        const s=all[i],cs=comp.find(function(x){return x.id===s.id;});
+        const hasEl=cs&&cs.elapsed!=null,isIn=compIds.indexOf(s.id)>=0;
         const isDone=isIn&&hasEl,isAct=isIn&&!hasEl;
         const cls=isDone?'done':(isAct?'active':'pending');
-        const icon=isDone?'✓':(isAct?'▸':'·');
+        const icon=isDone?'\u2713':(isAct?'\u25B8':'\u00B7');
         let time='';
-        if(isDone&&cs)time=`<span class="time">${Math.round(cs.elapsed)}s</span>`;
-        else if(isAct)time=`<span class="time" id="activeTimer">${Math.floor(d.current_elapsed||0)}s</span>`;
-        html+=`<div class="step-item"><div class="dot ${cls}">${icon}</div><span>${esc(s.label)}</span>${time}</div>`;
+        if(isDone&&cs){time='<span class="time">'+Math.round(cs.elapsed)+'s</span>';}
+        else if(isAct){time='<span class="time" id="activeTimer">'+Math.floor(d.current_elapsed||0)+'s</span>';}
+        // 进度条：active 步骤显示 cs.pct（若后端上报），done 显示 100%
+        let bar='';
+        if(isAct||isDone){
+            const pct=isDone?100:(cs&&cs.pct!=null?cs.pct:0);
+            bar='<div class="step-bar"><div class="step-bar-fill" style="width:'+pct+'%"></div></div>';
+        }
+        html+='<div class="step-item"><div class="dot '+cls+'">'+icon+'</div><span>'+esc(s.label)+'</span>'+time+bar+'</div>';
     }
     document.getElementById('stepItems').innerHTML=html;
     if(!stepTimer&&doneCount<all.length)stepTimer=setInterval(tickTimer,1000);
