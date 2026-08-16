@@ -52,16 +52,12 @@ def _build_engine_config() -> dict:
     """构造 DiffEngine 配置（embedding / llm / diff / judge / cache）
 
     解析后端：pre_review.parse_backend（默认 docling——准确度最高，GPU 加速；
-    docling_device 控制推理设备）。embedding 段注入 parse_config 供 doc_parser 使用。
+    docling_device 控制推理设备）。embedding 段注入 parse_config（带 extract 包装，
+    与 doc_parser.get_extract_config 契约一致）供 engine/新文档解析使用。
     """
     embedding = _state.app.config.get_section("embedding")
     pre_review = _state.app.config.get_section("pre_review")
-    parse_backend = pre_review.get("parse_backend", "auto")
-    docling_device = pre_review.get("docling_device", "auto")
-    # 解析配置注入 embedding.parse_config（DiffEngine 用它传给 doc_parser.parse）
-    parse_config = {"backend": parse_backend}
-    if parse_backend == "docling":
-        parse_config["docling_device"] = docling_device
+    parse_config = build_parse_config(pre_review)
     embedding = {**embedding, "parse_config": parse_config}
     return {
         "embedding": embedding,
@@ -70,6 +66,19 @@ def _build_engine_config() -> dict:
         "judge": _state.app.config.get_section("judge"),
         "cache": {"vector_cache_dir": os.path.join(_state.app.cache_dir, "vector_cache")},
     }
+
+
+def build_parse_config(pre_review: dict) -> dict:
+    """根据 pre_review 段构造 doc_parser 解析配置（带 extract 包装）。
+
+    Example:
+        {"extract": {"backend": "docling", "docling_device": "cuda"}}
+    """
+    parse_backend = pre_review.get("parse_backend", "auto")
+    extract = {"backend": parse_backend}
+    if parse_backend == "docling":
+        extract["docling_device"] = pre_review.get("docling_device", "auto")
+    return {"extract": extract}
 
 
 def _run_version_compare(engine, old_version_filepath: str, new_filepath: str, on_progress=None) -> dict:
@@ -247,7 +256,9 @@ async def run_pre_review(task_id: str):
 
         log.info(f"开始解析新文档: {task['filename']}")
         parse_cache_dir = os.path.join(_state.app.cache_dir, "parse_cache")
-        new_doc = await asyncio.to_thread(_parse, filepath, cache_dir=parse_cache_dir)
+        # 解析配置与 version_compare 一致（pre_review.parse_backend，默认 docling）
+        parse_config = build_parse_config(_state.app.config.get_section("pre_review"))
+        new_doc = await asyncio.to_thread(_parse, filepath, config=parse_config, cache_dir=parse_cache_dir)
         log.info(f"新文档解析完成: {len(new_doc.paragraphs)} 段落")
         # ★ 用 task["filename"]（原始上传名）作为 source_file，
         #   确保前端 /review/paragraphs?file=原名 能匹配到段落

@@ -37,19 +37,29 @@ def client():
 
     def _patched_init(self, config_path=None):
         _orig_init(self, config_path)
-        # 替换 base_dir
+        # 替换 base_dir（并重定向保存路径，避免 /api/config 保存污染真实 config.json）
         self.set("cache.base_dir", _TMP_CACHE)
         self.set("cache.upload_dir", os.path.join(_TMP_CACHE, "uploads"))
+        self._config_path = os.path.join(_TMP_CACHE, "config.json")
 
     _cs.ConfigStore.__init__ = _patched_init
 
     from app.main import app
 
-    with TestClient(app) as c:
-        yield c
+    try:
+        with TestClient(app) as c:
+            yield c
+    finally:
+        # 恢复 __init__（恢复到 conftest 的 session patch，而非原始——保持隔离不泄漏到真实 config.json）
+        _cs.ConfigStore.__init__ = getattr(_cs, "_SESSION_PATCHED_INIT", _orig_init)
+        # 清理 app 模块缓存，强制后续测试重新 import app.main（其全局 config_store
+        # 用恢复后的 __init__ 重建，避免保存到已删除的临时目录）
+        import sys
 
-    # 测试后清理临时目录
-    shutil.rmtree(_TMP_CACHE, ignore_errors=True)
+        for _m in [m for m in sys.modules if m == "app.main" or m.startswith("app.")]:
+            del sys.modules[_m]
+        # 测试后清理临时目录
+        shutil.rmtree(_TMP_CACHE, ignore_errors=True)
 
 
 def _make_small_pdf(name: str = "test_regression.pdf") -> bytes:

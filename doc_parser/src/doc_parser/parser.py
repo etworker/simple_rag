@@ -181,10 +181,18 @@ DEFAULT_CONFIG = {
 
 
 def get_extract_config(config=None):
-    """合并用户配置和默认配置"""
+    """合并用户配置和默认配置
+
+    兼容两种传入形态：
+      - {"extract": {...}}：规范包装（parse / extract_pdf 推荐）
+      - 裸 extract 字段（如 {"backend": "docling", "docling_device": "cuda"}）：
+        version_diff 引擎传入的 parse_config 曾用此形态，历史兼容
+    """
     result = copy.deepcopy(DEFAULT_CONFIG)
-    if config and "extract" in config:
-        result.update(config["extract"])
+    if config:
+        merge = config.get("extract", config) if isinstance(config, dict) else None
+        if isinstance(merge, dict):
+            result.update(merge)
     return result
 
 
