@@ -14,6 +14,7 @@
 | [使用手册](docs/使用手册.md) | 安装、配置（`.env` / `config.json`）、启动、Web 使用、命令行调用、排错 |
 | [API 参考](docs/API参考.md) | FastAPI 全部端点 + Python 模块级 API 签名与返回 |
 | [开发指南](docs/开发指南.md) | 仓库布局、测试命令、扩展方式、代码约定、提交前检查 |
+| [Embedding 模型选型](docs/Embedding模型选型.md) | 中文 RAG 向量模型：fastembed 候选清单（实测/推测标注）、推荐与切换路径 |
 | [快速原型部署方案（AWS 中国区）](docs/快速原型部署方案.md) | 单卡 A10g 原型：g5.2xlarge + 托管向量库/数据库/对话历史/用户管理 + 成本预估 |
 
 ---
