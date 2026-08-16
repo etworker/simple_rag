@@ -205,6 +205,10 @@ class EmbeddingModel:
         """
         del show_progress_bar  # fastembed 无进度条参数，接口兼容保留
         texts = list(sentences)
+        # parallel=False：fastembed 默认可能 spawn multiprocessing worker 编码，
+        # 在 uvicorn --reload / 长驻服务下 worker 进程不会回收，导致 GPU 显存泄漏
+        # （实测残留进程占满 T4 15.6GB）。单进程编码（GPU 下 batch=256 依然很快）。
+        kwargs.setdefault("parallel", False)
         vectors = list(self._model.embed(texts, **kwargs))
         arr = np.asarray(vectors, dtype=np.float32)
 

@@ -216,4 +216,14 @@ def extract_pdf_with_docling(filepath: str, config: dict | None = None):
             table.rows = [[_norm_num(str(c)) for c in row] for row in table.rows]
             table.headers = [_norm_num(str(h)) for h in table.headers]
 
+    # 释放 GPU 显存缓存：docling 模型（布局+TableFormer）加载后 torch caching
+    # allocator 占用的显存不会自动归还，长驻服务下多次解析会累积泄漏。
+    # 这里清空缓存块，让显存可被复用（下次解析/embedding 可用）。
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except Exception:
+        pass
     return Document(filename=filename, paragraphs=paragraphs, tables=tables)
