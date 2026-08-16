@@ -859,6 +859,49 @@ class DiffEngine:
         if not need_llm:
             return keep, minor
 
+        # ---- 确定性摘要：纯增/纯删方向明确，不依赖 LLM 猜方向 ----
+        # LLM 对"旧版删除了 X"的 modified（旧长新短）偶发把方向说反
+        # （如 §5.1.4.2 删除了 OKAIR 无线密码获取方式，LLM 摘要成"新增紧急
+        # 联系方式"）。若 diff 只有 delete 或只有 insert（一方是另一方的子串
+        # 或同序子序列），用确定性规则直接生成摘要并保留，跳过 LLM。
+        import difflib as _difflib
+
+        _deterministic = []
+        for c in need_llm:
+            _old_n = re.sub(r"\s+", "", c.old_text or "")
+            _new_n = re.sub(r"\s+", "", c.new_text or "")
+            if not _old_n or not _new_n:
+                continue
+            _sm = _difflib.SequenceMatcher(None, _old_n, _new_n, autojunk=False)
+            _ops = _sm.get_opcodes()
+            # 只有 equal+delete（内容被删）或 equal+insert（内容被加）
+            _dirs = {o[0] for o in _ops} - {"equal"}
+            if _dirs in ({"delete"}, {"insert"}):
+                _diff_txt = "".join(
+                    (_old_n[i1:i2] if tag == "delete" else _new_n[j1:j2])
+                    for tag, i1, i2, j1, j2 in _ops
+                    if tag in ("delete", "insert")
+                ).strip()
+                # 残词/段界碎片（过短、不含句末标点）→ 不抢判，交 LLM
+                # （如"需求。"、"略，阻止…需求。"是解析段界差异而非真实增删）
+                # 注意：完整删除可能以编号/括号结尾（如 OKAIR 删除以"5.1.4.3"结尾），
+                # 只要文本长度足够且含句末标点即可确定性判定。
+                _SENT_END = set("。；！？.;!？")
+                if len(_diff_txt) < 8 or not any(ch in _diff_txt for ch in _SENT_END):
+                    _deterministic.append(c)
+                    continue
+                if _dirs == {"delete"}:
+                    c.summary = f"删除内容: {_diff_txt[:80]}"
+                else:
+                    c.summary = f"新增内容: {_diff_txt[:80]}"
+                c = _classify_change("content", c)
+                keep.append(c)
+                continue
+            _deterministic.append(c)
+        need_llm = _deterministic
+        if not need_llm:
+            return keep, minor
+
         # ---- 批量 LLM 判断 ----
         batch_size = self.config.diff.get("batch_size", 5) or 10
         num_batches = math.ceil(len(need_llm) / batch_size)
