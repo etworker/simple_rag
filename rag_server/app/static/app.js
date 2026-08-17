@@ -826,6 +826,7 @@ async function showVersionDiffForGroup(gi,ci){
     panel.classList.add('show');
     panel.dataset.vcIdx=ci;
     panel.dataset.groupDocId=g.doc_id||'';
+    panel.dataset.groupIdx=gi;
     const typeIcon=vc.type==='modified'?'✏️':vc.type==='added'?'➕':'➖';
     const typeLabel=vc.type==='modified'?'修改':vc.type==='added'?'新增':'删除';
     const diffPage=extractPageFromLoc(vc.location||vc.old_location)||1;
@@ -841,7 +842,8 @@ async function showVersionDiffForGroup(gi,ci){
     const bnTag=docMap[g.doc_id]||('B'+(gi+1));
     html+=`<div class="vc-loc-side vc-loc-old"><span class="vc-loc-tag">${bnTag} 对比文档</span><span class="vc-loc-page">第 ${oldLoc.page||diffPage} 页</span><span class="vc-loc-section" title="${escA((g.doc_filename||'') + ' ' + (oldLoc.section||''))}">${esc(g.doc_filename||'')}${oldLoc.section?(' ' + esc(oldLoc.section)):''}</span></div>`;
     html+=`<div class="vc-loc-arrow">→</div>`;
-    html+=`<div class="vc-loc-side vc-loc-new"><span class="vc-loc-tag">N 新</span><span class="vc-loc-page">第 ${newLoc.page||diffPage} 页</span><span class="vc-loc-section">${esc(newLoc.section||'—')}</span></div>`;
+    const newName=newDocFile||reviewResult?.new_filename||'新文档';
+    html+=`<div class="vc-loc-side vc-loc-new"><span class="vc-loc-tag">N 新文档</span><span class="vc-loc-page">第 ${newLoc.page||diffPage} 页</span><span class="vc-loc-section" title="${escA(newName + ' ' + (newLoc.section||''))}">${esc(newName)}${newLoc.section?(' ' + esc(newLoc.section)):''}</span></div>`;
     html+=`</div>`;
     if(vc.summary) html+=`<div class="vc-summary-bar">💡 ${esc(vc.summary)}</div>`;
     html+=`<div class="vc-text-diff">`;
@@ -849,14 +851,14 @@ async function showVersionDiffForGroup(gi,ci){
     const oldText=vc.old_text||'';
     const newText=vc.new_text||'';
     if(vc.type==='added'){
-        html+=`<div class="vc-diff-row vc-diff-new-row"><span class="vc-diff-tag">新</span><span class="vc-diff-text">${esc(newText)}</span></div>`;
+        html+=`<div class="vc-diff-row vc-diff-new-row"><span class="vc-diff-tag">N</span><span class="vc-diff-text">${esc(newText)}</span></div>`;
         html+=`<div class="vc-diff-empty">（旧版无此内容 — 新增段落）</div>`;
     } else if(vc.type==='removed'){
-        html+=`<div class="vc-diff-row vc-diff-old-row"><span class="vc-diff-tag">旧</span><span class="vc-diff-text">${esc(oldText)}</span></div>`;
+        html+=`<div class="vc-diff-row vc-diff-old-row"><span class="vc-diff-tag">${bnTag}</span><span class="vc-diff-text">${esc(oldText)}</span></div>`;
         html+=`<div class="vc-diff-empty">（新版已删除此段落）</div>`;
     } else {
-        html+=`<div class="vc-diff-row vc-diff-old-row"><span class="vc-diff-tag">旧</span><span class="vc-diff-text">${diffMark(newText,oldText,'b')}</span></div>`;
-        html+=`<div class="vc-diff-row vc-diff-new-row"><span class="vc-diff-tag">新</span><span class="vc-diff-text">${diffMark(newText,oldText,'a')}</span></div>`;
+        html+=`<div class="vc-diff-row vc-diff-old-row"><span class="vc-diff-tag">${bnTag}</span><span class="vc-diff-text">${diffMark(newText,oldText,'b')}</span></div>`;
+        html+=`<div class="vc-diff-row vc-diff-new-row"><span class="vc-diff-tag">N</span><span class="vc-diff-text">${diffMark(newText,oldText,'a')}</span></div>`;
     }
     html+=`</div>`;
     // 页面切换
@@ -990,9 +992,17 @@ function renderVcPages(side){
     for(const p of pagesToShow){
         const gid = document.getElementById('versionComparePanel') ? document.getElementById('versionComparePanel').dataset.groupDocId || '' : '';
         const gq = gid ? '&doc_id=' + encodeURIComponent(gid) : '';
+        // 页面图高亮：new 侧用新版差异文本，old 侧用旧版差异文本（与 QA 预览一致，截断 50 字符）
+        const vcIdx = parseInt(panel.dataset.vcIdx)||0;
+        const groups = (reviewResult && reviewResult.compare_groups) || [];
+        let vcs = (groups[parseInt(panel.dataset.groupIdx)||0] && groups[parseInt(panel.dataset.groupIdx)||0].version_changes) || [];
+        if(!vcs.length && reviewResult && Array.isArray(reviewResult.version_changes)) vcs = reviewResult.version_changes;
+        const vc = vcs[vcIdx] || null;
+        const hlText = vc ? (side==='new' ? (vc.new_text||'') : (vc.old_text||'')) : '';
+        const hl = hlText ? '&highlight=' + encodeURIComponent(hlText.slice(0,50)) : '';
         const imgUrl = side==='new'
-            ? `/api/documents/review/page?task_id=${reviewTaskId}&page=${p}`
-            : `/api/documents/review/old/page?task_id=${reviewTaskId}&page=${p}${gq}`;
+            ? `/api/documents/review/page?task_id=${reviewTaskId}&page=${p}${hl}`
+            : `/api/documents/review/old/page?task_id=${reviewTaskId}&page=${p}${gq}${hl}`;
         html += `<div class="vc-page-wrap${p===diffPage?' vc-page-active':''}" data-page="${p}">`;
         if(pagesToShow.length>1) html += `<div class="vc-page-num">第 ${p} 页</div>`;
         html += `<img src="${imgUrl}" loading="lazy" style="width:100%;display:block;" onerror="this.parentElement.innerHTML='<div style=\'padding:20px;text-align:center;color:#aaa;\'>第${p}页加载失败</div>'"></div>`;

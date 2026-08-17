@@ -12,6 +12,59 @@ import os
 from loguru import logger as log
 
 
+def _tolerant_search_rects(pg, highlight, min_len: int = 12):
+    """忽略空白差异的文字定位（用于高亮）。
+
+    PDF 文本层与解析出的 chunk 文本可能因空格/换行位置不同而无法被
+    search_for 精确命中（例如“为 OKAIR” vs “为OKAIR”，或长句跨行）。
+    这里去掉全部空白后按 word 拼接全文匹配；整串未命中时退回最长前缀匹配。
+
+    Returns:
+        fitz.Rect 列表；找不到时返回空列表
+    """
+    import bisect
+    import re
+
+    import fitz
+
+    hl_norm = re.sub(r"\s+", "", highlight)
+    if not hl_norm:
+        return []
+    words = pg.get_text("words", sort=True)
+    if not words:
+        return []
+    parts, starts, cur = [], [], 0
+    for w in words:
+        starts.append(cur)
+        parts.append(w[4])
+        cur += len(w[4])
+    full = "".join(parts)
+    pos = full.find(hl_norm)
+    matched_len = len(hl_norm)
+    if pos < 0:
+        # 最长前缀匹配（页面该句可能因分页/表格拆分而不完整）
+        pos = -1
+        for length in range(min(len(hl_norm), 80), min_len - 1, -1):
+            p = full.find(hl_norm[:length])
+            if p >= 0:
+                pos, matched_len = p, length
+                break
+    if pos < 0:
+        return []
+    end = pos + matched_len
+    i = max(bisect.bisect_right(starts, pos) - 1, 0)
+    x0 = y0 = float("inf")
+    x1 = y1 = float("-inf")
+    while i < len(words) and starts[i] < end:
+        w = words[i]
+        x0 = min(x0, w[0]); y0 = min(y0, w[1])
+        x1 = max(x1, w[2]); y1 = max(y1, w[3])
+        i += 1
+    if x1 < x0:
+        return []
+    return [fitz.Rect(x0, y0, x1, y1)]
+
+
 class PageRenderer:
     """
     按需渲染 PDF 页面为 PNG 图片，支持文字高亮
@@ -79,9 +132,11 @@ class PageRenderer:
 
         pg = doc[page - 1]  # fitz 从 0 开始
 
-        # 高亮文字
+        # 高亮文字（search_for 未命中时用容错搜索，容忍空格/换行差异）
         if highlight:
             rects = pg.search_for(highlight)
+            if not rects:
+                rects = _tolerant_search_rects(pg, highlight)
             for r in rects:
                 pg.add_highlight_annot(r)
 
