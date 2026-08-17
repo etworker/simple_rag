@@ -293,7 +293,8 @@ async function loadKbPreview(basename){
     // 确保翻页控件可见（从文本预览切回 PDF 时）
     const pager=document.getElementById('kbPager');
     if(pager)pager.style.display='';
-    const url=`/api/documents/pdf?name=${encodeURIComponent(basename)}`;
+    // 用完整 doc_id（含 #hash）定位，避免同名文档预览到同一个文件
+    const url=`/api/documents/pdf?name=${encodeURIComponent(currentDoc)}`;
     // 如果换了文档才重新加载 PDF（否则只渲染页面）
     if(kbPdfUrl!==url){
         kbPdfUrl=url;
@@ -328,7 +329,7 @@ async function loadTextPreview(filename){
     const pager=document.getElementById('kbPager');
     if(pager)pager.style.display='none';
     try{
-        const resp=await fetch(`/api/documents/paragraphs?name=${encodeURIComponent(filename)}`);
+        const resp=await fetch(`/api/documents/paragraphs?name=${encodeURIComponent(currentDoc)}`);
         const data=await resp.json();
         if(!data.paragraphs||!data.paragraphs.length){
             container.innerHTML='<div style="padding:16px;color:var(--text3);">该文档无段落内容</div>';
