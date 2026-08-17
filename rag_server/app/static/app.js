@@ -767,10 +767,12 @@ async function showVersionDiffForGroup(gi,ci){
     const g=reviewResult?.compare_groups?.[gi];
     const vc=g?.version_changes?.[ci];
     if(!vc)return;
+    window.__groupIdx=gi;
     const panel=document.getElementById('versionComparePanel');
     if(!panel)return;
     panel.classList.add('show');
     panel.dataset.vcIdx=ci;
+    panel.dataset.groupDocId=g.doc_id||'';
     const typeIcon=vc.type==='modified'?'✏️':vc.type==='added'?'➕':'➖';
     const typeLabel=vc.type==='modified'?'修改':vc.type==='added'?'新增':'删除';
     const diffPage=extractPageFromLoc(vc.location||vc.old_location)||1;
@@ -778,32 +780,52 @@ async function showVersionDiffForGroup(gi,ci){
     html+=`<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 14px;border-bottom:1px solid var(--border);background:var(--card);flex-shrink:0;">`;
     html+=`<span style="font-weight:600;">${typeIcon} ${typeLabel} · ${esc(g.doc_filename||'')} 差异 #${ci+1}</span>`;
     html+=`<button onclick="closeVersionCompare()" style="background:none;border:1px solid var(--border);border-radius:4px;padding:3px 12px;cursor:pointer;font-size:11px;">✕ 返回列表</button></div>`;
-    html+=`<div style="padding:12px 14px;font-size:12px;flex-shrink:0;border-bottom:1px solid var(--border);">`;
-    html+=`<div><b>摘要:</b> ${esc(vc.summary||'（无）')}</div>`;
-    html+=`<div style="margin-top:6px;background:var(--bg2);padding:8px;border-radius:4px;font-size:11px;line-height:1.6;">`;
-    html+=`<div style="color:var(--danger);"><b>旧:</b> ${diffMark(vc.old_text||'',vc.new_text||'','b')}</div>`;
-    html+=`<div style="color:var(--primary);margin-top:4px;"><b>新:</b> ${diffMark(vc.new_text||'',vc.old_text||'','a')}</div>`;
+    // sticky: 差异定位 + 摘要 + 文字差异 + 页面切换
+    html+=`<div class="vc-sticky-header">`;
+    const oldLoc=parseLoc(vc.old_location||'');
+    const newLoc=parseLoc(vc.location||'');
+    html+=`<div class="vc-loc-bar">`;
+    html+=`<div class="vc-loc-side vc-loc-old"><span class="vc-loc-tag">B ${esc(g.doc_filename||'').slice(0,12)}</span><span class="vc-loc-page">第 ${oldLoc.page||diffPage} 页</span><span class="vc-loc-section">${esc(oldLoc.section||'—')}</span></div>`;
+    html+=`<div class="vc-loc-arrow">→</div>`;
+    html+=`<div class="vc-loc-side vc-loc-new"><span class="vc-loc-tag">N 新</span><span class="vc-loc-page">第 ${newLoc.page||diffPage} 页</span><span class="vc-loc-section">${esc(newLoc.section||'—')}</span></div>`;
+    html+=`</div>`;
+    if(vc.summary) html+=`<div class="vc-summary-bar">💡 ${esc(vc.summary)}</div>`;
+    html+=`<div class="vc-text-diff">`;
+    html+=`<div style="font-size:11px;font-weight:600;color:var(--text3);margin-bottom:8px;">📝 文字差异对比</div>`;
+    const oldText=vc.old_text||'';
+    const newText=vc.new_text||'';
+    if(vc.type==='added'){
+        html+=`<div class="vc-diff-row vc-diff-new-row"><span class="vc-diff-tag">新</span><span class="vc-diff-text">${esc(newText)}</span></div>`;
+        html+=`<div class="vc-diff-empty">（旧版无此内容 — 新增段落）</div>`;
+    } else if(vc.type==='removed'){
+        html+=`<div class="vc-diff-row vc-diff-old-row"><span class="vc-diff-tag">旧</span><span class="vc-diff-text">${esc(oldText)}</span></div>`;
+        html+=`<div class="vc-diff-empty">（新版已删除此段落）</div>`;
+    } else {
+        html+=`<div class="vc-diff-row vc-diff-old-row"><span class="vc-diff-tag">旧</span><span class="vc-diff-text">${diffMark(newText,oldText,'b')}</span></div>`;
+        html+=`<div class="vc-diff-row vc-diff-new-row"><span class="vc-diff-tag">新</span><span class="vc-diff-text">${diffMark(newText,oldText,'a')}</span></div>`;
+    }
+    html+=`</div>`;
+    // 页面切换
+    html+=`<div style="padding:8px 14px;background:var(--card);border-top:1px solid var(--border);display:flex;align-items:center;gap:8px;">`;
+    html+=`<span style="font-size:11px;font-weight:600;color:var(--text3);">📄 页面定位：第 ${diffPage} 页</span>`;
+    html+=`<div style="margin-left:auto;display:flex;gap:6px;">`;
+    html+=`<button class="vc-quick-tab active" data-side="new" onclick="switchVcTab('new')" style="padding:4px 14px;border:1px solid var(--border);border-radius:4px;background:var(--primary);color:#fff;cursor:pointer;font-size:11px;">N 新版</button>`;
+    html+=`<button class="vc-quick-tab" data-side="old" onclick="switchVcTab('old')" style="padding:4px 14px;border:1px solid var(--border);border-radius:4px;background:transparent;cursor:pointer;font-size:11px;color:var(--text3);">B 对比文档</button>`;
     html+=`</div></div>`;
-    html+=`<div id="vdPages" style="flex:1;overflow:auto;padding:12px;"><div style="color:var(--text3);font-size:11px;">加载页面预览...</div></div>`;
-    document.getElementById('versionComparePanel').innerHTML=html;
-    // 页面预览
-    const oldName=g.doc_id||g.doc_filename;
-    try{
-        const resp=await fetch('/api/documents/review/page?task_id='+reviewTaskId+'&page='+diffPage);
-        const blob=await resp.blob();
-        const url=URL.createObjectURL(blob);
-        const img=document.createElement('img');
-        img.src=url; img.style.width='100%';
-        document.getElementById('vdPages').innerHTML='';
-        document.getElementById('vdPages').appendChild(img);
-    }catch(e){ document.getElementById('vdPages').innerHTML='<div style="color:var(--text3);font-size:11px;">页面预览不可用</div>'; }
-}
-
-function showGroupConflict(gi,ci){
-    const g=reviewResult?.compare_groups?.[gi];
-    const inc=g?.inconsistencies?.[ci];
-    if(!inc)return;
-    alert('矛盾: ' + (inc.point||'') + '\n新: ' + (inc.doc_a_says||'') + '\n旧: ' + (inc.doc_b_says||''));
+    html+=`</div>`;
+    html+=`<div class="vc-scroll-area" id="vcPagesContainer" data-diff-page="${diffPage}"><div style="padding:20px;text-align:center;color:var(--text3);">正在加载文档预览...</div></div>`;
+    panel.innerHTML=html;
+    // 获取新旧页数（B 侧用组 doc_id）
+    const gid=panel.dataset.groupDocId||'';
+    const q=gid?`&doc_id=${encodeURIComponent(gid)}`:' ';
+    const [newInfo, oldInfo]=await Promise.all([
+        fetch('/api/documents/review/info?task_id='+reviewTaskId).then(r=>r.json()),
+        fetch('/api/documents/review/old/info?task_id='+reviewTaskId+q.trim()).then(r=>r.json()),
+    ]);
+    panel.dataset.newPages=newInfo.page_count||0;
+    panel.dataset.oldPages=oldInfo.page_count||0;
+    panel.dataset.diffPage=diffPage;
+    renderVcPages('new');
 }
 
 async function showVersionDiff(idx){
@@ -912,9 +934,11 @@ function renderVcPages(side){
     html += `</div>`;
 
     for(const p of pagesToShow){
+        const gid = document.getElementById('versionComparePanel') ? document.getElementById('versionComparePanel').dataset.groupDocId || '' : '';
+        const gq = gid ? '&doc_id=' + encodeURIComponent(gid) : '';
         const imgUrl = side==='new'
             ? `/api/documents/review/page?task_id=${reviewTaskId}&page=${p}`
-            : `/api/documents/review/old/page?task_id=${reviewTaskId}&page=${p}`;
+            : `/api/documents/review/old/page?task_id=${reviewTaskId}&page=${p}${gq}`;
         html += `<div class="vc-page-wrap${p===diffPage?' vc-page-active':''}" data-page="${p}">`;
         if(pagesToShow.length>1) html += `<div class="vc-page-num">第 ${p} 页</div>`;
         html += `<img src="${imgUrl}" loading="lazy" style="width:100%;display:block;" onerror="this.parentElement.innerHTML='<div style=\'padding:20px;text-align:center;color:#aaa;\'>第${p}页加载失败</div>'"></div>`;

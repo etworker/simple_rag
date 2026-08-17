@@ -379,12 +379,21 @@ async def get_review_info(task_id: str):
 
 
 @router.get("/review/old/info")
-async def get_review_old_info(task_id: str):
-    """获取旧版文档的信息（页数等）"""
+async def get_review_old_info(task_id: str, doc_id: str = ""):
+    """获取对比文档的信息（页数等）。
+
+    doc_id 指定时按库内文档取（分组模式下 B 侧任意文档）；缺省用任务旧版。
+    """
     if task_id not in _state.app.review_tasks:
         raise HTTPException(status_code=404, detail="任务不存在")
     task = _state.app.review_tasks[task_id]
-    old_filepath = task.get("old_version_filepath", "")
+    old_filepath = ""
+    if doc_id:
+        meta = _state.app.doc_store.get_document(doc_id)
+        if meta and meta.filepath and os.path.exists(meta.filepath):
+            old_filepath = meta.filepath
+    else:
+        old_filepath = task.get("old_version_filepath", "")
     if not old_filepath or not os.path.exists(old_filepath):
         return {"exists": False, "page_count": 0}
     page_count = get_pdf_page_count(old_filepath)
@@ -392,8 +401,11 @@ async def get_review_old_info(task_id: str):
 
 
 @router.get("/review/old/page")
-async def get_review_old_page(task_id: str, page: int = 1, highlight: str = ""):
-    """获取旧版文档指定页的 PNG 图片"""
+async def get_review_old_page(task_id: str, page: int = 1, highlight: str = "", doc_id: str = ""):
+    """获取对比文档指定页的 PNG 图片。
+
+    doc_id 指定时按库内文档取（分组模式下 B 侧任意文档）；缺省用任务旧版。
+    """
     from urllib.parse import unquote
 
     from app.services.page_renderer import PageRenderer
@@ -401,9 +413,15 @@ async def get_review_old_page(task_id: str, page: int = 1, highlight: str = ""):
     if task_id not in _state.app.review_tasks:
         raise HTTPException(status_code=404, detail="任务不存在")
     task = _state.app.review_tasks[task_id]
-    old_filepath = task.get("old_version_filepath", "")
+    old_filepath = ""
+    if doc_id:
+        meta = _state.app.doc_store.get_document(doc_id)
+        if meta and meta.filepath and os.path.exists(meta.filepath):
+            old_filepath = meta.filepath
+    else:
+        old_filepath = task.get("old_version_filepath", "")
     if not old_filepath or not os.path.exists(old_filepath):
-        raise HTTPException(status_code=404, detail="旧版文档文件不存在")
+        raise HTTPException(status_code=404, detail="对比文档文件不存在")
     renderer = PageRenderer(cache_dir=os.path.join(_state.app.cache_dir, "page_cache"))
     png_path = await asyncio.to_thread(renderer.get_page, old_filepath, page, unquote(highlight))
     return FileResponse(png_path, media_type="image/png")
