@@ -222,13 +222,14 @@ class TestDocStoreDeviceConfig:
                 for i in range(3)
             ]
             # 该方法依赖 _get_model, 模型不存在则跳过
-            store._embeddings = (
+            embeddings = (
                 store._get_model()
                 .encode([p.text for p in store._paragraphs], show_progress_bar=False)
                 .astype("float32")
             )
-            store._rebuild_index()
-            assert store._index is not None
+            store._retriever.add(embeddings)
+            assert store._retriever.count == 3
+            assert store._retriever.dim > 0
         except OSError:
             pytest.skip("模型未缓存")
 

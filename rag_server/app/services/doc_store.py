@@ -13,7 +13,6 @@ import os
 import time
 from dataclasses import asdict, dataclass
 
-import faiss
 import numpy as np
 from doc_parser import Paragraph
 from loguru import logger as log
@@ -72,8 +71,9 @@ class DocStore:
         self._model: object | None = None
         self._documents: dict = {}  # {filename: DocMeta}
         self._paragraphs: list[Paragraph] = []
-        self._embeddings: np.ndarray | None = None
-        self._index: faiss.Index | None = None
+        from app.services.retriever import FaissRetriever
+
+        self._retriever = FaissRetriever()
 
         # 持久化目录（默认 ~/.simple_rag/doc_store/）
         self._persist_dir = config.get("persist_dir") or os.path.join(
@@ -197,14 +197,9 @@ class DocStore:
         embeddings = np.array(embeddings).astype(np.float32)
 
         # 追加到全局（段落 + 表格统一进索引，检索时按 location 区分）
+        start_idx = len(self._paragraphs)
         self._paragraphs.extend(indexable)
-        if self._embeddings is None:
-            self._embeddings = embeddings
-        else:
-            self._embeddings = np.vstack([self._embeddings, embeddings])
-
-        # 重建 FAISS index
-        self._rebuild_index()
+        self._retriever.add(embeddings, start_index=start_idx)
 
         # 计算页数
         page_count = get_pdf_page_count(filepath)
@@ -259,10 +254,7 @@ class DocStore:
         keep_mask[indices_to_remove] = False
 
         self._paragraphs = [p for i, p in enumerate(self._paragraphs) if keep_mask[i]]
-        if self._embeddings is not None and len(self._embeddings) > 0:
-            self._embeddings = self._embeddings[keep_mask]
-
-        self._rebuild_index()
+        self._retriever.remove(keep_mask)
         self._documents[doc_id].status = "deleted"
         log.info(f"已移除: {doc_id}")
         self._save_to_disk()
@@ -277,8 +269,7 @@ class DocStore:
         count = len(self._documents)
         self._documents = {}
         self._paragraphs = []
-        self._embeddings = None
-        self._index = None
+        self._retriever.clear()
         # 清空磁盘持久化文件（保留目录）；目录不存在时先创建，避免空库清空报错
         os.makedirs(self._persist_dir, exist_ok=True)
         for f in os.listdir(self._persist_dir):
@@ -299,7 +290,7 @@ class DocStore:
         Returns:
             按相关度排序的段落列表
         """
-        if self._index is None or len(self._paragraphs) == 0:
+        if self._retriever.count == 0 or len(self._paragraphs) == 0:
             return []
 
         retrieval_config = self._config.get("retrieval", {})
@@ -310,15 +301,14 @@ class DocStore:
         model = self._get_model()
         q_emb = model.encode([query], normalize_embeddings=True).astype(np.float32)
 
-        # FAISS 检索
-        actual_k = min(top_k, len(self._paragraphs))
-        scores, indices = self._index.search(q_emb, actual_k)
+        # 向量检索（Retriever 抽象，未来可换 pgvector/OpenSearch）
+        scores, indices = self._retriever.search(q_emb, top_k)
 
-        # 封装结果
+        # 封装结果（scores/indices 为一维，已按相似度降序）
         results = []
-        for i in range(actual_k):
-            idx = int(indices[0][i])
-            score = float(scores[0][i])
+        for i in range(len(indices)):
+            idx = int(indices[i])
+            score = float(scores[i])
             if score < threshold:
                 continue
             para = self._paragraphs[idx]
@@ -358,15 +348,6 @@ class DocStore:
     def total_documents(self) -> int:
         return len([d for d in self._documents.values() if d.status == "active"])
 
-    def _rebuild_index(self):
-        """重建 FAISS index"""
-        if self._embeddings is None or len(self._embeddings) == 0:
-            self._index = None
-            return
-        dim = self._embeddings.shape[1]
-        self._index = faiss.IndexFlatIP(dim)
-        self._index.add(self._embeddings)
-
     # ============================================================
     # 磁盘持久化
     # ============================================================
@@ -386,10 +367,8 @@ class DocStore:
             with open(paras_path, "w", encoding="utf-8") as f:
                 json.dump(paras_data, f, ensure_ascii=False)
 
-            # 3. Embeddings
-            if self._embeddings is not None and len(self._embeddings) > 0:
-                emb_path = os.path.join(self._persist_dir, "embeddings.npy")
-                np.save(emb_path, self._embeddings)
+            # 3. 向量索引（交给 Retriever 持久化）
+            self._retriever.save(self._persist_dir)
 
             log.info(f"持久化完成: {len(self._documents)} 文档, {len(self._paragraphs)} 段落")
         except Exception as e:
@@ -399,8 +378,6 @@ class DocStore:
         """从磁盘恢复状态"""
         meta_path = os.path.join(self._persist_dir, "documents.json")
         paras_path = os.path.join(self._persist_dir, "paragraphs.json")
-        emb_path = os.path.join(self._persist_dir, "embeddings.npy")
-
         if not os.path.exists(meta_path):
             return  # 首次启动，无数据
 
@@ -416,10 +393,8 @@ class DocStore:
                     paras_data = json.load(f)
                 self._paragraphs = [Paragraph.from_dict(p) for p in paras_data]
 
-            # 3. Embeddings + FAISS
-            if os.path.exists(emb_path):
-                self._embeddings = np.load(emb_path)
-                self._rebuild_index()
+            # 3. 向量索引（Retriever 从磁盘恢复）
+            self._retriever.load(self._persist_dir)
 
             # 回填缺失的 page_count / char_count（所有数据加载完毕后）
             need_save = False
