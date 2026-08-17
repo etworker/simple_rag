@@ -340,6 +340,16 @@ class DocStore:
                 return v
         return None
 
+    def update_label(self, doc_id: str, label: str) -> bool:
+        """更新文档的补充描述（label/tag）。"""
+        meta = self.get_document(doc_id)
+        if not meta:
+            return False
+        meta.label = (label or "").strip()[:60]
+        self._save_to_disk()
+        log.info(f"更新文档 label: {meta.filename} → '{meta.label}'")
+        return True
+
     @property
     def total_paragraphs(self) -> int:
         return len(self._paragraphs)

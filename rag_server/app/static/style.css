@@ -153,7 +153,7 @@
         .vc-loc-old .vc-loc-tag { color: #c92a2a; }
         .vc-loc-new .vc-loc-tag { color: #1971c2; }
         .vc-loc-page { font-size: 15px; font-weight: 700; color: var(--text); }
-        .vc-loc-section { font-size: 11px; color: var(--text3); }
+        .vc-loc-section { font-size: 11px; color: var(--text3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
         .vc-loc-arrow { display: flex; align-items: center; padding: 0 6px; font-size: 16px; color: var(--text3); background: #fafafa; flex-shrink: 0; }
         .vc-summary-bar { padding: 8px 14px; background: #fffbe6; border-bottom: 1px solid #ffe58f; font-size: 12px; line-height: 1.5; color: #6b5900; }
         /* 文字差异对比区 */

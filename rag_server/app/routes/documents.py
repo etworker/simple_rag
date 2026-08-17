@@ -3,7 +3,7 @@
 import asyncio
 import os
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Form, HTTPException
 from fastapi.responses import FileResponse
 from loguru import logger as log
 
@@ -148,6 +148,16 @@ async def delete_document(filename: str):
     if not success:
         raise HTTPException(status_code=404, detail="文档不存在")
     return {"message": f"已删除: {filename}"}
+
+
+@router.post("/label")
+async def update_document_label(doc_id: str = Form(...), label: str = Form("")):
+    """更新文档的补充描述（label/tag）"""
+    s = _state.app
+    ok = s.doc_store.update_label(doc_id, label)
+    if not ok:
+        raise HTTPException(status_code=404, detail="文档不存在")
+    return {"message": "已更新", "label": (label or "").strip()[:60]}
 
 
 @router.post("/clear")

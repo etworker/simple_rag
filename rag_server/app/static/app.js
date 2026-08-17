@@ -137,7 +137,7 @@ pendingHtml=`<div class="doc-list-title" style="color:var(--warn);">待审核</d
         ingestedHtml='<div class="doc-list-title">已入库文档</div><div style="color:#aaa;padding:12px;font-size:12px;">请上传第一份文档</div>';
     } else {
         ingestedHtml='<div class="doc-list-title">已入库文档</div>';
-data.documents.forEach((d,i)=>{const id='B'+(i+1);const hashShort=d.file_hash?d.file_hash.slice(-8).toUpperCase():'';const docId=d.doc_id||d.filename;docMap[docId]=id;docMap[d.filename]=id;if(d.file_hash)fileHashToName[d.file_hash]=d.filename;const cls=(currentDoc===docId||currentDoc===d.filename)?'doc-item active':'doc-item';const pg=d.page_count||kbTotalPagesCache[d.filename]||'';const stats=[];if(pg)stats.push(pg+'页');if(d.char_count)stats.push(d.char_count+'字');if(d.paragraph_count)stats.push(d.paragraph_count+'段');if(d.table_count)stats.push(d.table_count+'表');if(d.added_at){const dt=new Date(d.added_at);const pad=n=>String(n).padStart(2,'0');stats.push((dt.getMonth()+1)+'/'+pad(dt.getDate())+' '+pad(dt.getHours())+':'+pad(dt.getMinutes()));}const verTag=(d.label||d.version)?`<span class="doc-label-tag">${esc(d.label||d.version)}</span>`:'';const displayName=hashShort?`${esc(d.filename)}<span style="color:var(--text3);font-size:10px;"> [${hashShort}]</span>${verTag}`:esc(d.filename);ingestedHtml+=`<div class="${cls}" data-filename="${escA(d.filename)}" data-hash="${escA(d.file_hash||'')}" onclick="selectDoc('${escA(docId)}')" title="${escA(d.filename)} [${hashShort}]"><span class="id">${id}</span><div class="info"><div class="name">${displayName}</div>${stats.length?'<div class="stats">'+stats.join(' · ')+'</div>':''}</div><span class="del-btn" onclick="event.stopPropagation();removeDoc('${escA(docId)}')">🗑️</span></div>`;});
+data.documents.forEach((d,i)=>{const id='B'+(i+1);const hashShort=d.file_hash?d.file_hash.slice(-8).toUpperCase():'';const docId=d.doc_id||d.filename;docMap[docId]=id;docMap[d.filename]=id;if(d.file_hash)fileHashToName[d.file_hash]=d.filename;const cls=(currentDoc===docId||currentDoc===d.filename)?'doc-item active':'doc-item';const pg=d.page_count||kbTotalPagesCache[d.filename]||'';const stats=[];if(pg)stats.push(pg+'页');if(d.char_count)stats.push(d.char_count+'字');if(d.paragraph_count)stats.push(d.paragraph_count+'段');if(d.table_count)stats.push(d.table_count+'表');if(d.added_at){const dt=new Date(d.added_at);const pad=n=>String(n).padStart(2,'0');stats.push((dt.getMonth()+1)+'/'+pad(dt.getDate())+' '+pad(dt.getHours())+':'+pad(dt.getMinutes()));}const verTag=(d.label||d.version)?`<span class="doc-label-tag" onclick="event.stopPropagation();editDocLabel('${escA(d.doc_id||'')}')" title="点击修改补充描述" style="cursor:pointer;">${esc(d.label||d.version)} ✎</span>`:'';const displayName=hashShort?`${esc(d.filename)}<span style="color:var(--text3);font-size:10px;"> [${hashShort}]</span>${verTag}`:esc(d.filename);ingestedHtml+=`<div class="${cls}" data-filename="${escA(d.filename)}" data-hash="${escA(d.file_hash||'')}" onclick="selectDoc('${escA(docId)}')" title="${escA(d.filename)} [${hashShort}]"><span class="id">${id}</span><div class="info"><div class="name">${displayName}</div>${stats.length?'<div class="stats">'+stats.join(' · ')+'</div>':''}</div><span class="del-btn" onclick="event.stopPropagation();removeDoc('${escA(docId)}')">🗑️</span></div>`;});
     }
     el.innerHTML=pendingHtml+ingestedHtml;
 }
@@ -233,6 +233,56 @@ async function loadPendingTextPreview(filename){
     }
 }
 // 点击段落滚动到可视区域（用于版本变更跳转）
+function promptLabel(message, initial){
+    // 带输入框的确认框：返回 Promise<string|null>（null=取消，''=空描述）
+    return new Promise(resolve=>{
+        const overlay=document.getElementById('modalOverlay');
+        const wrap=document.getElementById('modalInputWrap');
+        const input=document.getElementById('modalInput');
+        document.getElementById('modalMsg').textContent=message;
+        wrap.style.display='';
+        input.value=initial||'';
+        overlay.classList.add('show');
+        setTimeout(()=>input.focus(),50);
+        const yesHandler=()=>{cleanup();resolve(input.value.trim());};
+        const noHandler=()=>{cleanup();resolve(null);};
+        const keyHandler=(e)=>{if(e.key==='Escape'){cleanup();resolve(null);}else if(e.key==='Enter'){cleanup();resolve(input.value.trim());}};
+        const cleanup=()=>{
+            overlay.classList.remove('show');
+            wrap.style.display='none';
+            document.getElementById('modalBtnYes').removeEventListener('click',yesHandler);
+            document.getElementById('modalBtnNo').removeEventListener('click',noHandler);
+            document.removeEventListener('keydown',keyHandler);
+        };
+        document.getElementById('modalBtnYes').addEventListener('click',yesHandler);
+        document.getElementById('modalBtnNo').addEventListener('click',noHandler);
+        document.addEventListener('keydown',keyHandler);
+    });
+}
+
+async function editDocLabel(docId){
+    if(!docId)return;
+    const current = docMap[docId] ? '' : '';
+    // 从文档列表找当前 label
+    let curLabel='';
+    const el = document.querySelector(`.doc-item[data-filename="${CSS.escape(docId.split('#')[0])}"]`);
+    if(el){
+        const tag=el.querySelector('.doc-label-tag');
+        if(tag) curLabel=tag.textContent.replace('✎','').trim();
+    }
+    const val=await promptLabel('修改文档补充描述（建议填版本号）：', curLabel);
+    if(val===null)return;
+    const fd=new FormData();
+    fd.append('doc_id',docId);
+    fd.append('label',val);
+    try{
+        const r=await fetch('/api/documents/label',{method:'POST',body:fd});
+        const d=await r.json();
+        if(!r.ok) alert(d.detail||'更新失败');
+        else { refreshDocList(); }
+    }catch(e){ alert('更新失败: '+e.message); }
+}
+
 function scrollParaIntoView(el){
     if(!el)return;
     el.scrollIntoView({behavior:'smooth',block:'center'});
@@ -480,6 +530,9 @@ uploadZone.addEventListener('drop',e=>{e.preventDefault();uploadZone.style.borde
 
 async function handleUpload(file){
 if(!file)return;
+// 上传前弹窗输入补充描述（用户可取消 → 空描述）
+const labelVal=await promptLabel('为文档「'+file.name+'」添加补充描述（建议填版本号，如 R5-21；可留空）：', document.getElementById('docLabelInput')?.value||'');
+window.__uploadLabel=labelVal===null?'':labelVal;
 // 清理上一轮预审核结果，避免在 SSE 首个事件到达前仍显示旧结果
 reviewResult=null;reviewTaskId=null;
 const oldBtn=document.getElementById('reviewBtn');if(oldBtn){oldBtn.classList.remove('show');oldBtn.textContent='';}
@@ -489,7 +542,7 @@ uploadZone.classList.add('disabled');
 document.getElementById('stepArea').classList.add('show');
 document.getElementById('stepTitle').textContent='上传: '+file.name;
 document.getElementById('stepItems').innerHTML='<div class="step-item"><div class="dot active">⏳</div><span>上传中...</span></div>';
-const fd=new FormData();fd.append('file',file);fd.append('label',(document.getElementById('docLabelInput')?.value||'').trim());
+const fd=new FormData();fd.append('file',file);fd.append('label',window.__uploadLabel||'');
 try{
 const res=await fetch('/api/documents/upload',{method:'POST',body:fd});
 if(!res.ok){const e=await res.json();alert(e.detail||'上传失败');resetUpload();return;}
@@ -501,7 +554,7 @@ if(data.needs_choice){
     );
     const choice = overwrite ? 'overwrite' : 'coexist';
     // 重新上传，带 choice 参数
-    const fd2=new FormData();fd2.append('file',file);fd2.append('choice',choice);fd2.append('label',(document.getElementById('docLabelInput')?.value||'').trim());
+    const fd2=new FormData();fd2.append('file',file);fd2.append('choice',choice);fd2.append('label',window.__uploadLabel||'');
     const res2=await fetch('/api/documents/upload',{method:'POST',body:fd2});
     if(!res2.ok){const e=await res2.json();alert(e.detail||'上传失败');resetUpload();return;}
     const data2=await res2.json();
@@ -785,7 +838,8 @@ async function showVersionDiffForGroup(gi,ci){
     const oldLoc=parseLoc(vc.old_location||'');
     const newLoc=parseLoc(vc.location||'');
     html+=`<div class="vc-loc-bar">`;
-    html+=`<div class="vc-loc-side vc-loc-old"><span class="vc-loc-tag">B ${esc(g.doc_filename||'').slice(0,12)}</span><span class="vc-loc-page">第 ${oldLoc.page||diffPage} 页</span><span class="vc-loc-section">${esc(oldLoc.section||'—')}</span></div>`;
+    const bnTag=docMap[g.doc_id]||('B'+(gi+1));
+    html+=`<div class="vc-loc-side vc-loc-old"><span class="vc-loc-tag">${bnTag} 对比文档</span><span class="vc-loc-page">第 ${oldLoc.page||diffPage} 页</span><span class="vc-loc-section" title="${escA((g.doc_filename||'') + ' ' + (oldLoc.section||''))}">${esc(g.doc_filename||'')}${oldLoc.section?(' ' + esc(oldLoc.section)):''}</span></div>`;
     html+=`<div class="vc-loc-arrow">→</div>`;
     html+=`<div class="vc-loc-side vc-loc-new"><span class="vc-loc-tag">N 新</span><span class="vc-loc-page">第 ${newLoc.page||diffPage} 页</span><span class="vc-loc-section">${esc(newLoc.section||'—')}</span></div>`;
     html+=`</div>`;
