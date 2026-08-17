@@ -173,7 +173,6 @@ class DiffEngine:
         Returns:
             DiffResult 包含不一致列表和统计信息
         """
-        from doc_parser import parse
 
         threshold = self.config.diff.get("similarity_threshold", 0.80)
         top_k = self.config.diff.get("top_k", 3)
@@ -183,7 +182,11 @@ class DiffEngine:
         t0 = time.time()
         from version_diff.parse_cache import cached_parse
 
-        new_doc = cached_parse(filepath, config=self.config.embedding.get("parse_config"), cache_dir=self._parse_cache_dir)
+        new_doc = cached_parse(
+            filepath,
+            config=self.config.embedding.get("parse_config"),
+            cache_dir=self._parse_cache_dir,
+        )
         # ★ 用可读文件名覆盖 SHA256 哈希名，确保矛盾列表前端显示友好
         if doc_filename:
             new_doc.filename = doc_filename
@@ -500,8 +503,8 @@ class DiffEngine:
             embs, _ = self._vector_store.get_or_compute(doc.filename, doc.paragraphs, model)
             return embs, doc
 
-        embs_a, doc_a = _embed(filepath_a)
-        embs_b, doc_b = _embed(filepath_b)
+        embs_a, _doc_a = _embed(filepath_a)
+        embs_b, _doc_b = _embed(filepath_b)
         if len(embs_a) == 0 or len(embs_b) == 0:
             return 0.0
 
@@ -541,7 +544,6 @@ class DiffEngine:
         Returns:
             VersionDiffResult 包含所有变更
         """
-        from doc_parser import parse
 
         from version_diff.matcher import pair_paragraphs
 
@@ -876,11 +878,7 @@ class DiffEngine:
             # 反向（旧版短、新版长且旧版是新版前缀）→ 新版补全/新增了内容，
             # 是真实版本变更（如 §5.1.9.7 新版补全"法规、政策和公司相关规定…"、
             # §5.1.6.5 新版新增"A 网络安全设备开启漏洞…"），必须保留为实质性。
-            if (
-                len(new_norm) < len(old_norm)
-                and old_norm.startswith(new_norm)
-                and len(old_norm) - len(new_norm) < 50
-            ):
+            if len(new_norm) < len(old_norm) and old_norm.startswith(new_norm) and len(old_norm) - len(new_norm) < 50:
                 c = _classify_change("metadata", c)
                 c.summary = "[解析] 新版疑似跨页断句/文本截断（新版是旧版前缀），非实质性变更"
                 minor.append(c)

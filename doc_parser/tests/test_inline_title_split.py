@@ -76,9 +76,7 @@ def test_no_split_no_title():
 def test_no_split_reference_after_period():
     """句号后是编号引用而非标题 → 不拆分"""
     # "1.1 概述" 匹配章节模式 → 应拆分（如果正文够长）
-    line_long = (
-        "运维人员须按照规范执行所有操作流程，确保安全合规。 1.1 概述"
-    )
+    line_long = "运维人员须按照规范执行所有操作流程，确保安全合规。 1.1 概述"
     result = _try_split_inline_title(line_long, _cfg())
     # "1.1 概述" 匹配章节模式 → 应拆分
     assert result is not None

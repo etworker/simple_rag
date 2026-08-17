@@ -21,7 +21,7 @@ _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(_PROJECT_ROOT, "src"))
 
 from doc_parser import parse  # noqa: E402
-from doc_parser.log import configure_logger
+from doc_parser.log import configure_logger  # noqa: E402
 
 configure_logger()  # 独立 example：开启 doc_parser 日志（console + ./logs/doc_parser.log）
 

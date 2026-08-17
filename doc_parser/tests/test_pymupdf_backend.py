@@ -40,7 +40,7 @@ def _make_test_pdf(path):
     rows2 = [[str(i), "X" + str(i)] for i in range(4, 7)]
 
     def _table(data):
-        t = Table([header] + data, colWidths=[100, 100])
+        t = Table([header, *data], colWidths=[100, 100])
         t.setStyle(
             TableStyle(
                 [

@@ -184,7 +184,10 @@ def main(old_path, new_path, model, do_summary):
         },
     }
     if _parse_cfg is not None:
-        print(f"解析后端: {_parse_cfg['extract']['backend']} | embedding: {_emb.get('model')} (device={_emb.get('device')})")
+        print(
+            f"解析后端: {_parse_cfg['extract']['backend']} | "
+            f"embedding: {_emb.get('model')} (device={_emb.get('device')})"
+        )
 
     engine = DiffEngine(config=cfg)
 

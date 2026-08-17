@@ -46,11 +46,7 @@ async def get_active_review():
             }
     # 再查找 done 且未确认/拒绝的（按插入逆序，取最新的）
     for task_id, task in reversed(items):
-        if (
-            task["status"] == "done"
-            and task.get("result")
-            and task_id not in _state.app.confirmed_or_rejected
-        ):
+        if task["status"] == "done" and task.get("result") and task_id not in _state.app.confirmed_or_rejected:
             old_vf = task.get("old_version_filepath", "")
             old_vf_basename = os.path.basename(old_vf) if old_vf else ""
             old_doc_filename = task.get("old_doc_filename", "")

@@ -23,9 +23,7 @@ _CACHE_DIR = os.path.join(os.path.expanduser("~"), ".simple_rag", "parse_cache")
 
 def _config_sig(config) -> str:
     """解析配置签名：切换解析后端（pymupdf/docling/...）时缓存自动失效。"""
-    return hashlib.sha256(
-        json.dumps(config or {}, sort_keys=True, ensure_ascii=False).encode("utf-8")
-    ).hexdigest()[:8]
+    return hashlib.sha256(json.dumps(config or {}, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()[:8]
 
 
 def cached_parse(filepath: str, config: dict | None = None, cache_dir: str | None = None) -> Document:

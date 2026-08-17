@@ -56,7 +56,7 @@ def test_faiss_save_load_roundtrip():
         r2 = FaissRetriever()
         r2.load(d)
         assert r2.count == 2
-        scores, indices = r2.search(np.array([[1.0, 0.0]], dtype=np.float32), top_k=1)
+        _scores, indices = r2.search(np.array([[1.0, 0.0]], dtype=np.float32), top_k=1)
         assert indices[0] == 0
 
 
@@ -66,7 +66,7 @@ def test_faiss_clear():
     assert r.count == 1
     r.clear()
     assert r.count == 0
-    scores, indices = r.search(np.array([[1.0, 0.0]], dtype=np.float32), top_k=1)
+    _scores, indices = r.search(np.array([[1.0, 0.0]], dtype=np.float32), top_k=1)
     assert len(indices) == 0
 
 

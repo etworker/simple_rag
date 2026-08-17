@@ -211,7 +211,6 @@ class DocStore:
         file_hash = self._compute_file_hash(filepath)
         doc_id = f"{doc.filename}#{file_hash[-8:].upper()}"
 
-
         # 更新段落/表格段落的 source_file 为 doc_id（保证唯一性，
         # 供 QA 引用来源以友好文件名展示，避免暴露磁盘哈希文件名）
         for p in indexable:
@@ -496,14 +495,12 @@ class DocStore:
         target = self._paragraphs[global_index]
         doc_id = target.source_file
         # 收集同文档所有段落（保持顺序）
-        doc_paras = [
-            (i, p) for i, p in enumerate(self._paragraphs) if p.source_file == doc_id
-        ]
+        doc_paras = [(i, p) for i, p in enumerate(self._paragraphs) if p.source_file == doc_id]
         if not doc_paras:
             return []
         # 定位目标在文档内的位置
         target_doc_pos = None
-        for pos, (i, p) in enumerate(doc_paras):
+        for pos, (i, _p) in enumerate(doc_paras):
             if i == global_index:
                 target_doc_pos = pos
                 break

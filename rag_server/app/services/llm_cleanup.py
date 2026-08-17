@@ -40,7 +40,7 @@ def _find_suspect_prefix(text):
         m = re.match(pat, text)
         if m:
             prefix = m.group(0)
-            rest = text[len(prefix):]
+            rest = text[len(prefix) :]
             if rest and len(rest) >= 6 and not rest.startswith(("：", ":", "。")):
                 return prefix
     return None
@@ -60,15 +60,13 @@ def clean_headers(doc, config=None):
     if not suspects:
         return doc
 
-    from llm_chat import ask_once_with_config
     from app.services.config_store import ConfigStore
 
     profile_name = cfg.get("llm_profile", "pre_review")
     llm_config = ConfigStore(config_path=cfg.get("config_path", "")).get_llm_profile(profile_name)
 
     items = chr(10).join(
-        f"{i+1}. 段首: 「{prefix}」 | 段落: {text[:80]}..."
-        for i, (p, prefix) in enumerate(suspects[:30])
+        f"{i + 1}. 段首: 「{prefix}」 | 段落: {p.text[:80]}..." for i, (p, prefix) in enumerate(suspects[:30])
     )
     prompt = (
         "你是文档解析专家。以下段落来自一份企业制度文档，段首可能混入了"
@@ -100,7 +98,7 @@ def clean_headers(doc, config=None):
         idx = int(r.get("index", 0)) - 1
         if 0 <= idx < len(suspects) and r.get("is_header", False):
             p, prefix = suspects[idx]
-            p.text = (p.text or "")[len(prefix):].lstrip()
+            p.text = (p.text or "")[len(prefix) :].lstrip()
             stripped_count += 1
 
     log.info(f"LLM 页眉清洗: 剥离 {stripped_count}/{len(suspects)} 处段首页眉残留")

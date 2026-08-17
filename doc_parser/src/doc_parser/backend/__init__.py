@@ -46,4 +46,4 @@ def extract(filepath: str, config: dict | None = None):
     return extract_pdf(filepath, config)
 
 
-__all__ = ["BACKENDS", "load_backend", "extract"]
+__all__ = ["BACKENDS", "extract", "load_backend"]

@@ -71,12 +71,12 @@ def _row_cells(df_rows: list) -> list[list[str]]:
 
 def extract_pdf_with_docling(filepath: str, config: dict | None = None):
     """使用 Docling 解析 PDF，返回 Document 对象。"""
-    from docling.document_converter import DocumentConverter, PdfFormatOption
     from docling.datamodel.pipeline_options import (
         AcceleratorDevice,
         AcceleratorOptions,
         PdfPipelineOptions,
     )
+    from docling.document_converter import DocumentConverter, PdfFormatOption
 
     from doc_parser.parser import get_extract_config
 
@@ -110,13 +110,10 @@ def extract_pdf_with_docling(filepath: str, config: dict | None = None):
     # 页数范围（docling 的 page_range 是 1-based 含端点）
     start = cfg.get("docling_start_page", None)
     end = cfg.get("docling_end_page", None)
-    if start is not None or end is not None:
-        page_range = (start or 1, end or 10**9)
-    else:
-        page_range = (1, 10**9)
+    page_range = (start or 1, end or 10**9) if start is not None or end is not None else (1, 10**9)
 
     res = conv.convert(filepath, page_range=page_range)
-    if res is None or getattr(res, "status", None) and res.status.value != "success":
+    if res is None or (getattr(res, "status", None) and res.status.value != "success"):
         raise RuntimeError(f"Docling 转换失败: {getattr(res, 'errors', 'status unknown')}")
 
     docling_doc = res.document
@@ -144,7 +141,7 @@ def extract_pdf_with_docling(filepath: str, config: dict | None = None):
             if not rows:
                 continue
             # 若首行与表头重复则去重
-            if header and rows and all(str(c).strip() == str(h).strip() for c, h in zip(rows[0], header)):
+            if header and rows and all(str(c).strip() == str(h).strip() for c, h in zip(rows[0], header, strict=False)):
                 rows = rows[1:]
             if not rows:
                 continue
@@ -248,7 +245,7 @@ def extract_pdf_with_docling(filepath: str, config: dict | None = None):
             for p in paragraphs:
                 for h in _common_sorted:
                     if p.text.startswith(h):
-                        p.text = p.text[len(h):].lstrip()
+                        p.text = p.text[len(h) :].lstrip()
                         break
             # 剥离后清空段重排
             paragraphs = [p for p in paragraphs if p.text.strip()]

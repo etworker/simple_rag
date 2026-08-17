@@ -16,8 +16,7 @@ import re
 import pdfplumber
 from loguru import logger
 
-from doc_parser.models import Document
-from doc_parser.backend.bk_pdfplumber import _assemble_line, _is_in_table_region, _words_to_lines  # noqa: F401
+from doc_parser.backend.bk_pdfplumber import _assemble_line, _is_in_table_region, _words_to_lines
 
 # ============================================================
 # 智能后端选择
@@ -110,9 +109,7 @@ def _detect_borderless_table_hint(scan, cfg=None):
     """
     table_keywords = (cfg or {}).get(
         "table_keyword_list",
-        ["序号", "名称", "描述", "风险", "措施",
-         "类别", "编号", "责任人", "频率", "要求",
-         "备注", "检查项", "标准"],
+        ["序号", "名称", "描述", "风险", "措施", "类别", "编号", "责任人", "频率", "要求", "备注", "检查项", "标准"],
     )
     keyword_hits = 0
     aligned_line_hits = 0
@@ -167,7 +164,10 @@ def select_backend(filepath, cfg):
     #    仅当"大图覆盖 + 文本仍少"同时成立才判扫描件，避免公文误走 MinerU。
     image_text_threshold = cfg.get("scan_image_text_per_page_threshold", 300)
     if scan["large_image_ratio"] > image_ratio and scan["avg_text_per_page"] < image_text_threshold:
-        return "mineru", f"疑似扫描件（大图片覆盖率 {scan['large_image_ratio']:.0%}，文本仅 {scan['avg_text_per_page']:.0f} 字/页）"
+        return (
+            "mineru",
+            f"疑似扫描件（大图片覆盖率 {scan['large_image_ratio']:.0%}，文本仅 {scan['avg_text_per_page']:.0f} 字/页）",
+        )
 
     # 3. 有绘图线但规则后端提取不到表格 → 可能无框线表格 → Docling（深度学习表格识别）
     if scan["has_drawings_no_tables"] and scan["avg_tables_per_page"] < low_table_rate:
@@ -264,11 +264,11 @@ def extract_pdf(filepath, config=None, get_config=None):
 
 
 __all__ = [
+    "_assemble_line",
+    "_detect_borderless_table_hint",
+    "_is_in_table_region",
+    "_quick_scan_pdf",
+    "_words_to_lines",
     "extract_pdf",
     "select_backend",
-    "_quick_scan_pdf",
-    "_detect_borderless_table_hint",
-    "_words_to_lines",
-    "_assemble_line",
-    "_is_in_table_region",
 ]

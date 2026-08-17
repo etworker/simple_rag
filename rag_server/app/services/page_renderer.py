@@ -57,8 +57,10 @@ def _tolerant_search_rects(pg, highlight, min_len: int = 12):
     x1 = y1 = float("-inf")
     while i < len(words) and starts[i] < end:
         w = words[i]
-        x0 = min(x0, w[0]); y0 = min(y0, w[1])
-        x1 = max(x1, w[2]); y1 = max(y1, w[3])
+        x0 = min(x0, w[0])
+        y0 = min(y0, w[1])
+        x1 = max(x1, w[2])
+        y1 = max(y1, w[3])
         i += 1
     if x1 < x0:
         return []

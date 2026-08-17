@@ -125,11 +125,7 @@ def is_tracking_table_row(
         text = getattr(change, "new_text", "") or getattr(change, "old_text", "") or ""
 
     hints_re = re.compile(tracking_hints) if tracking_hints else _TRACKING_TABLE_HINTS
-    row_re = (
-        re.compile("|".join(tracking_row_patterns), re.MULTILINE)
-        if tracking_row_patterns
-        else _TABLE_ROW_RE
-    )
+    row_re = re.compile("|".join(tracking_row_patterns), re.MULTILINE) if tracking_row_patterns else _TABLE_ROW_RE
     return bool((location and hints_re.search(location)) or (text and row_re.search(text)))
 
 

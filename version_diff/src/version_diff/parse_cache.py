@@ -30,9 +30,7 @@ def compute_sha256(filepath: str) -> str:
 
 def _config_sig(config) -> str:
     """解析配置签名（排序后哈希前 8 位）。"""
-    return hashlib.sha256(
-        json.dumps(config or {}, sort_keys=True, ensure_ascii=False).encode("utf-8")
-    ).hexdigest()[:8]
+    return hashlib.sha256(json.dumps(config or {}, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()[:8]
 
 
 def cached_parse(filepath: str, config: dict | None = None, cache_dir: str | None = None) -> Document:
@@ -46,7 +44,10 @@ def cached_parse(filepath: str, config: dict | None = None, cache_dir: str | Non
         try:
             with open(cache_path, encoding="utf-8") as f:
                 doc = Document.from_dict(json.load(f))
-            log.info(f"📦 命中解析缓存: {doc.filename} ({len(doc.paragraphs)} 段, 后端缓存 {os.path.basename(cache_path)[-16:]}")
+            log.info(
+                f"📦 命中解析缓存: {doc.filename} ({len(doc.paragraphs)} 段, "
+                f"后端缓存 {os.path.basename(cache_path)[-16:]}"
+            )
             return doc
         except Exception as e:
             log.warning(f"解析缓存加载失败，重新解析: {e}")

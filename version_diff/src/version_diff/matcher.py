@@ -106,7 +106,7 @@ def pair_paragraphs(
     emb_a_full, _ = vs.get_or_compute(file_a, paras_a, model)
 
     log.info("  📄 文档B:")
-    emb_b_full, index_b_full = vs.get_or_compute(file_b, paras_b, model)
+    emb_b_full, _index_b_full = vs.get_or_compute(file_b, paras_b, model)
 
     if not remaining_a or not remaining_b:
         return exact_pairs

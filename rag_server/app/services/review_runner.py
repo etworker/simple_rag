@@ -8,7 +8,6 @@
 import asyncio
 import copy
 import json
-import math
 import os
 import time
 
@@ -191,7 +190,6 @@ def _run_multi_compare(
     Returns:
         list[dict] — compare_groups（每项含 doc 信息 + 比较结果）
     """
-    import asyncio as _asyncio
 
     groups = []
     total = len(doc_list)
@@ -235,10 +233,14 @@ def _run_multi_compare(
         }
         groups.append(group)
 
-        step_label = f"版本差异对比" if is_version else f"内容一致性检查"
+        step_label = "版本差异对比" if is_version else "内容一致性检查"
         if on_progress:
-            on_progress("comparing", 0.2 + 0.7 * (i + 1) / max(1, total), f"[{i+1}/{total}] {step_label} vs {doc_meta.filename}...")
-        log.info(f"[{i+1}/{total}] 比较 {new_filename} vs {doc_meta.filename}（sim={sim:.3f}, {kind}）")
+            on_progress(
+                "comparing",
+                0.2 + 0.7 * (i + 1) / max(1, total),
+                f"[{i + 1}/{total}] {step_label} vs {doc_meta.filename}...",
+            )
+        log.info(f"[{i + 1}/{total}] 比较 {new_filename} vs {doc_meta.filename}（sim={sim:.3f}, {kind}）")
 
         try:
             if is_version:
@@ -261,7 +263,12 @@ def _run_multi_compare(
 
         # 完成一组：调用方推送
         if on_progress:
-            on_progress("group_done", 0.2 + 0.7 * (i + 1) / max(1, total), f"完成 {doc_meta.filename}（{len(group['version_changes'])} 变更 / {len(group['inconsistencies'])} 矛盾）")
+            on_progress(
+                "group_done",
+                0.2 + 0.7 * (i + 1) / max(1, total),
+                f"完成 {doc_meta.filename}（{len(group['version_changes'])} 变更 / "
+                f"{len(group['inconsistencies'])} 矛盾）",
+            )
 
     return groups
 
@@ -338,9 +345,7 @@ async def run_pre_review(task_id: str):
             if task["completed_steps"]:
                 task["completed_steps"][-1]["elapsed"] = round(now - step_start_time, 1)
             step_start_time = now
-            task["completed_steps"].append(
-                {"id": step, "message": msg, "started_at": now, "pct": int(pct * 100)}
-            )
+            task["completed_steps"].append({"id": step, "message": msg, "started_at": now, "pct": int(pct * 100)})
         else:
             # 同步骤进度更新：刷新 pct/消息（供前端进度条）。
             # pct 只升不降（不同调用方可能以更低 pct 重申同一阶段，如 engine 内部 parsing 0.0）
@@ -464,7 +469,7 @@ async def run_pre_review(task_id: str):
                     filepath=old_version_filepath,
                     doc_id=task.get("old_doc_filename", "旧版本"),
                 )
-                doc_list = [old_meta] + doc_list
+                doc_list = [old_meta, *doc_list]
 
         task["result"]["compare_total"] = len(doc_list)
         _bump_result()
@@ -516,7 +521,9 @@ async def run_pre_review(task_id: str):
             "n_version_groups": n_version,
             "n_conflict_groups": n_conflict,
             "n_issue_groups": n_issue,
-            "message": ("已取消" if cancelled else ("无矛盾，可安全入库" if n_issue == 0 else f"发现 {n_issue} 组存在差异/矛盾")),
+            "message": (
+                "已取消" if cancelled else ("无矛盾，可安全入库" if n_issue == 0 else f"发现 {n_issue} 组存在差异/矛盾")
+            ),
             "kb_empty": kb_empty,
             "cancelled": cancelled,
         }

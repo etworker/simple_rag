@@ -30,16 +30,16 @@ from loguru import logger
 
 logger.disable("llm_chat")  # 库默认安静：由应用入口(rag_server)或 examples 的 configure_logger() 开启
 
-from llm_chat.defaults import (
+from llm_chat.defaults import (  # noqa: E402
     BEDROCK_DEFAULTS,
     DEFAULT_BACKEND,
     DEFAULT_MODELS,
     OPENAI_DEFAULTS,
     SESSION_DEFAULTS,
 )
-from llm_chat.oneshot import ask_once, ask_once_with_config
-from llm_chat.profile import resolve_llm_config, resolve_llm_profile
-from llm_chat.session import ChatSession, Message
+from llm_chat.oneshot import ask_once, ask_once_with_config  # noqa: E402
+from llm_chat.profile import resolve_llm_config, resolve_llm_profile  # noqa: E402
+from llm_chat.session import ChatSession, Message  # noqa: E402
 
 __all__ = [
     "BEDROCK_DEFAULTS",

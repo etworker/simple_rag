@@ -7,9 +7,7 @@ doc_parser 智能后端选择 / 章节识别 / 数字断字修复测试（离线
 3. PDF 文本层数字断字（"28. 55 万小时"）后处理修复
 """
 
-import re
-
-from doc_parser._text import normalize_number_spacing, _NUM_UNIT_PREFIXES
+from doc_parser._text import _NUM_UNIT_PREFIXES, normalize_number_spacing
 from doc_parser.parser import (
     DEFAULT_CONFIG,
     _detect_chapter,
@@ -45,8 +43,12 @@ class TestDetectChapterStatNumbers:
             assert _detect_chapter(text, _cfg()) is None, f"{text!r} 不应被识别为章节"
 
     def test_real_chapters_kept(self):
-        for text, expect in (("2 职责分工", "职责分工"), ("3 网络管理", "网络管理"),
-                             ("5 附则", "附则"), ("1 修订记录", "修订记录")):
+        for text, expect in (
+            ("2 职责分工", "职责分工"),
+            ("3 网络管理", "网络管理"),
+            ("5 附则", "附则"),
+            ("1 修订记录", "修订记录"),
+        ):
             ch = _detect_chapter(text, _cfg())
             assert ch is not None, f"{text!r} 应被识别为章节"
             assert ch[1] == expect
@@ -128,7 +130,8 @@ class TestSelectBackendNotScanWhenTextRich:
                 "序号   名称   描述   风险   措施",
                 "1     名称   火灾   高     灭火",
                 "2     名称   中断   中     备用",
-            ] * 2,
+            ]
+            * 2,
         }
         monkeypatch.setattr(_pdf, "_quick_scan_pdf", lambda *a, **k: fake_scan)
         backend, reason = _pdf.select_backend("fake.pdf", _cfg())
