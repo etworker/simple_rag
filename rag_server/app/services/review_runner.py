@@ -140,6 +140,132 @@ def _run_version_compare(engine, old_version_filepath: str, new_filepath: str, o
     return {"changes": version_changes, "minor_changes": minor_changes}
 
 
+def _serialize_inconsistency(inc) -> dict:
+    """把 Inconsistency 转 dict（供前端展示）"""
+    return {
+        "point": getattr(inc, "point", ""),
+        "doc_a_file": getattr(inc, "doc_a_file", ""),
+        "doc_a_location": getattr(inc, "doc_a_location", ""),
+        "doc_a_says": getattr(inc, "doc_a_says", ""),
+        "doc_b_file": getattr(inc, "doc_b_file", ""),
+        "doc_b_location": getattr(inc, "doc_b_location", ""),
+        "doc_b_says": getattr(inc, "doc_b_says", ""),
+        "similarity": getattr(inc, "similarity", 0.0),
+    }
+
+
+def _wait_if_paused(task, timeout: float = 0.3):
+    """若任务已暂停则阻塞等待（线程内轮询 task 状态）。返回 False 表示已取消。"""
+    import time as _time
+
+    while task["status"] == "paused":
+        if task["status"] == "cancelled":
+            return False
+        _time.sleep(timeout)
+    return task["status"] != "cancelled"
+
+
+def _run_multi_compare(
+    engine,
+    new_filepath: str,
+    doc_list: list,
+    task: dict,
+    on_progress=None,
+    version_threshold: float = 0.90,
+) -> list:
+    """与库内每个文档逐一比较，返回 compare_groups 列表。
+
+    对每个已有文档 doc_meta：
+      1. 快速相似度评估（document_similarity）
+      2. >= version_threshold → 版本差异对比（version_compare）
+      3. 否则 → 矛盾检测（单文档库 pre_review）
+    每组结果追加到 compare_groups；调用方每收到一组即推送（渐进式）。
+    循环中检查 task 状态（暂停/续跑/取消）。
+
+    Args:
+        doc_list: list[DocMeta]（库内已有文档，已按 add 顺序）
+        task: review task dict（status 字段控制暂停/取消）
+        on_progress: 进度回调
+        version_threshold: 判定"疑似版本"的相似度阈值
+
+    Returns:
+        list[dict] — compare_groups（每项含 doc 信息 + 比较结果）
+    """
+    import asyncio as _asyncio
+
+    groups = []
+    total = len(doc_list)
+    new_filename = task.get("filename", "")
+
+    # 1. 快速相似度排序（渐进式披露：最接近的先对比）
+    scored = []
+    for idx, doc_meta in enumerate(doc_list):
+        if task["status"] == "cancelled":
+            break
+        try:
+            sim = engine.document_similarity(new_filepath, doc_meta.filepath)
+        except Exception as e:
+            log.warning(f"相似度评估失败 {doc_meta.filename}: {e}")
+            sim = 0.0
+        scored.append((sim, doc_meta))
+        if on_progress:
+            on_progress("scoring", 0.1 + 0.1 * (idx + 1) / max(1, total), f"评估与 {doc_meta.filename} 的相似度...")
+    scored.sort(key=lambda x: x[0], reverse=True)  # 相似度从高到低
+
+    # 2. 逐个比较
+    for i, (sim, doc_meta) in enumerate(scored):
+        if not _wait_if_paused(task):
+            break
+        if task["status"] == "cancelled":
+            break
+
+        is_version = sim >= version_threshold
+        kind = "version_diff" if is_version else "conflict"
+        group = {
+            "doc_id": doc_meta.doc_id,
+            "doc_filename": doc_meta.filename,
+            "label": doc_meta.label,
+            "file_hash": doc_meta.file_hash,
+            "similarity": round(sim, 3),
+            "compare_type": kind,
+            "version_changes": [],
+            "minor_changes": [],
+            "inconsistencies": [],
+            "status": "running",
+        }
+        groups.append(group)
+
+        step_label = f"版本差异对比" if is_version else f"内容一致性检查"
+        if on_progress:
+            on_progress("comparing", 0.2 + 0.7 * (i + 1) / max(1, total), f"[{i+1}/{total}] {step_label} vs {doc_meta.filename}...")
+        log.info(f"[{i+1}/{total}] 比较 {new_filename} vs {doc_meta.filename}（sim={sim:.3f}, {kind}）")
+
+        try:
+            if is_version:
+                vr = _run_version_compare(engine, doc_meta.filepath, new_filepath, on_progress=on_progress)
+                group["version_changes"] = vr["changes"]
+                group["minor_changes"] = vr["minor_changes"]
+            else:
+                # 单文档库：新建引擎只含 doc_meta，pre_review 只对比它
+                from version_diff import DiffEngine
+
+                sub_engine = DiffEngine(config=_build_engine_config())
+                sub_engine.add(doc_meta.filepath)
+                result = sub_engine.pre_review(new_filepath, doc_filename=new_filename)
+                group["inconsistencies"] = [_serialize_inconsistency(inc) for inc in result.inconsistencies]
+            group["status"] = "done"
+        except Exception as e:
+            log.error(f"比较失败 {doc_meta.filename}: {e}", exc_info=True)
+            group["status"] = "error"
+            group["error"] = str(e)[:200]
+
+        # 完成一组：调用方推送
+        if on_progress:
+            on_progress("group_done", 0.2 + 0.7 * (i + 1) / max(1, total), f"完成 {doc_meta.filename}（{len(group['version_changes'])} 变更 / {len(group['inconsistencies'])} 矛盾）")
+
+    return groups
+
+
 async def run_pre_review(task_id: str):
     """执行预审核（异步后台任务）"""
     await asyncio.sleep(0.5)
@@ -311,203 +437,105 @@ async def run_pre_review(task_id: str):
             """原子地递增 _result_seq，让 SSE 推送此次 result 变更"""
             task["_result_seq"] = task.get("_result_seq", 0) + 1
 
-        # ====== 版本更新快速路径：跳过跨文档矛盾检测，直接版本对比 ======
-        if is_version_update:
-            on_progress("diffing", 0.5, "版本差异对比中...")
-            task["result"] = {
-                "phase": "version_compare",
-                "is_safe": True,
-                "new_filename": task["filename"],
-                "inconsistencies": [],
-                "total_candidates": 0,
-                "rule_filtered": 0,
-                "llm_judged": 0,
-                "message": "正在对比版本差异...",
-                "version_changes": [],
-                "minor_changes": [],
-                "has_version_changes": False,
-                "has_minor_changes": False,
-                "kb_empty": False,
-                "is_version_update": True,
-                "old_doc_filename": task.get("old_doc_filename", ""),
-            }
-            _bump_result()
-
-            version_compare_result = _run_version_compare(engine, old_version_filepath, filepath, on_progress=on_progress)
-
-            task["progress"] = 100
-            task["current_step"] = "版本对比完成"
-            task["status"] = "done"
-            n_changes = len(version_compare_result["changes"])
-            task["result"] = {
-                "phase": "done",
-                "is_safe": True,
-                "new_filename": task["filename"],
-                "inconsistencies": [],
-                "total_candidates": 0,
-                "rule_filtered": 0,
-                "llm_judged": 0,
-                "message": f"版本对比完成：{n_changes} 处实质性变更",
-                "version_changes": version_compare_result["changes"],
-                "minor_changes": version_compare_result["minor_changes"],
-                "has_version_changes": n_changes > 0,
-                "has_minor_changes": len(version_compare_result["minor_changes"]) > 0,
-                "kb_empty": False,
-                "is_version_update": True,
-                "old_doc_filename": task.get("old_doc_filename", ""),
-                "no_candidates": False,
-            }
-            _bump_result()
-            _state.app.save_review_cache()
-
-            # 写入预审核结果缓存
-            try:
-                doc_sig = _compute_doc_signature()
-                cache_data = {
-                    "result": task["result"],
-                    "parsed_paragraphs": task.get("parsed_paragraphs", []),
-                    "filename": task["filename"],
-                    "cached_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-                    "doc_signature": doc_sig,
-                }
-                with open(cached_result_path, "w", encoding="utf-8") as _f:
-                    json.dump(cache_data, _f, ensure_ascii=False)
-                log.info(f"💾 已缓存版本对比结果: {task['filename']} (SHA256={file_md5[-8:].upper()})")
-            except Exception as e:
-                log.warning(f"版本对比结果缓存写入失败: {e}")
-            return
-
-        # ====== 正常流程：跨文档矛盾检测 ======
-        # 初始化 result 结构（前端可据此渲染"等待中"状态）
+        # ====== 统一流程：与库内每个文档逐一比较（渐进式披露）======
+        # 结果结构 compare_groups：每组对应"新文档 vs 库内某文档"，
+        # 相似度 >= 阈值 → 版本差异对比；否则 → 内容一致性检查。
+        # 每完成一组即推送（前端逐步显示 fold），支持暂停/续跑/取消。
         task["result"] = {
-            "phase": "embedding",
+            "phase": "scoring",
             "is_safe": True,
             "new_filename": task["filename"],
-            "inconsistencies": [],
-            "total_candidates": 0,
-            "diff_items": 0,
-            "rule_filtered": 0,
-            "llm_judged": 0,
-            "judge_total_batches": 0,
-            "judge_current_batch": 0,
-            "last_batch_new_count": 0,
-            "message": "正在处理...",
+            "compare_groups": [],
+            "compare_total": 0,
+            "compare_done": 0,
+            "message": "正在评估与库内文档的相似度...",
         }
         _bump_result()
 
-        def on_candidates(cand_count: int, diff_count: int):
-            """候选对检索完成后调用 — 前端立即显示 N 个候选 + 预估批次"""
-            # 预估 batch 数量（与 filter_diffs 内部逻辑保持一致）
-            bs = engine.config.llm.get("batch_size", 5) or 5
-            est_batches = max(1, math.ceil(diff_count / bs)) if diff_count > 0 else 0
-            task["result"]["phase"] = "candidates_ready"
-            task["result"]["total_candidates"] = cand_count
-            task["result"]["diff_items"] = diff_count
-            task["result"]["judge_total_batches"] = est_batches
-            task["result"]["message"] = (
-                f"发现 {cand_count} 个相似候选对，{diff_count} 处文本差异，开始 LLM 判定（约 {est_batches} 批）..."
-            )
-            _bump_result()
-            log.info(f"  增量推送: 候选就绪 {cand_count} 候选, {diff_count} 差异")
+        # 库内已有文档列表（含同名旧版，作为一组参与比较）
+        doc_list = _state.app.doc_store.list_documents()
+        if old_version_filepath and os.path.exists(old_version_filepath):
+            has_old = any(d.filepath == old_version_filepath for d in doc_list)
+            if not has_old:
+                from app.services.doc_store import DocMeta
 
-        def on_judge_batch(batch_idx: int, total_batches: int, new_dicts: list):
-            """每批 LLM 完成后调用 — 增量追加到 inconsistencies"""
+                old_meta = DocMeta(
+                    filename=task.get("old_doc_filename", "旧版本"),
+                    filepath=old_version_filepath,
+                    doc_id=task.get("old_doc_filename", "旧版本"),
+                )
+                doc_list = [old_meta] + doc_list
+
+        task["result"]["compare_total"] = len(doc_list)
+        _bump_result()
+
+        def _on_group_progress(step, percent, message):
+            """逐文档比较进度回调：更新 result 并推送（渐进式）"""
             r = task["result"]
-            r["phase"] = "judging"
-            r["inconsistencies"].extend(new_dicts)
-            r["judge_current_batch"] = batch_idx + 1
-            r["judge_total_batches"] = total_batches
-            r["last_batch_new_count"] = len(new_dicts)
-            r["llm_judged"] = r.get("llm_judged", 0) + len(new_dicts)
-            cur_count = len(r["inconsistencies"])
-            if cur_count > 0:
-                r["message"] = f"LLM 判定中... 已发现 {cur_count} 处矛盾（batch {batch_idx + 1}/{total_batches}）"
-            else:
-                r["message"] = f"LLM 判定中... 暂无矛盾（batch {batch_idx + 1}/{total_batches}）"
-            r["is_safe"] = cur_count == 0
+            r["phase"] = step if step in ("scoring", "comparing", "group_done") else r.get("phase", "comparing")
+            r["progress"] = round(percent * 100)
+            r["message"] = message
+            if step == "group_done":
+                r["compare_done"] = r.get("compare_done", 0) + 1
+            task["progress"] = max(task.get("progress", 0), round(percent * 100))
+            on_progress(step, percent, message)
             _bump_result()
+            log.info(f"  增量推送: {message}")
 
-        result = await asyncio.to_thread(
-            engine.pre_review,
+        _thr = float(
+            _state.app.config.get_section("pre_review").get("version_similarity_threshold", 0.90)
+            if _state.app and _state.app.config
+            else 0.90
+        )
+        compare_groups = await asyncio.to_thread(
+            _run_multi_compare,
+            engine,
             filepath,
-            on_progress=on_progress,
-            doc_filename=task["filename"],
-            on_candidates=on_candidates,
-            on_judge_batch=on_judge_batch,
+            doc_list,
+            task,
+            on_progress=_on_group_progress,
+            version_threshold=_thr,
         )
 
-        # 确认知识库是否为空（前面已预判，这里用引擎返回值交叉验证）
-        # kb_empty 已在加载已有文档后赋值，引擎空库时返回空 DiffResult 与之一致
-
-        # ====== 3. 版本对比（如果存在旧版本文档）======
-        # 注意：版本更新场景已在上面快速路径中处理，不会走到这里
-        old_version_filepath = task.get("old_version_filepath", "")
-
-        # 如果有旧版本文档，先推送"版本对比进行中"状态给前端
-        if old_version_filepath and os.path.exists(old_version_filepath):
-            task["result"] = {
-                "phase": "version_compare",
-                "is_safe": result.is_safe,
-                "new_filename": task["filename"],
-                "inconsistencies": [
-                    {
-                        "point": inc.point,
-                        "doc_a_file": inc.doc_a_file,
-                        "doc_a_location": inc.doc_a_location,
-                        "doc_a_says": inc.doc_a_says,
-                        "doc_b_file": inc.doc_b_file,
-                        "doc_b_location": inc.doc_b_location,
-                        "doc_b_says": inc.doc_b_says,
-                    }
-                    for inc in result.inconsistencies
-                ],
-                "total_candidates": result.total_candidates,
-                "rule_filtered": result.rule_filtered,
-                "llm_judged": result.llm_judged,
-                "message": "内容矛盾判定完成，正在识别版本差异，请稍候...",
-                "version_changes": [],
-                "minor_changes": [],
-                "has_version_changes": False,
-                "has_minor_changes": False,
-                "kb_empty": kb_empty,
-                "no_candidates": (not kb_empty and result.total_candidates == 0 and result.llm_judged == 0),
-            }
-            _bump_result()
-            log.info("内容矛盾判定完成，开始版本对比...")
-
-        version_compare_result = _run_version_compare(engine, old_version_filepath, filepath, on_progress=on_progress)
-
-        task["progress"] = 100
-        task["current_step"] = "预审核完成"
-        task["status"] = "done"
+        n_version = sum(1 for g in compare_groups if g["compare_type"] == "version_diff")
+        n_conflict = sum(1 for g in compare_groups if g["compare_type"] == "conflict")
+        n_issue = sum(
+            1 for g in compare_groups if len(g.get("version_changes", [])) > 0 or len(g.get("inconsistencies", [])) > 0
+        )
+        cancelled = task.get("status") == "cancelled"
+        task["progress"] = 100 if not cancelled else task.get("progress", 0)
+        task["current_step"] = "已取消" if cancelled else "预审核完成"
+        task["status"] = "cancelled" if cancelled else "done"
         task["result"] = {
             "phase": "done",
-            "is_safe": result.is_safe,
+            "is_safe": n_issue == 0,
             "new_filename": task["filename"],
-            "inconsistencies": [
-                {
-                    "point": inc.point,
-                    "doc_a_file": inc.doc_a_file,
-                    "doc_a_location": inc.doc_a_location,
-                    "doc_a_says": inc.doc_a_says,
-                    "doc_b_file": inc.doc_b_file,
-                    "doc_b_location": inc.doc_b_location,
-                    "doc_b_says": inc.doc_b_says,
-                }
-                for inc in result.inconsistencies
-            ],
-            "total_candidates": result.total_candidates,
-            "rule_filtered": result.rule_filtered,
-            "llm_judged": result.llm_judged,
-            "message": "无矛盾，可安全入库" if result.is_safe else f"发现 {len(result.inconsistencies)} 处矛盾",
-            "version_changes": version_compare_result["changes"],
-            "minor_changes": version_compare_result["minor_changes"],
-            "has_version_changes": len(version_compare_result["changes"]) > 0,
-            "has_minor_changes": len(version_compare_result["minor_changes"]) > 0,
+            "compare_groups": compare_groups,
+            "compare_total": len(compare_groups),
+            "compare_done": len(compare_groups),
+            "n_version_groups": n_version,
+            "n_conflict_groups": n_conflict,
+            "n_issue_groups": n_issue,
+            "message": ("已取消" if cancelled else ("无矛盾，可安全入库" if n_issue == 0 else f"发现 {n_issue} 组存在差异/矛盾")),
             "kb_empty": kb_empty,
-            "no_candidates": (not kb_empty and result.total_candidates == 0 and result.llm_judged == 0),
+            "cancelled": cancelled,
         }
         _state.app.save_review_cache()
+
+        try:
+            doc_sig = _compute_doc_signature()
+            cache_data = {
+                "result": task["result"],
+                "parsed_paragraphs": task.get("parsed_paragraphs", []),
+                "filename": task["filename"],
+                "cached_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                "doc_signature": doc_sig,
+            }
+            with open(cached_result_path, "w", encoding="utf-8") as _f:
+                json.dump(cache_data, _f, ensure_ascii=False)
+            log.info(f"💾 已缓存预审核结果: {task['filename']} (SHA256={file_md5[-8:].upper()})")
+        except Exception as e:
+            log.warning(f"预审核结果缓存写入失败: {e}")
 
         # 写入预审核结果缓存
         try:

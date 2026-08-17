@@ -187,6 +187,11 @@
         /* === 版本差异列表条目 === */
         .version-diff-item { padding: 10px 12px; border: 1px solid #eee; border-radius: var(--radius); margin-bottom: 6px; background: var(--card); cursor: pointer; transition: all 0.15s; }
         .version-diff-item:hover { border-color: var(--primary); background: var(--primary-bg); }
+        .compare-group { margin-bottom: 8px; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+        .compare-group-title { display: flex; align-items: center; gap: 6px; padding: 8px 10px; background: var(--bg2); cursor: pointer; font-size: 12px; font-weight: 600; }
+        .compare-group-title:hover { background: var(--primary-bg); }
+        .compare-group-body { padding: 6px 8px; background: var(--card); }
+        .compare-group-body .version-diff-item, .compare-group-body .conflict-item { margin-bottom: 4px; }
         .version-diff-item.selected { border-color: var(--primary); background: var(--primary-bg); box-shadow: 0 0 0 2px rgba(22,119,255,0.15); }
         .version-diff-item .vd-header { display: flex; align-items: center; gap: 6px; font-size: 12px; margin-bottom: 4px; }
         .vd-type { font-weight: 600; min-width: 56px; }

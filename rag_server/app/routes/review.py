@@ -73,13 +73,41 @@ async def cancel_review(task_id: str):
     if task_id not in _state.app.review_tasks:
         raise HTTPException(status_code=404, detail="任务不存在")
     task = _state.app.review_tasks[task_id]
-    if task["status"] in ("pending", "running"):
+    if task["status"] in ("pending", "running", "paused"):
         task["status"] = "cancelled"
         task["current_step"] = "已取消"
         if os.path.exists(task["filepath"]):
             os.remove(task["filepath"])
         return {"message": "已取消"}
     return {"message": "任务已结束，无法取消"}
+
+
+@router.post("/review/{task_id}/pause")
+async def pause_review(task_id: str):
+    """暂停正在进行的预审核（逐文档比较循环中生效）"""
+    if task_id not in _state.app.review_tasks:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    task = _state.app.review_tasks[task_id]
+    if task["status"] == "running":
+        task["status"] = "paused"
+        task["current_step"] = "已暂停（点击续跑继续）"
+        _state.app.save_review_cache()
+        return {"message": "已暂停"}
+    return {"message": f"当前状态无法暂停（{task['status']}）"}
+
+
+@router.post("/review/{task_id}/resume")
+async def resume_review(task_id: str):
+    """续跑已暂停的预审核"""
+    if task_id not in _state.app.review_tasks:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    task = _state.app.review_tasks[task_id]
+    if task["status"] == "paused":
+        task["status"] = "running"
+        task["current_step"] = "继续检测中..."
+        _state.app.save_review_cache()
+        return {"message": "已续跑"}
+    return {"message": f"当前状态无法续跑（{task['status']}）"}
 
 
 @router.post("/upload")

@@ -483,6 +483,47 @@ class DiffEngine:
         nf = CrossNoiseFilter(cfg)
         return nf.filter_changes(changes)
 
+    def document_similarity(self, filepath_a: str, filepath_b: str) -> float:
+        """快速评估两文档的整体相似度（0~1），用于比较排序与类型分流。
+
+        算法：两文档段落向量的平均余弦相似度（取每段在对方文档中的最近邻
+        相似度的均值）。仅用向量，不跑 LLM——供"与库内每文档比较"的
+        渐进式流程做排序（相似度高的先对比）。
+        """
+        from version_diff.parse_cache import cached_parse
+
+        model = self._get_model()
+        parse_config = self.config.embedding.get("parse_config")
+
+        def _embed(path):
+            doc = cached_parse(path, config=parse_config, cache_dir=self._parse_cache_dir)
+            embs, _ = self._vector_store.get_or_compute(doc.filename, doc.paragraphs, model)
+            return embs, doc
+
+        embs_a, doc_a = _embed(filepath_a)
+        embs_b, doc_b = _embed(filepath_b)
+        if len(embs_a) == 0 or len(embs_b) == 0:
+            return 0.0
+
+        # 双向最近邻平均相似度（归一化向量内积 = 余弦）
+        import numpy as _np
+
+        embs_a = _np.asarray(embs_a, dtype=_np.float32)
+        embs_b = _np.asarray(embs_b, dtype=_np.float32)
+        norms_a = _np.linalg.norm(embs_a, axis=1, keepdims=True)
+        norms_b = _np.linalg.norm(embs_b, axis=1, keepdims=True)
+        norms_a[norms_a == 0] = 1
+        norms_b[norms_b == 0] = 1
+        embs_a = embs_a / norms_a
+        embs_b = embs_b / norms_b
+
+        # 采样（文档段落多时避免 O(n^2) 全算）
+        sample_a = embs_a[: min(200, len(embs_a))]
+        sample_b = embs_b[: min(200, len(embs_b))]
+        sim_ab = (sample_a @ sample_b.T).max(axis=1).mean()
+        sim_ba = (sample_b @ sample_a.T).max(axis=1).mean()
+        return float((sim_ab + sim_ba) / 2)
+
     def version_compare(
         self, old_filepath: str, new_filepath: str, on_progress: Callable | None = None
     ) -> VersionDiffResult:

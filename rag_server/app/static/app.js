@@ -450,8 +450,9 @@ function switchKbTab(tab){
 
 function showReviewTab(){
 document.getElementById('reviewTabBtn').style.display='';
-const n=reviewResult?reviewResult.inconsistencies.length:0;
-const vc=reviewResult?reviewResult.version_changes.length:0;
+const groups=reviewResult&&reviewResult.compare_groups?reviewResult.compare_groups:[];
+let n=0, vc=0;
+groups.forEach(g=>{ if(g.compare_type==='version_diff') vc+=(g.version_changes||[]).length; else n+=(g.inconsistencies||[]).length; });
 let label='预审核';
 if(n>0||vc>0) label=`预审核 (${n}矛盾+${vc}变更)`;
 document.getElementById('reviewTabBtn').textContent=`⚠️ ${label}`;
@@ -544,8 +545,9 @@ function connectSSE(taskId){
                 if(d.old_version_filepath) reviewResult.old_version_filepath = d.old_version_filepath;
                 if(d.old_doc_filename) reviewResult.old_doc_filename = d.old_doc_filename;
                 document.getElementById('stepArea').classList.remove('show');
-                const n=d.result.inconsistencies?d.result.inconsistencies.length:0;
-                const vc=d.result.version_changes?d.result.version_changes.length:0;
+                const groups=d.result.compare_groups||[];
+                let n=0, vc=0;
+                groups.forEach(g=>{ if(g.compare_type==='version_diff') vc+=(g.version_changes||[]).length; else n+=(g.inconsistencies||[]).length; });
                 let btnText='';
                 if(n>0) btnText+=`⚠️ ${n} 处内容矛盾`;
                 if(vc>0) btnText+=`${n>0?'，':''}📝 ${vc} 处版本变更`;
@@ -608,164 +610,202 @@ function cancelUpload(){
 // ============================================================
 // 预审核结果面板（支持增量实时渲染）
 // ============================================================
-function buildReviewPanel(){
-const r=reviewResult;if(!r)return;
-const items=r.inconsistencies||[];
-const vChanges=r.version_changes||[];
-const mChanges=r.minor_changes||[];
-const phase = r.phase || 'done';  // 增量推送：candidates_ready / judging / done
-const oldVf = r.old_version_filepath || '';
-const oldDocName = r.old_doc_filename || oldVf || '';
-
-// ====== 当 phase≠done 时，显示"判定中"横幅（脉冲动画 + batch 进度） ======
-let judgingBanner='';
-if(r.phase && r.phase!=='done'){
-    const cur=r.judge_current_batch||0;
-    const tot=r.judge_total_batches||0;
-    const batchInfo=tot>0?` batch ${cur}/${tot}`:'';
-    const lastNew=r.last_batch_new_count||0;
-    const pulseColor = r.phase==='candidates_ready' ? 'var(--primary)' : r.phase==='version_compare' ? '#722ed1' : 'var(--warn)';
-    const icon = r.phase==='candidates_ready' ? '🔍' : r.phase==='version_compare' ? '📝' : '🧠';
-    const label = r.phase==='candidates_ready' ? '检索完成' : r.phase==='version_compare' ? '版本差异识别中' : 'LLM 判定中';
-    judgingBanner=`<div class="judging-banner" style="padding:8px 10px;margin-bottom:8px;border-radius:4px;font-size:12px;display:flex;align-items:center;gap:8px;background:rgba(255,170,0,0.08);">`;
-    judgingBanner+=`<span class="pulse-dot" style="width:8px;height:8px;background:${pulseColor};border-radius:50%;animation:pulse 1s infinite;display:inline-block;"></span>`;
-    judgingBanner+=`<span><b>${icon} ${label}</b>${batchInfo}`;
-    if(items.length>0) judgingBanner+=` — 已发现 <b>${items.length}</b> 处矛盾`;
-    if(lastNew>0 && r.phase==='judging') judgingBanner+=` <span style="color:var(--text3);font-size:10px;">(+${lastNew})</span>`;
-    if(r.phase==='version_compare') judgingBanner+=` <span style="color:var(--text3);font-size:10px;">（内容矛盾判定已完成，正在对比新旧版本差异，请稍候...）</span>`;
-    judgingBanner+=`</span></div>`;
+function pauseReview(){
+    if(!reviewTaskId)return;
+    fetch(`/api/documents/review/${reviewTaskId}/pause`,{method:'POST'}).then(r=>r.json()).then(d=>{
+        if(reviewResult)reviewResult.status='paused';
+        buildReviewPanel();
+    });
+}
+function resumeReview(){
+    if(!reviewTaskId)return;
+    fetch(`/api/documents/review/${reviewTaskId}/resume`,{method:'POST'}).then(r=>r.json()).then(d=>{
+        if(reviewResult)reviewResult.status='running';
+        buildReviewPanel();
+    });
+}
+function cancelReviewWithConfirm(){
+    if(!reviewTaskId)return;
+    if(!confirm('确定要中断本次文档检测吗？已完成的对比结果会保留，未完成的将丢弃。'))return;
+    fetch(`/api/documents/review/${reviewTaskId}/cancel`,{method:'POST'}).then(r=>r.json()).then(d=>{
+        if(reviewResult)reviewResult.status='cancelled';
+        buildReviewPanel();
+    });
 }
 
-// info 区：partial 时显示动态 message；done 时显示静态汇总
+function buildReviewPanel(){
+const r=reviewResult;if(!r)return;
+const groups=r.compare_groups||[];
+const phase = r.phase || 'done';
+const compareTotal = r.compare_total || groups.length;
+const compareDone = r.compare_done || (phase==='done'?groups.length:0);
+const newDocName = newDocFile || r.new_filename || '';
+
+// ====== 进行中：进度条 + 动态 message ======
+let progressHtml='';
+if(phase!=='done'){
+    const pct = compareTotal>0 ? Math.round(compareDone/compareTotal*100) : 0;
+    const progressColor = r.phase==='scoring' ? 'var(--primary)' : '#722ed1';
+    const icon = r.phase==='scoring' ? '🔍' : r.phase==='comparing' ? '🔁' : '🧠';
+    const label = r.phase==='scoring' ? '评估相似度' : r.phase==='comparing' ? '逐文档比较中' : '处理中';
+    const statusTag = r.status==='paused' ? '<span style="color:var(--warn);font-weight:700;">⏸ 已暂停</span>' : '';
+    progressHtml=`<div class="judging-banner" style="padding:8px 10px;margin-bottom:8px;border-radius:4px;font-size:12px;background:rgba(114,46,209,0.06);">`;
+    progressHtml+=`<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;"><span class="pulse-dot" style="width:8px;height:8px;background:${progressColor};border-radius:50%;animation:pulse 1s infinite;display:inline-block;"></span><b>${icon} ${label}</b> <span style="color:var(--text3);">${compareDone}/${compareTotal} 组</span> ${statusTag}</div>`;
+    progressHtml+=`<div style="height:6px;background:#eee;border-radius:3px;overflow:hidden;"><div style="height:100%;width:${pct}%;background:${progressColor};transition:width .4s;"></div></div>`;
+    progressHtml+=`<div style="margin-top:4px;color:var(--text3);font-size:11px;">${esc(r.message||'处理中...')}</div>`;
+    progressHtml+=`</div>`;
+} else if(groups.length===0){
+    if(r.kb_empty){ progressHtml='<div style="padding:20px;text-align:center;color:var(--text3);">📭 首篇文档，无对比对象，可入库</div>'; }
+    else { progressHtml='<div style="padding:20px;text-align:center;color:var(--text3);">✅ 预审核通过，未发现矛盾或版本差异</div>'; }
+}
+
+// ====== 控制按钮（进行中：暂停/续跑/取消） ======
+let controlsHtml='';
+if(phase!=='done'){
+    const paused = r.status==='paused';
+    controlsHtml='<div class="review-controls" style="margin-bottom:8px;display:flex;gap:6px;">';
+    controlsHtml+=paused
+        ? `<button onclick="resumeReview()" style="padding:4px 12px;border-radius:4px;border:1px solid var(--primary);background:var(--primary);color:#fff;font-size:11px;cursor:pointer;">▶ 续跑</button>`
+        : `<button onclick="pauseReview()" style="padding:4px 12px;border-radius:4px;border:1px solid var(--warn);background:none;color:var(--warn);font-size:11px;cursor:pointer;">⏸ 暂停</button>`;
+    controlsHtml+=`<button onclick="cancelReviewWithConfirm()" style="padding:4px 12px;border-radius:4px;border:1px solid var(--danger);background:none;color:var(--danger);font-size:11px;cursor:pointer;">✕ 中断</button>`;
+    controlsHtml+='</div>';
+}
+
+// ====== 分组 fold（compare_groups） ======
+let groupsHtml='';
+if(groups.length>0){
+    groupsHtml='<div class="compare-groups">';
+    groups.forEach((g,gi)=>{
+        const changes = g.version_changes||[];
+        const minor = g.minor_changes||[];
+        const incons = g.inconsistencies||[];
+        const isVersion = g.compare_type==='version_diff';
+        const typeBadge = isVersion
+            ? `<span class="badge badge-primary">📝 版本差异 ${changes.length}</span>`
+            : `<span class="badge badge-warn">⚠️ 内容检查 ${incons.length}</span>`;
+        const gHash = g.file_hash ? '#'+g.file_hash.slice(-8).toUpperCase() : '';
+        const simTag = g.similarity!==undefined ? `<span style="color:var(--text3);font-size:10px;">相似度 ${(g.similarity*100).toFixed(0)}%</span>` : '';
+        const statusIcon = g.status==='done' ? '✅' : g.status==='error' ? '❌' : '⏳';
+        const itemCount = isVersion ? changes.length : incons.length;
+        groupsHtml+=`<div class="compare-group" data-gi="${gi}">`;
+        groupsHtml+=`<div class="compare-group-title" onclick="toggleCompareGroup(${gi})">`;
+        groupsHtml+=`<span class="cg-caret" style="display:inline-block;transition:transform .2s;">▶</span>`;
+        groupsHtml+=`<span class="src-id">${docMap[g.doc_id]||('B'+(gi+1))}</span>`;
+        groupsHtml+=`<span class="src-file">${esc(g.doc_filename||'')}</span>`;
+        groupsHtml+=gHash?` <span class="src-file-hash">${esc(gHash)}</span>`:'';
+        groupsHtml+=g.label?` <span class="doc-label-tag">${esc(g.label)}</span>`:'';
+        groupsHtml+=` ${typeBadge} ${simTag} <span style="color:var(--text3);font-size:10px;">${statusIcon}</span>`;
+        groupsHtml+=`</div>`;
+        groupsHtml+=`<div class="compare-group-body" style="display:none;">`;
+        if(g.error){ groupsHtml+=`<div style="padding:8px;color:var(--danger);font-size:11px;">${esc(g.error)}</div>`; }
+        if(isVersion){
+            if(changes.length===0 && minor.length===0 && g.status==='done'){
+                groupsHtml+='<div style="padding:8px;color:var(--text3);font-size:11px;">无实质性差异</div>';
+            }
+            changes.forEach((c,ci)=>{
+                const icon=c.type==='modified'?'✏️':c.type==='added'?'➕':'➖';
+                const tl=c.type==='modified'?'修改':c.type==='added'?'新增':'删除';
+                groupsHtml+=`<div class="version-diff-item" onclick="showGroupVersionDiff(${gi},${ci})" data-gi="${gi}" data-ci="${ci}">`;
+                groupsHtml+=`<div class="vd-header"><span class="vd-type">${icon} ${tl}</span><span class="vd-loc">${esc(c.location||'')}</span><span class="vd-summary">${esc(c.summary||'')}</span></div>`;
+                groupsHtml+=`</div>`;
+            });
+        } else {
+            if(incons.length===0 && g.status==='done'){
+                groupsHtml+='<div style="padding:8px;color:var(--text3);font-size:11px;">未发现矛盾</div>';
+            }
+            incons.forEach((inc,ci)=>{
+                groupsHtml+=`<div class="conflict-item" style="cursor:pointer;" onclick="showGroupConflict(${gi},${ci})">`;
+                groupsHtml+=`<div class="title">${esc(inc.point||'内容差异')}</div>`;
+                groupsHtml+=`<div class="desc"><span style="color:var(--primary);">新:</span> ${esc((inc.doc_a_says||'').slice(0,100))}`;
+                groupsHtml+=`<br><span style="color:var(--warn);">旧:</span> ${esc((inc.doc_b_says||'').slice(0,100))}</div>`;
+                groupsHtml+=`</div>`;
+            });
+        }
+        groupsHtml+=`</div></div>`;
+    });
+    groupsHtml+='</div>';
+}
+
+// info 汇总
 let infoText='';
 if(phase!=='done'){
     infoText = r.message || '处理中...';
-    infoText+=`　（新文档: ${esc(newDocFile||'')}${oldDocName?` vs 旧版 ${esc(oldDocName)}`:''}）`;
+    infoText+=`　（新文档: ${esc(newDocName)}）`;
 } else {
-    if(items.length>0) infoText+=`⚠️ 发现 ${items.length} 处内容矛盾`;
-    if(vChanges.length>0){
-        infoText+=(infoText?'，':'');
-        infoText+=`检测到 ${vChanges.length} 处版本更新`;
-    }
-    if(mChanges.length>0){
-        infoText+=(infoText?'，':'');
-        infoText+=`${mChanges.length} 处细微变更已自动过滤`;
-    }
-    if(!infoText){
-        if(r.kb_empty){
-            infoText='📭 知识库为空，无需对比';
-        } else if(r.no_candidates){
-            infoText='📭 未检索到相似候选段落，无需 LLM 判定';
-        } else {
-            infoText='✅ 未发现内容矛盾，可安全入库';
-        }
-    }
-    // 在括号里追加诊断信息：总候选数、过滤数、版本对比结果
-    const diag=[];
-    if(r.total_candidates>0) diag.push(`检索到 ${r.total_candidates} 个候选`);
-    if(r.rule_filtered>0) diag.push(`规则预过滤 ${r.rule_filtered} 个`);
-    infoText+=`　（新文档: ${esc(newDocFile||'')}${oldDocName?` vs 旧版 ${esc(oldDocName)}`:''}${diag.length?` · ${diag.join('，')}`:''})`;
+    const nIssue = r.n_issue_groups || 0;
+    if(r.cancelled){ infoText='⏹ 已中断'; }
+    else if(nIssue>0){ infoText=`⚠️ 共 ${nIssue} 组存在差异/矛盾（${r.n_version_groups||0} 组版本差异 + ${r.n_conflict_groups||0} 组内容检查）`; }
+    else if(r.kb_empty){ infoText='📭 首篇文档，无对比对象，可入库'; }
+    else { infoText='✅ 未发现内容矛盾，可安全入库'; }
+    infoText+=`　（新文档: ${esc(newDocName)}）`;
 }
 document.getElementById('reviewInfo').textContent=infoText;
-
-// 按 point 去重合并（同一矛盾事项可能有多条记录）
-const merged={};
-items.forEach(c=>{
-const key=c.point||'未知';
-if(!merged[key])merged[key]={point:c.point,count:0,entries:[]};
-merged[key].count++;
-merged[key].entries.push(c);
-});
-const mergedItems=Object.values(merged);
-
-let html=judgingBanner||'';
-let idx=0;
-
-// ====== 章节 1：跨文档矛盾（与知识库中已有文档的表述冲突） ======
-if(mergedItems.length>0){
-    html+=`<div style="font-weight:600;font-size:12px;margin-bottom:6px;padding:6px 8px;background:rgba(255,170,0,0.08);border-radius:4px;">⚠️ 内容矛盾 — 新文档与知识库中已有文档的表述存在冲突（共 ${mergedItems.length} 处）</div>`;
-}
-mergedItems.forEach(m=>{
-idx++;
-const first=m.entries[0];
-// A 侧 N（新文档）
-const aSays=(first.doc_a?.says||first.doc_a_says||'').slice(0,100);
-// B 侧（已有文档 B1/B2）
-const bFileRaw=first.doc_b?.file||first.doc_b_file||'';
-const bFile=resolveFileName(bFileRaw)||'?';
-const bSays=(first.doc_b?.says||first.doc_b_says||'').slice(0,100);
-
-html+=`<div class="conflict-item" onclick="selectConflict(${idx-1})">`;
-html+=`<div class="title">#${idx} ${esc(m.point)} <span class="badge badge-primary">N 新文档</span> vs <span class="badge badge-warn">${esc(bFile)}</span>`;
-if(m.count>1)html+=` <span style="color:var(--text3);font-size:10px;">（${m.count}处）</span>`;
-html+=`</div>`;
-html+=`<div class="desc"><span style="color:var(--primary);">N:</span> ${esc(aSays)}${aSays.length>=100?'…':''}`;
-html+=`<br><span style="color:var(--warn);">${esc(bFile)}:</span> ${esc(bSays)}${bSays.length>=100?'…':''}`;
-if(m.count>1)html+=`<br><span style="color:var(--text3);font-size:10px;">共 ${m.count} 处差异，点击展开详情</span>`;
-html+=`</div></div>`;
-});
-
-// ====== 章节 2：版本更新（新旧文档间的段落/表格差异） ======
-if(vChanges.length>0){
-    const oldName = resolveFileName(oldDocName) || '旧版';
-    html+=`<div class="version-diff-section" style="margin-top:12px;padding-top:10px;border-top:1px solid var(--border);">`;
-    html+=`<div style="font-weight:600;font-size:12px;margin-bottom:6px;padding:6px 8px;background:rgba(80,180,255,0.08);border-radius:4px;">📝 版本更新 — 新文档相对于旧版「${esc(oldName)}」的段落/表格变化（共 ${vChanges.length} 项）</div>`;
-    vChanges.forEach((c,i)=>{
-        const icon=c.type==='modified'?'✏️':c.type==='added'?'➕':'➖';
-        const typeLabel=c.type==='modified'?'修改':c.type==='added'?'新增':'删除';
-        const summary=c.summary?esc(c.summary):'（无摘要）';
-        const oldText = c.old_text||'';
-        const newText = c.new_text||'';
-        html+=`<div class="version-diff-item" onclick="showVersionDiff(${i})" data-idx="${i}">`;
-        html+=`<div class="vd-header"><span class="vd-type">${icon} ${typeLabel}</span><span class="vd-loc">${esc(c.location||'')}</span><span class="vd-summary">${summary}</span></div>`;
-        html+=`<div class="vd-body">`;
-        if(c.old_text){
-            html+=`<div class="vd-old"><span class="vd-label">旧:</span><span class="vd-text">${diffMark(newText, oldText, 'b')}</span></div>`;
-        }
-        if(c.new_text){
-            html+=`<div class="vd-new"><span class="vd-label">新:</span><span class="vd-text">${diffMark(newText, oldText, 'a')}</span></div>`;
-        }
-        html+=`</div></div>`;
-    });
-    html+='<div class="vd-hint" style="margin-top:6px;font-size:11px;color:var(--text3);">💡 点击某条差异可在右侧预览两个文档的对应位置</div>';
-    html+=`</div>`;
-
-    // ====== 章节 2b：细微变更（已过滤的跟踪表/修订日期/编号差异） ======
-    if(mChanges.length>0){
-        html+=`<div class="version-diff-minor" style="margin-top:8px;padding-top:8px;border-top:1px dashed var(--border);">`;
-        html+=`<div class="minor-toggle" onclick="const lst=this.nextElementSibling;const arrow=this.querySelector('.minor-arrow');if(lst.style.display==='none'){lst.style.display='';arrow.style.transform='';}else{lst.style.display='none';arrow.style.transform='rotate(-90deg)'}" style="cursor:pointer;font-size:12px;color:var(--text3);user-select:none;padding:4px 8px;background:rgba(128,128,128,0.06);border-radius:4px;display:inline-flex;align-items:center;gap:4px;">`;
-        html+=`<span class="minor-arrow" style="font-size:10px;transition:transform 0.15s;">▼</span> `;
-        html+=`📋 ${mChanges.length} 处细微变更（跟踪表/修订日期/编号微调，仅供参考）`;
-        html+=`</div>`;
-        html+=`<div class="minor-list" style="margin-top:6px;">`;
-        mChanges.forEach((c,i)=>{
-            const icon=c.type==='modified'?'✏️':c.type==='added'?'➕':'➖';
-            const typeLabel=c.type==='modified'?'修改':c.type==='added'?'新增':'删除';
-            const summary=c.summary?esc(c.summary):'';
-            const tag=c.category==='tracking_table'?'<span class="minor-tag" style="background:rgba(255,170,0,0.15);color:#b45f00;font-size:10px;padding:1px 4px;border-radius:3px;margin-left:4px;">页码跟踪</span>':c.category==='metadata'?'<span class="minor-tag" style="background:rgba(128,128,128,0.15);color:#888;font-size:10px;padding:1px 4px;border-radius:3px;margin-left:4px;">元数据</span>':'';
-            html+=`<div class="version-diff-item minor" style="opacity:0.7;padding:5px 8px;font-size:11px;">`;
-            html+=`<span class="vd-type" style="opacity:0.7;">${icon} ${typeLabel}</span><span class="vd-loc" style="opacity:0.8;">${esc(c.location||'')}</span>${tag}<span class="vd-summary" style="color:var(--text3);">${summary}</span>`;
-            html+=`</div>`;
-        });
-        html+=`</div></div>`;
-    }
+document.getElementById('conflictList').innerHTML=progressHtml+controlsHtml+groupsHtml;
 }
 
-// 无任何结果时的提示（区分库空 vs 真正通过）
-if(items.length===0&&vChanges.length===0&&mChanges.length===0){
-    if(r.kb_empty){
-        html='<div style="padding:30px;text-align:center;color:var(--text3);">📭 首篇文档，无对比对象，可入库</div>';
-    } else if(r.no_candidates){
-        html='<div style="padding:30px;text-align:center;color:var(--text3);">📭 未在知识库中找到相似文档。建议确认该文档是否已入库。</div>';
-    } else {
-        html='<div style="padding:30px;text-align:center;color:var(--text3);">✅ 预审核通过，未发现矛盾或版本差异</div>';
-    }
+function toggleCompareGroup(gi){
+    const el=document.querySelectorAll('.compare-group')[gi];
+    if(!el)return;
+    const body=el.querySelector('.compare-group-body');
+    const caret=el.querySelector('.cg-caret');
+    const open=body.style.display!=='none';
+    body.style.display=open?'none':'block';
+    caret.style.transform=open?'':'rotate(90deg)';
 }
 
-document.getElementById('conflictList').innerHTML=html;
+function showGroupVersionDiff(gi,ci){
+    const g=reviewResult?.compare_groups?.[gi];
+    const vc=g?.version_changes?.[ci];
+    if(!vc)return;
+    // 复用现有版本差异详情面板（用一个全局指向当前组）
+    window.__groupIdx=gi;
+    document.querySelectorAll('.version-diff-item').forEach((el,i)=>el.classList.toggle('selected', i===ci && Number(el.dataset.gi)===gi));
+    showVersionDiffForGroup(gi,ci);
 }
 
-// 点击某条版本差异 → 高亮定位（位置 + 文字差异 + 双页面对比）
+async function showVersionDiffForGroup(gi,ci){
+    const g=reviewResult?.compare_groups?.[gi];
+    const vc=g?.version_changes?.[ci];
+    if(!vc)return;
+    const panel=document.getElementById('versionComparePanel');
+    if(!panel)return;
+    panel.classList.add('show');
+    panel.dataset.vcIdx=ci;
+    const typeIcon=vc.type==='modified'?'✏️':vc.type==='added'?'➕':'➖';
+    const typeLabel=vc.type==='modified'?'修改':vc.type==='added'?'新增':'删除';
+    const diffPage=extractPageFromLoc(vc.location||vc.old_location)||1;
+    let html='';
+    html+=`<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 14px;border-bottom:1px solid var(--border);background:var(--card);flex-shrink:0;">`;
+    html+=`<span style="font-weight:600;">${typeIcon} ${typeLabel} · ${esc(g.doc_filename||'')} 差异 #${ci+1}</span>`;
+    html+=`<button onclick="closeVersionCompare()" style="background:none;border:1px solid var(--border);border-radius:4px;padding:3px 12px;cursor:pointer;font-size:11px;">✕ 返回列表</button></div>`;
+    html+=`<div style="padding:12px 14px;font-size:12px;flex-shrink:0;border-bottom:1px solid var(--border);">`;
+    html+=`<div><b>摘要:</b> ${esc(vc.summary||'（无）')}</div>`;
+    html+=`<div style="margin-top:6px;background:var(--bg2);padding:8px;border-radius:4px;font-size:11px;line-height:1.6;">`;
+    html+=`<div style="color:var(--danger);"><b>旧:</b> ${diffMark(vc.old_text||'',vc.new_text||'','b')}</div>`;
+    html+=`<div style="color:var(--primary);margin-top:4px;"><b>新:</b> ${diffMark(vc.new_text||'',vc.old_text||'','a')}</div>`;
+    html+=`</div></div>`;
+    html+=`<div id="vdPages" style="flex:1;overflow:auto;padding:12px;"><div style="color:var(--text3);font-size:11px;">加载页面预览...</div></div>`;
+    document.getElementById('versionComparePanel').innerHTML=html;
+    // 页面预览
+    const oldName=g.doc_id||g.doc_filename;
+    try{
+        const resp=await fetch('/api/documents/review/page?task_id='+reviewTaskId+'&page='+diffPage);
+        const blob=await resp.blob();
+        const url=URL.createObjectURL(blob);
+        const img=document.createElement('img');
+        img.src=url; img.style.width='100%';
+        document.getElementById('vdPages').innerHTML='';
+        document.getElementById('vdPages').appendChild(img);
+    }catch(e){ document.getElementById('vdPages').innerHTML='<div style="color:var(--text3);font-size:11px;">页面预览不可用</div>'; }
+}
+
+function showGroupConflict(gi,ci){
+    const g=reviewResult?.compare_groups?.[gi];
+    const inc=g?.inconsistencies?.[ci];
+    if(!inc)return;
+    alert('矛盾: ' + (inc.point||'') + '\n新: ' + (inc.doc_a_says||'') + '\n旧: ' + (inc.doc_b_says||''));
+}
+
 async function showVersionDiff(idx){
     const vc = reviewResult?.version_changes?.[idx];
     if(!vc)return;
@@ -1477,8 +1517,9 @@ refreshQaSessionList();
             reviewResult=d.result;
             if(d.old_version_filepath) reviewResult.old_version_filepath = d.old_version_filepath;
             if(d.old_doc_filename) reviewResult.old_doc_filename = d.old_doc_filename;
-            const n=d.result.inconsistencies?d.result.inconsistencies.length:0;
-            const vc=d.result.version_changes?d.result.version_changes.length:0;
+            const groups=d.result.compare_groups||[];
+            let n=0, vc=0;
+            groups.forEach(g=>{ if(g.compare_type==='version_diff') vc+=(g.version_changes||[]).length; else n+=(g.inconsistencies||[]).length; });
             let btnText='';
             if(n>0) btnText+=`⚠️ ${n} 处内容矛盾`;
             if(vc>0) btnText+=(`${n>0?'，':''}📝 ${vc} 处版本变更`);
