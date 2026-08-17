@@ -137,7 +137,7 @@ pendingHtml=`<div class="doc-list-title" style="color:var(--warn);">待审核</d
         ingestedHtml='<div class="doc-list-title">已入库文档</div><div style="color:#aaa;padding:12px;font-size:12px;">请上传第一份文档</div>';
     } else {
         ingestedHtml='<div class="doc-list-title">已入库文档</div>';
-data.documents.forEach((d,i)=>{const id='B'+(i+1);const hashShort=d.file_hash?d.file_hash.slice(-8).toUpperCase():'';const docId=d.doc_id||d.filename;docMap[docId]=id;docMap[d.filename]=id;if(d.file_hash)fileHashToName[d.file_hash]=d.filename;const cls=(currentDoc===docId||currentDoc===d.filename)?'doc-item active':'doc-item';const pg=d.page_count||kbTotalPagesCache[d.filename]||'';const stats=[];if(pg)stats.push(pg+'页');if(d.char_count)stats.push(d.char_count+'字');if(d.paragraph_count)stats.push(d.paragraph_count+'段');if(d.table_count)stats.push(d.table_count+'表');if(d.added_at){const dt=new Date(d.added_at);const pad=n=>String(n).padStart(2,'0');stats.push((dt.getMonth()+1)+'/'+pad(dt.getDate())+' '+pad(dt.getHours())+':'+pad(dt.getMinutes()));}const verTag=d.version?`<span class="ver-tag" style="color:var(--primary);font-size:10px;font-weight:600;margin-left:4px;">${esc(d.version)}</span>`:'';const displayName=hashShort?`${esc(d.filename)}<span style="color:var(--text3);font-size:10px;"> [${hashShort}]</span>${verTag}`:esc(d.filename);ingestedHtml+=`<div class="${cls}" data-filename="${escA(d.filename)}" data-hash="${escA(d.file_hash||'')}" onclick="selectDoc('${escA(docId)}')" title="${escA(d.filename)} [${hashShort}]"><span class="id">${id}</span><div class="info"><div class="name">${displayName}</div>${stats.length?'<div class="stats">'+stats.join(' · ')+'</div>':''}</div><span class="del-btn" onclick="event.stopPropagation();removeDoc('${escA(docId)}')">🗑️</span></div>`;});
+data.documents.forEach((d,i)=>{const id='B'+(i+1);const hashShort=d.file_hash?d.file_hash.slice(-8).toUpperCase():'';const docId=d.doc_id||d.filename;docMap[docId]=id;docMap[d.filename]=id;if(d.file_hash)fileHashToName[d.file_hash]=d.filename;const cls=(currentDoc===docId||currentDoc===d.filename)?'doc-item active':'doc-item';const pg=d.page_count||kbTotalPagesCache[d.filename]||'';const stats=[];if(pg)stats.push(pg+'页');if(d.char_count)stats.push(d.char_count+'字');if(d.paragraph_count)stats.push(d.paragraph_count+'段');if(d.table_count)stats.push(d.table_count+'表');if(d.added_at){const dt=new Date(d.added_at);const pad=n=>String(n).padStart(2,'0');stats.push((dt.getMonth()+1)+'/'+pad(dt.getDate())+' '+pad(dt.getHours())+':'+pad(dt.getMinutes()));}const verTag=(d.label||d.version)?`<span class="doc-label-tag">${esc(d.label||d.version)}</span>`:'';const displayName=hashShort?`${esc(d.filename)}<span style="color:var(--text3);font-size:10px;"> [${hashShort}]</span>${verTag}`:esc(d.filename);ingestedHtml+=`<div class="${cls}" data-filename="${escA(d.filename)}" data-hash="${escA(d.file_hash||'')}" onclick="selectDoc('${escA(docId)}')" title="${escA(d.filename)} [${hashShort}]"><span class="id">${id}</span><div class="info"><div class="name">${displayName}</div>${stats.length?'<div class="stats">'+stats.join(' · ')+'</div>':''}</div><span class="del-btn" onclick="event.stopPropagation();removeDoc('${escA(docId)}')">🗑️</span></div>`;});
     }
     el.innerHTML=pendingHtml+ingestedHtml;
 }
@@ -488,7 +488,7 @@ uploadZone.classList.add('disabled');
 document.getElementById('stepArea').classList.add('show');
 document.getElementById('stepTitle').textContent='上传: '+file.name;
 document.getElementById('stepItems').innerHTML='<div class="step-item"><div class="dot active">⏳</div><span>上传中...</span></div>';
-const fd=new FormData();fd.append('file',file);
+const fd=new FormData();fd.append('file',file);fd.append('label',(document.getElementById('docLabelInput')?.value||'').trim());
 try{
 const res=await fetch('/api/documents/upload',{method:'POST',body:fd});
 if(!res.ok){const e=await res.json();alert(e.detail||'上传失败');resetUpload();return;}
@@ -500,7 +500,7 @@ if(data.needs_choice){
     );
     const choice = overwrite ? 'overwrite' : 'coexist';
     // 重新上传，带 choice 参数
-    const fd2=new FormData();fd2.append('file',file);fd2.append('choice',choice);
+    const fd2=new FormData();fd2.append('file',file);fd2.append('choice',choice);fd2.append('label',(document.getElementById('docLabelInput')?.value||'').trim());
     const res2=await fetch('/api/documents/upload',{method:'POST',body:fd2});
     if(!res2.ok){const e=await res2.json();alert(e.detail||'上传失败');resetUpload();return;}
     const data2=await res2.json();

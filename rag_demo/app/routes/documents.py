@@ -31,6 +31,7 @@ async def list_documents():
                 "added_at": d.added_at,
                 "status": d.status,
                 "version": getattr(d, "version", ""),
+                "label": getattr(d, "label", ""),
             }
             for d in docs
         ],

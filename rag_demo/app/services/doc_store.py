@@ -38,6 +38,7 @@ class DocMeta:
     char_count: int = 0
     file_hash: str = ""  # 文件 SHA-256
     version: str = ""  # 从修订记录表提取的版本号（如 R5-21/R5-22），用于同名文档区分
+    label: str = ""  # 用户上传时补充的描述（如版本号），列表醒目显示
 
 
 def _extract_effective_version(tables: list) -> str:
@@ -193,7 +194,7 @@ class DocStore:
             self._model = load_embedding_model(self._config.get("embedding", {}))
         return self._model
 
-    def add_document(self, filepath: str, original_filename: str = "") -> DocMeta:
+    def add_document(self, filepath: str, original_filename: str = "", label: str = "") -> DocMeta:
         """
         入库文档（解析 + embedding + 加入索引）
 
@@ -267,6 +268,7 @@ class DocStore:
             char_count=char_count,
             file_hash=file_hash,
             version=version,
+            label=label.strip()[:60],
         )
         self._documents[doc_id] = meta
         log.info(f"已入库: {doc.filename}")

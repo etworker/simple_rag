@@ -36,6 +36,9 @@
         .upload-zone:hover { border-color: var(--primary); background: var(--primary-bg); }
         .upload-zone.disabled { opacity: 0.4; pointer-events: none; }
         .upload-zone input { display: none; }
+        .doc-label-input { width: 100%; box-sizing: border-box; margin-top: 6px; padding: 6px 10px; border: 1px solid var(--border); border-radius: var(--radius); font-size: 12px; background: var(--bg2); color: var(--text); outline: none; }
+        .doc-label-input:focus { border-color: var(--primary); }
+        .doc-label-tag { display: inline-block; margin-left: 4px; padding: 1px 6px; border-radius: 3px; background: var(--primary); color: #fff; font-size: 11px; font-weight: 600; }
 
         /* 左侧：步骤进度 */
         .step-area { padding: 8px 10px; border-bottom: 1px solid var(--border); display: none; font-size: 11px; background: #fff8f0; border-left: 3px solid var(--warn); }

@@ -29,6 +29,7 @@
                     📄 <span>点击或拖拽上传（PDF/Word）</span>
                     <input type="file" id="fileInput" accept=".pdf,.docx" onchange="handleUpload(this.files[0])">
                 </div>
+                <input type="text" id="docLabelInput" class="doc-label-input" placeholder="补充描述（可选，建议填版本号如 R5-21）" onkeydown="if(event.key==='Enter'){event.stopPropagation();}" title="为文档添加补充描述（如版本号），便于同名文档区分">
             </div>
             <div class="step-area" id="stepArea">
                 <div class="step-title"><span id="stepTitle">处理中...</span><span class="step-cancel" onclick="cancelUpload()">✕</span></div>

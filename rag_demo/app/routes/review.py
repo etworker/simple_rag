@@ -83,7 +83,7 @@ async def cancel_review(task_id: str):
 
 
 @router.post("/upload")
-async def upload_document(file: UploadFile = File(...), choice: str = Form("")):
+async def upload_document(file: UploadFile = File(...), choice: str = Form(""), label: str = Form("")):
     """
     上传文档 → 启动预审核流程
 
@@ -153,6 +153,7 @@ async def upload_document(file: UploadFile = File(...), choice: str = Form("")):
         "result": None,
         "old_version_filepath": old_version_filepath,  # 版本对比用（文件路径）
         "old_doc_filename": old_doc_filename,  # 版本对比用（可读文件名）
+        "label": label.strip()[:60],  # 用户补充描述（如版本号），入库时写入 DocMeta
     }
 
     await asyncio.sleep(0.1)
@@ -233,7 +234,9 @@ async def confirm_review(task_id: str):
         raise HTTPException(status_code=409, detail=f"文档 '{filename}' 已入库（相同内容）")
 
     try:
-        meta = await asyncio.to_thread(_state.app.doc_store.add_document, filepath, task["filename"])
+        meta = await asyncio.to_thread(
+            _state.app.doc_store.add_document, filepath, task["filename"], task.get("label", "")
+        )
     except Exception as e:
         log.error(f"入库失败: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"入库失败: {e!s}") from e
