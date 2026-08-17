@@ -219,7 +219,14 @@ class EmbeddingModel:
         #     bfc_arena 崩溃（实测 MatMul 报 CUDA 显存分配失败）
         # 显式传 None 覆盖调用方可能的 parallel 值，保证稳定。
         kwargs.setdefault("parallel", None)
-        vectors = list(self._model.embed(texts, **kwargs))
+        # 小 batch 分批编码：fastembed 默认 batch_size=256，GPU 上单次大 batch 的
+        # Attention buffer 峰值可达数 GB（T4 与常驻服务共享显存时 OOM，实测
+        # 1288 段一次推理请求 4.75GB 失败）。用较小 batch（默认 64）降低峰值，
+        # 避免 bfc_arena 分配失败。
+        batch_size = int(kwargs.pop("batch_size", 64) or 64)
+        vectors = []
+        for i in range(0, len(texts), batch_size):
+            vectors.extend(self._model.embed(texts[i : i + batch_size], **kwargs))
         arr = np.asarray(vectors, dtype=np.float32)
 
         if not normalize_embeddings:
