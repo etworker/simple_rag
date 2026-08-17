@@ -1290,26 +1290,44 @@ async function sendQuestion(){
         let html=answerHtml;
         let allSources=[];  // 提到外层作用域，供点击事件访问
         if(data.sources&&data.sources.length){
-            // 去重：同一文件+同一位置只保留一条（取分数最高的）
+            // 去重：同一文档+同一位置只保留一条（取分数最高的）
             const seen=new Map();
             for(const s of data.sources){
-                const key=s.source_file+'|'+(s.location||'');
+                const key=(s.doc_id||s.source_file)+'|'+(s.location||'');
                 if(!seen.has(key)||(s.score||0)>seen.get(key).score){
                     seen.set(key,s);
                 }
             }
-            allSources=[...seen.values()].slice(0,8);
-            const fileIds={};
-            let fileIdx=1;
-            let srcHtml=`<div class="sources"><div class="src-title">📎 来源（${allSources.length} 条）</div>`;
+            allSources=[...seen.values()];
+            // 文档级编号：优先用知识库列表的 docMap（B1/B2 与列表一致），
+            // 未在列表中的文档按出现顺序补 B3/B4...
+            const docIds={};
+            const docOrder=[];
             for(const s of allSources){
-                const id=s.idx?('B'+s.idx):'B'+(fileIdx++);
-                if(!s.idx&&!fileIds[s.source_file]) fileIds[s.source_file]=id;
-                const displayId=s.idx?('B'+s.idx):fileIds[s.source_file];
-                srcHtml+=`<div class="src-item" id="ref-${displayId.replace('B','')}" data-file="${escA(s.source_file||'')}" data-loc="${escA(s.location||'')}">`;
-                srcHtml+=`<div><span class="src-id">${displayId}</span><span class="src-file">${fileColoredHtml(s.source_file)}</span></div>`;
-                srcHtml+=`<div class="src-loc">${esc(s.location||'')}</div>`;
-                srcHtml+=`<div class="src-text">${esc((s.text||'').slice(0,120))}${(s.text||'').length>120?'…':''}</div>`;
+                const did=s.doc_id||s.source_file||'';
+                if(did&&!docIds[did]){
+                    docIds[did]=docMap[did]||('B'+(docOrder.length+1));
+                    docOrder.push(did);
+                }
+            }
+            // 底部 legend：按文档分组，块标题=Bn+文件名[hash]+tag，块内列出 [idx] 引用项
+            let srcHtml=`<div class="sources"><div class="src-title">📎 引用来源</div>`;
+            for(const did of docOrder){
+                const bn=docIds[did];
+                const docSources=allSources.filter(x=>(x.doc_id||x.source_file||'')===did);
+                // doc_id 形如 'xxx.pdf#29A17952'：文件名 + 短 hash 显示
+                const parts=did.split('#');
+                const displayFile=parts[0]||did;
+                const hash8=parts[1]||'';
+                srcHtml+=`<div class="src-doc-block"><div class="src-doc-title"><span class="src-id">${bn}</span><span class="src-file">${esc(displayFile)}</span>`;
+                if(hash8)srcHtml+=` <span class="src-file-hash">#${esc(hash8)}</span>`;
+                srcHtml+=`</div>`;
+                for(const s of docSources){
+                    srcHtml+=`<div class="src-item" id="ref-${s.idx}" data-file="${escA(s.source_file||'')}" data-loc="${escA(s.location||'')}">`;
+                    srcHtml+=`<div><span class="src-ref">[${s.idx}]</span><span class="src-loc">${esc(s.location||'')}</span></div>`;
+                    srcHtml+=`<div class="src-text">${esc((s.text||'').slice(0,120))}${(s.text||'').length>120?'…':''}</div>`;
+                    srcHtml+=`</div>`;
+                }
                 srcHtml+=`</div>`;
             }
             srcHtml+='</div>';

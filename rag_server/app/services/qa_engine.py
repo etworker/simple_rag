@@ -111,11 +111,14 @@ class QAEngine:
         answer = session.ask(question, context=context)
 
         # 6. 封装结果 —— sources 带编号
+        # idx 是 chunk 序号（回答中的 [1][2] 引用编号）；
+        # doc_id 是文档级标识（文件名#HASH8），前端用它映射到 B1/B2 文档编号。
         source_list = [
             {
                 "idx": i,
                 "text": c.text[:200],
                 "source_file": c.source_file,
+                "doc_id": c.source_file,
                 "location": c.location,
                 "score": round(c.score, 3),
             }
