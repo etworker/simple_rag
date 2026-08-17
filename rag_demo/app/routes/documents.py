@@ -30,6 +30,7 @@ async def list_documents():
                 "char_count": d.char_count,
                 "added_at": d.added_at,
                 "status": d.status,
+                "version": getattr(d, "version", ""),
             }
             for d in docs
         ],

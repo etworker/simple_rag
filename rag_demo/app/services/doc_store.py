@@ -37,6 +37,32 @@ class DocMeta:
     page_count: int = 0
     char_count: int = 0
     file_hash: str = ""  # 文件 SHA-256
+    version: str = ""  # 从修订记录表提取的版本号（如 R5-21/R5-22），用于同名文档区分
+
+
+def _extract_effective_version(tables: list) -> str:
+    """从修订记录表中提取生效版本号（如 R5-21）。
+
+    修订记录表形如 [版本, 生效日期, 批准日期, 状态]，最后一行状态为"生效"
+    的版本即文档当前版本。返回空串表示未找到。
+    """
+    import re as _re
+
+    best = ""
+    for t in tables:
+        for row in t.rows:
+            cells = [str(c).strip() if c is not None else "" for c in row]
+            if not cells:
+                continue
+            joined = " | ".join(cells)
+            m = _re.search(r"(R\d+-\d+)", joined)
+            if not m:
+                continue
+            # 状态列含"生效" → 当前版本
+            if any("生效" in c for c in cells):
+                return m.group(1)
+            best = m.group(1)  # 兜底：记录最后出现的版本
+    return best
 
 
 @dataclass
@@ -214,6 +240,9 @@ class DocStore:
         file_hash = self._compute_file_hash(filepath)
         doc_id = f"{doc.filename}#{file_hash[-8:].upper()}"
 
+        # 从修订记录表提取生效版本号（R5-xx），同名文档列表用版本号区分
+        version = _extract_effective_version(doc.tables)
+
         # 更新段落的 source_file 为 doc_id（保证唯一性）
         for p in doc.paragraphs:
             p.source_file = doc_id
@@ -229,6 +258,7 @@ class DocStore:
             page_count=page_count,
             char_count=char_count,
             file_hash=file_hash,
+            version=version,
         )
         self._documents[doc_id] = meta
         log.info(f"已入库: {doc.filename}")
