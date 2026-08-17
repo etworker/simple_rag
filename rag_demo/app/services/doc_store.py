@@ -240,8 +240,16 @@ class DocStore:
         file_hash = self._compute_file_hash(filepath)
         doc_id = f"{doc.filename}#{file_hash[-8:].upper()}"
 
-        # 从修订记录表提取生效版本号（R5-xx），同名文档列表用版本号区分
+        # 从修订记录表提取生效版本号（R5-xx），同名文档列表用版本号区分。
+        # 规则提取（假设修订记录表结构）失败时，用 LLM 从文档内容判断版本号。
         version = _extract_effective_version(doc.tables)
+        if not version:
+            try:
+                from app.services.llm_cleanup import extract_version_with_llm
+
+                version = extract_version_with_llm(doc)
+            except Exception:
+                pass
 
         # 更新段落的 source_file 为 doc_id（保证唯一性）
         for p in doc.paragraphs:
