@@ -65,7 +65,8 @@
   },
   "retrieval": {
     "top_k": 15,
-    "similarity_threshold": 0.5
+    "similarity_threshold": 0.5,
+    "context_radius": 2
   },
   "pre_review": {
     "similarity_threshold": 0.8,
@@ -98,5 +99,9 @@
   },
   "chat": {
     "max_history": 20
+  },
+  "parse_cleanup": {
+    "enabled": false,
+    "llm_profile": "pre_review"
   }
 }

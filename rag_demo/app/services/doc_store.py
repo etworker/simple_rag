@@ -131,6 +131,34 @@ class DocStore:
         """计算文件 SHA-256"""
         return compute_sha256(filepath)
 
+    @staticmethod
+    def _tables_to_paragraphs(tables: list) -> list:
+        """把表格转成可检索的 Paragraph 列表（表格内容参与 RAG 向量检索）。
+
+        每个表格转成一段结构化文本（markdown 行拼接），location 标
+        "表格: 章节"，source_file 复用表格的（后续 add_document 统一覆盖为 doc_id）。
+        """
+        from doc_parser import Paragraph
+
+        out = []
+        for t in tables:
+            md = t.to_markdown() if hasattr(t, "to_markdown") else ""
+            if not md:
+                continue
+            out.append(
+                Paragraph(
+                    text=md,
+                    page=t.page,
+                    page_end=getattr(t, "page_end", 0),
+                    chapter=getattr(t, "chapter", ""),
+                    chapter_title=getattr(t, "chapter_title", ""),
+                    source_file=getattr(t, "source_file", ""),
+                    index=len(out) + 1,
+                    order=getattr(t, "order", 0),
+                )
+            )
+        return out
+
     def _get_model(self):
         """懒加载 embedding 模型（fastembed 适配器）"""
         if self._model is None:
@@ -157,13 +185,17 @@ class DocStore:
             doc.filename = original_filename
         log.info(f"解析完成: {doc.filename} ({len(doc.paragraphs)} 段, {len(doc.tables)} 表)")
 
+        # 表格也转成可检索段落：表格本身不参与段落式 chunk，但其内容对 RAG 有
+        # 价值（如"修订记录表里 5.1-1~5 是什么"），转成结构化文本加入向量索引。
+        indexable = list(doc.paragraphs) + self._tables_to_paragraphs(doc.tables)
+
         # 计算 embedding（VectorStore 内部有缓存，自动复用）
         model = self._get_model()
-        embeddings, _index = self._vector_store.get_or_compute(doc.filename, doc.paragraphs, model)
+        embeddings, _index = self._vector_store.get_or_compute(doc.filename, indexable, model)
         embeddings = np.array(embeddings).astype(np.float32)
 
-        # 追加到全局
-        self._paragraphs.extend(doc.paragraphs)
+        # 追加到全局（段落 + 表格统一进索引，检索时按 location 区分）
+        self._paragraphs.extend(indexable)
         if self._embeddings is None:
             self._embeddings = embeddings
         else:
@@ -448,6 +480,45 @@ class DocStore:
                 "is_target": i == target,
             }
             for i, p in enumerate(doc_paras[start:end], start=start)
+        ]
+
+    def get_neighbor_texts(self, global_index: int, radius: int = 3) -> list[dict]:
+        """按全局索引取同文档前后 radius 个相邻段落（供检索上下文扩展）。
+
+        Args:
+            global_index: 全局 _paragraphs 索引（search 返回的 paragraph_index）
+            radius: 前后取多少段
+
+        Returns:
+            [{"text", "location", "is_target"}, ...]，按文档内顺序
+        """
+        if not (0 <= global_index < len(self._paragraphs)):
+            return []
+        target = self._paragraphs[global_index]
+        doc_id = target.source_file
+        # 收集同文档所有段落（保持顺序）
+        doc_paras = [
+            (i, p) for i, p in enumerate(self._paragraphs) if p.source_file == doc_id
+        ]
+        if not doc_paras:
+            return []
+        # 定位目标在文档内的位置
+        target_doc_pos = None
+        for pos, (i, p) in enumerate(doc_paras):
+            if i == global_index:
+                target_doc_pos = pos
+                break
+        if target_doc_pos is None:
+            return []
+        start = max(0, target_doc_pos - radius)
+        end = min(len(doc_paras), target_doc_pos + radius + 1)
+        return [
+            {
+                "text": p.text,
+                "location": p.location,
+                "is_target": (i == global_index),
+            }
+            for i, p in doc_paras[start:end]
         ]
 
     def find_paragraphs(self, doc_id: str, location: str = "", limit: int = 5) -> list:

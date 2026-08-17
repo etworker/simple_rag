@@ -162,6 +162,22 @@ class QAEngine:
             self._sessions.move_to_end(session_id)
         return self._sessions[session_id]
 
+    def _expand_chunk_context(self, chunk: RetrievedChunk, radius: int) -> str:
+        """扩展命中 chunk 的上下文：取同文档前后 radius 个相邻段落拼接。
+
+        段落切分（按语义/句号/章节）可能把一段完整内容拆成相邻几段，
+        单段检索命中时 LLM 只能看到局部。此处把命中段及其前后 radius 段
+        拼接成一个 context 块（用换行 + 来源标注区分），帮助 LLM 理解完整语境。
+        """
+        neighbors = self._doc_store.get_neighbor_texts(chunk.paragraph_index, radius)
+        if not neighbors:
+            return chunk.text
+        blocks = []
+        for n in neighbors:
+            marker = "▼ 命中" if n.get("is_target") else ""
+            blocks.append(f"[{n['location']}]{marker}\n{n['text']}")
+        return "\n\n".join(blocks)
+
     def _build_context(self, chunks: list[RetrievedChunk], conflicts: list[dict]) -> str:
         """构建发送给 LLM 的上下文文本
 
@@ -169,15 +185,19 @@ class QAEngine:
         """
         # 给每个 chunk 编号
         template = self._config.get("prompts.context_template", "[{idx}] {source} | {location}\n{text}\n")
+        radius = int(self._config.get("retrieval.context_radius", 0) or 0)
 
         parts = []
         for i, chunk in enumerate(chunks, start=1):
+            text = chunk.text
+            if radius > 0:
+                text = self._expand_chunk_context(chunk, radius) or text
             parts.append(
                 template.format(
                     idx=i,
                     source=chunk.source_file,
                     location=chunk.location,
-                    text=chunk.text,
+                    text=text,
                 )
             )
 

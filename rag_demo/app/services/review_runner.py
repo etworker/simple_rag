@@ -281,6 +281,17 @@ async def run_pre_review(task_id: str):
         # 进度推送：解析开始/完成都通知，避免左侧进度滞后于日志（解析期间 active）
         on_progress("parsing", 0.15, f"解析文档（{parse_config['extract'].get('backend', 'auto')}）...")
         new_doc = await asyncio.to_thread(_parse, filepath, config=parse_config, cache_dir=parse_cache_dir)
+
+        # LLM 辅助页眉/页脚清洗（可选，默认关闭）：剥离段首页眉残留
+        # （如表格区域内绕过坐标剔除的页眉行）。不写回 parse_cache，
+        # 每次解析后重跑（幂等）；配置 parse_cleanup.enabled=true 启用。
+        cleanup_cfg = _state.app.config.get_section("parse_cleanup") if _state.app and _state.app.config else {}
+        if cleanup_cfg.get("enabled", False):
+            from app.services.llm_cleanup import clean_headers
+
+            new_doc = await asyncio.to_thread(
+                clean_headers, new_doc, {**cleanup_cfg, "config_path": _state.app.config._config_path}
+            )
         on_progress("parsing", 0.25, f"解析完成: {len(new_doc.paragraphs)} 段")
         log.info(f"新文档解析完成: {len(new_doc.paragraphs)} 段落")
         # ★ 用 task["filename"]（原始上传名）作为 source_file，
