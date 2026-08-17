@@ -3,7 +3,7 @@
 收敛原先分布在两处的冲突检测逻辑：
 
 - ``engine.check_conflicts``（version_diff 公共 API，生产未被调用）
-- ``qa_engine._detect_conflicts``（rag_demo 生产实际调用，含启发式回退）
+- ``qa_engine._detect_conflicts``（rag_server 生产实际调用，含启发式回退）
 
 提供单一公共入口 ``detect_conflicts``，被两处复用，避免算法各写一份、
 

@@ -12,7 +12,7 @@ PDF 页眉/页脚识别是典型的"规则算法麻烦、LLM 擅长"的场景：
 
 用法
 ----
-配置 rag_demo/config.json:
+配置 rag_server/config.json:
   "parse_cleanup": {
     "enabled": true,            # 默认 false（开启后解析结果变化，需重置知识库）
     "llm_profile": "pre_review" # 复用哪个 LLM profile

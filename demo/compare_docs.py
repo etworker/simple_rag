@@ -19,7 +19,7 @@
 用法:
     uv run --project version_diff python demo/compare_docs.py <文档A> <文档B> [--out 报告] [阈值参数...]
 
-默认配置与 web 流程（rag_demo）对齐：embedding=bge-small-zh-v1.5（GPU 自动加速）、
+默认配置与 web 流程（rag_server）对齐：embedding=bge-small-zh-v1.5（GPU 自动加速）、
 解析=docling（页眉前缀剥离+碎尾合并）、device=auto。实测相同 docling 解析下
 bge-small-zh-v1.5 与 jina-v2-base-zh 版本对比结果完全一致（6 条逐条相同），
 差异主要来自解析后端与吸收逻辑而非 embedding 模型；纯 CPU 下 bge-small 也可跑（~44s）。
@@ -285,7 +285,7 @@ def main():
         "--llm-key", default="", help="LLM api_key（无 profile 文件时兜底，Bedrock 用 api_key_env）"
     )
     parser.add_argument("--top", type=int, default=20, help="跨文档模式列出前 N 条")
-    # 默认与 web 流程（rag_demo）一致：bge-small-zh-v1.5（512 维，GPU 自动加速）+ docling 后处理。
+    # 默认与 web 流程（rag_server）一致：bge-small-zh-v1.5（512 维，GPU 自动加速）+ docling 后处理。
     # 实测（网络手册 R5-21→R5-22）：相同 docling 解析下 bge-small-zh-v1.5 与 jina-v2-base-zh
     # 版本对比结果完全一致（removed=0/added=1/modified=5），仅耗时不同（CPU 44s / GPU 9s）；
     # 差异主要来自解析后端与吸收逻辑，而非 embedding 模型。--embedding 可覆盖。
@@ -294,7 +294,7 @@ def main():
     # device_utils 会强制 CPU provider（fastembed 默认 Device.AUTO 会抢 GPU）。
     parser.add_argument("--embedding-device", default="auto", help="embedding 设备: auto/cuda/cpu（缺省 auto）")
     # 解析后端：与 web 流程一致缺省 docling（含页眉前缀剥离/碎尾合并）。
-    parser.add_argument("--parse-backend", default="pdfplumber", help="解析后端: pdfplumber/docling/pymupdf/auto（缺省 pdfplumber，与 web 流程 rag_demo 一致；docling 对部分文档有碎句问题）")
+    parser.add_argument("--parse-backend", default="pdfplumber", help="解析后端: pdfplumber/docling/pymupdf/auto（缺省 pdfplumber，与 web 流程 rag_server 一致；docling 对部分文档有碎句问题）")
     parser.add_argument("--parse-device", default="cuda", help="docling 推理设备: cuda/cpu（缺省 cuda）")
     # 可配置阈值（均有缺省值）
     parser.add_argument(
@@ -322,7 +322,7 @@ def main():
     load_dotenv()
 
     # 解析配置（与 web 流程 build_parse_config 同构）：缺省 pdfplumber（与
-    # rag_demo 默认一致）；docling 后端额外启用页眉前缀剥离 + 碎尾合并，
+    # rag_server 默认一致）；docling 后端额外启用页眉前缀剥离 + 碎尾合并，
     # 二者进解析缓存签名。重叠度评估与 version_compare 共用同一解析配置，
     # 避免 auto 路由在评估/对比两阶段结果不一致。
     extract = {"backend": args.parse_backend}

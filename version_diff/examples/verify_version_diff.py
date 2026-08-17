@@ -119,14 +119,14 @@ def main(old_path, new_path, model, do_summary):
     print(f"旧版: {old_path}")
     print(f"新版: {new_path}")
 
-    # 与 web 流程（rag_demo）对齐：从 rag_demo/config.json 读取 embedding /
+    # 与 web 流程（rag_server）对齐：从 rag_server/config.json 读取 embedding /
     # LLM / pre_review 配置，解析后端用 pdfplumber（页眉剥离 + 碎尾合并），
     # embedding device=auto（有 GPU 用 GPU）。保证脚本结果与 web 一致。
     # 兜底：无 config.json 时退回内置默认（bge-small + bedrock_converse + cpu）。
     import json as _json
 
     _repo = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    _config_path = os.path.join(_repo, "rag_demo", "config.json")
+    _config_path = os.path.join(_repo, "rag_server", "config.json")
     _llm = None
     _parse_cfg = None
     if os.path.exists(_config_path):
@@ -159,7 +159,7 @@ def main(old_path, new_path, model, do_summary):
             _diff.setdefault("top_k", 3)
             _diff.setdefault("batch_size", 5)
         except Exception as e:
-            log.warning(f"加载 rag_demo/config.json 失败，使用内置默认: {e}")
+            log.warning(f"加载 rag_server/config.json 失败，使用内置默认: {e}")
             _llm, _parse_cfg = None, None
 
     if _llm is None:

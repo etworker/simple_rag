@@ -11,7 +11,7 @@
 - **多后端支持**：AWS Bedrock Converse API + OpenAI 兼容 API（含 vLLM / Ollama / Bedrock Mantle Proxy）
 - **多轮对话**：`ChatSession` 自动维护对话历史，支持历史截断
 - **单次调用**：`ask_once` 无状态一次性调用，适用于分类/判断/摘要
-- **Profile 配置**：命名 LLM 配置 + 路由机制，供 `rag_demo` / `version_diff` 等模块复用
+- **Profile 配置**：命名 LLM 配置 + 路由机制，供 `rag_server` / `version_diff` 等模块复用
 - **自动重试**：429 限流 / 5xx 服务端错误 / 网络错误自动重试，指数退避
 - **API Key 分级解析**：显式传入 > 环境变量，避免跨后端误用
 

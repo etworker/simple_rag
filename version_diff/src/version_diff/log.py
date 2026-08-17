@@ -1,6 +1,6 @@
 """version_diff 的 opt-in 日志配置，供 examples / 独立使用。
 
-应用（rag_demo）请在自己的入口统一配置，不要调用本函数；库内部也不会自动配置。
+应用（rag_server）请在自己的入口统一配置，不要调用本函数；库内部也不会自动配置。
 用法（example 脚本开头）:
     from version_diff.log import configure_logger
     configure_logger()

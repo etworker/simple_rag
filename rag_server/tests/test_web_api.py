@@ -12,7 +12,7 @@ Web API 自动化测试
   - WebSocket /ws/logs 日志推送
 
 运行方式:
-    cd rag_demo
+    cd rag_server
     uv run python -m pytest tests/test_web_api.py -v
 """
 
@@ -350,7 +350,7 @@ class TestUploadFlow:
         """查找一个可用的测试 PDF 文件"""
         import glob
 
-        # test_web_api.py 在 rag_demo/tests/ 下，上传目录在 rag_demo/uploads/
+        # test_web_api.py 在 rag_server/tests/ 下，上传目录在 rag_server/uploads/
         base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         pdfs = glob.glob(os.path.join(base, "uploads", "**", "*.pdf"), recursive=True)
         if not pdfs:

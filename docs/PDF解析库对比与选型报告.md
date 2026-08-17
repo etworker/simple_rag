@@ -123,5 +123,5 @@ PaddleOCR（中文专项）。
 
    > 结论：pymupdf 比 pdfplumber 快约 2 倍且表格/跨页表一致；docling GPU 0.56s/页，表格识别 29 vs 17
    > （多识别 12 张无框线/复杂表格）——验证深度学习后端对无框线表格的价值。
-5. **测试与文档**：doc_parser 77 passed（含新增 pymupdf/路由测试）、rag_demo 58+5skipped、llm_chat 39 passed；
+5. **测试与文档**：doc_parser 77 passed（含新增 pymupdf/路由测试）、rag_server 58+5skipped、llm_chat 39 passed；
    已同步 README / doc_parser 设计文档 / API 参考 / 使用手册；T4 多包验证计划见 temp/pdf_parsers_verification.md。

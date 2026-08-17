@@ -2,7 +2,7 @@
 RAG 文档问答系统 — FastAPI 主入口
 
 启动:
-    cd rag_demo
+    cd rag_server
     uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 """
 
@@ -19,10 +19,10 @@ os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
 # 自动加载 .env（项目根目录或上级目录）
 def _load_secrets():
     _this_dir = os.path.dirname(os.path.abspath(__file__))
-    _project_dir = os.path.dirname(_this_dir)  # rag_demo/
+    _project_dir = os.path.dirname(_this_dir)  # rag_server/
     _parent_dir = os.path.dirname(_project_dir)  # simple_rag/
     for path in [
-        os.path.join(_project_dir, ".env"),  # rag_demo/.env
+        os.path.join(_project_dir, ".env"),  # rag_server/.env
         os.path.join(_parent_dir, ".env"),  # simple_rag/.env
         os.path.join(_project_dir, "secrets.env"),  # 旧命名兼容
         os.path.join(_parent_dir, "secrets.env"),  # 旧命名兼容
@@ -81,7 +81,7 @@ _module_filters = {
     "llm_chat": "llm_chat",
     "doc_parser": "doc_parser",
     "version_diff": "version_diff",
-    "rag_demo": "app",  # 应用运行时模块前缀为 "app"
+    "rag_server": "app",  # 应用运行时模块前缀为 "app"
 }
 for _label, _prefix in _module_filters.items():
     logger.add(

@@ -16,7 +16,7 @@ fi
 
 # 同步依赖
 echo "[1/3] 同步依赖..."
-cd rag_demo
+cd rag_server
 uv sync
 
 # 加载环境变量（CRLF 兼容：Windows 编辑的 .env 行尾带 \r，直接 source 会报错/污染 token）

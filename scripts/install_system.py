@@ -2,7 +2,7 @@
 """
 simple_rag 全系统依赖安装脚本（uv workspace 根级入口）。
 
-在仓库根目录执行，一次性安装 4 个模块（doc_parser / llm_chat / version_diff / rag_demo）
+在仓库根目录执行，一次性安装 4 个模块（doc_parser / llm_chat / version_diff / rag_server）
 的全部依赖与 extras（dev、docling、mineru）。
 
 torch 策略（docling/mineru 解析后端都需要 torch）：

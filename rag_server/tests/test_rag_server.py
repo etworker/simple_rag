@@ -1,5 +1,5 @@
 """
-rag_demo 修复验证测试
+rag_server 修复验证测试
 
 重点测试:
   - ConfigStore 配置管理

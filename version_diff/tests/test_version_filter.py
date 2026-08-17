@@ -18,7 +18,7 @@ V1_PATH = os.path.join(_DATA_DIR, "v1", "IT运维管理规范.docx")
 V2_PATH = os.path.join(_DATA_DIR, "v2", "IT运维管理规范.docx")
 
 # 从 config.json 读取 LLM 配置
-_CONFIG_PATH = os.path.join(_PROJECT_ROOT, "rag_demo", "config.json")
+_CONFIG_PATH = os.path.join(_PROJECT_ROOT, "rag_server", "config.json")
 
 
 def _get_llm_config():

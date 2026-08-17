@@ -26,19 +26,19 @@
 | `doc_parser` | 文档解析（PDF / Word）→ 段落 + 表格 + 定位信息；PDF 多后端（pdfplumber / **pymupdf** / mineru / docling） | `parse(filepath, config)`，`Paragraph`/`Table`/`Document` 模型 |
 | `llm_chat` | LLM 调用抽象（bedrock / openai 等多后端）、重试、对话会话 | `ask_once(prompt, backend, ...)`、`ask_once_with_config(prompt, llm_config, ...)`、`resolve_llm_profile(profiles, routing, use_case)`、`ChatSession` |
 | `version_diff` | 差异检测引擎：跨文档语义检索 + 字级 diff + 规则预过滤 + LLM 矛盾判定 + 版本对比 + 统一冲突检测 | `DiffEngine`（add / pre_review / version_compare / check_conflicts）、`judge_pairs`、`detect_conflicts`、`call_llm_json` |
-| `rag_demo` | FastAPI 应用：上传、预审核任务编排、RAG 问答、冲突检测、Web UI | `app/main.py`，`app/services/*`，`app/routes/*` |
+| `rag_server` | FastAPI 应用：上传、预审核任务编排、RAG 问答、冲突检测、Web UI | `app/main.py`，`app/services/*`，`app/routes/*` |
 
 依赖方向（无循环依赖）：
 
 ```
 doc_parser  ─┐
-             ├─► version_diff ─► rag_demo
+             ├─► version_diff ─► rag_server
 llm_chat   ─┘        │
-                     └─► rag_demo
+                     └─► rag_server
 ```
 
 - `version_diff` 依赖 `doc_parser`（解析）与 `llm_chat`（判定）。
-- `rag_demo` 依赖其余三者。
+- `rag_server` 依赖其余三者。
 - 生产代码无 `sys.path` hack；测试里为隔离会临时注入路径。
 
 ---
@@ -57,7 +57,7 @@ python scripts/install_system.py              # 或用 uv run --no-project pytho
 
 # 2. 配置环境变量（LLM 凭证等）
 #    复制并修改 .env（已有示例），或参考 docs/使用手册.md 第 2 节
-cp rag_demo/config.example.json rag_demo/config.json
+cp rag_server/config.example.json rag_server/config.json
 
 # 3. 启动（自动 uv sync + 加载 .env + 离线变量 + uvicorn）
 ./start.sh          # Linux / macOS
@@ -71,7 +71,7 @@ cp rag_demo/config.example.json rag_demo/config.json
 也可只同步某个模块（uv workspace 自动解析兄弟包）：
 
 ```bash
-uv sync --project rag_demo       # 仅同步 rag_demo 所需（含三个兄弟包）
+uv sync --project rag_server       # 仅同步 rag_server 所需（含三个兄弟包）
 ```
 
 ### 命令行 / 脚本化验证版本差异 + LLM 归纳
@@ -95,10 +95,10 @@ uv run python examples/verify_version_diff.py <旧版.pdf> <新版.pdf> --model 
 
 ## 配置
 
-- 项目为 **uv workspace**：根 `pyproject.toml` 声明 `members`（doc_parser / llm_chat / version_diff / rag_demo），各模块 `pyproject.toml` 通过 `[tool.uv.sources] ... { workspace = true }` 引用兄弟包，根级 `uv.lock` 统一锁版本。
-- `rag_demo/config.json` 是**本地配置，不入库**（已被 `.gitignore` 排除）。新克隆时复制 `config.example.json` 为 `config.json` 再修改。
+- 项目为 **uv workspace**：根 `pyproject.toml` 声明 `members`（doc_parser / llm_chat / version_diff / rag_server），各模块 `pyproject.toml` 通过 `[tool.uv.sources] ... { workspace = true }` 引用兄弟包，根级 `uv.lock` 统一锁版本。
+- `rag_server/config.json` 是**本地配置，不入库**（已被 `.gitignore` 排除）。新克隆时复制 `config.example.json` 为 `config.json` 再修改。
 - LLM / embedding 的默认值集中在 `llm_chat/src/llm_chat/defaults.py` 与 `version_diff/src/version_diff/config.py`，可用环境变量覆盖（详见 [使用手册](docs/使用手册.md) 与 [开发指南](docs/开发指南.md)）。
-- `rag_demo` 采用 **profiles + routing** 配置：在 `config.json` 的 `llm_profiles` 定义多模型，在 `llm_routing` 中按用途（qa / pre_review / conflict_detection）路由。
+- `rag_server` 采用 **profiles + routing** 配置：在 `config.json` 的 `llm_profiles` 定义多模型，在 `llm_routing` 中按用途（qa / pre_review / conflict_detection）路由。
 - **Embedding 基于 fastembed（ONNX Runtime，零 torch 依赖）**：`version_diff/device_utils.py::EmbeddingModel` 统一封装，输出与 `SentenceTransformer(normalize_embeddings=True)` 等价（L2 归一化），默认模型 `BAAI/bge-small-zh-v1.5`。
 
 ## 提示词（prompts）
@@ -118,7 +118,7 @@ uv run python examples/verify_version_diff.py <旧版.pdf> <新版.pdf> --model 
 - **解析质量与版本对比准确度**（08-16）：解析缓存（SHA256+配置签名，重复解析秒级）；docling 碎尾合并 + 页眉前缀剥离（168→0 段）；版本对比精确文本优先配对 + removed/added 二次配对（改写归为修改）+ removed×modified 吸收（半句并入改写段落）+ 表格行不参与二次配对（保留真实行增删）+ 前缀规则（解析截断归细微）；fastembed parallel=None 修复显存泄漏/OOM；测试隔离根除 config.json 污染。详见 docs/设计文档.md §12.6-12.7 与 docs/文档解析与chunk切分说明.md。
 - **国内镜像安装**（08-16）：scripts/install_system.py 默认走清华 PyPI 镜像（AWS 宁夏/国内网络友好），支持 --pypi-index / --torch-index 覆盖；UV_DEFAULT_INDEX 让 uv sync 也走同一镜像。
 - **llm_chat**：后端异常挂 `status_code` / `is_network_error` 属性，`retry` 据此判断重试（不再正则解析异常文本）；公共字段初始化上提到 `_init_common`。
-- **跨模块去重**：`version_diff.llm_util` 改用新增的 `llm_chat.ask_once_with_config`；`rag_demo` 的 PDF 页数计算统一为 `get_pdf_page_count`（fitz）。
+- **跨模块去重**：`version_diff.llm_util` 改用新增的 `llm_chat.ask_once_with_config`；`rag_server` 的 PDF 页数计算统一为 `get_pdf_page_count`（fitz）。
 - **错误处理契约**：`ChatSession.ask` 失败改为向上抛出（不再把 `"[错误]..."` 当答案返回），`/api/qa/ask` 将 LLM 不可用映射为 503。
 - **依赖管理重构**（08-14）：四个独立模块改为 **uv workspace**（根 pyproject.toml + 根 uv.lock），模块间依赖用 `[tool.uv.sources] { workspace = true }`，新增根级一键安装脚本 `scripts/install_system.py`（自动检测 GPU → 装匹配 torch 构建 → `uv sync --all-extras`）。
 - **Embedding 改 fastembed**（08-14）：`sentence-transformers` → `fastembed`（ONNX Runtime），`device_utils.py` 新增 `EmbeddingModel` 适配器，零 torch 依赖也能跑 embedding。
@@ -133,7 +133,7 @@ uv run python examples/verify_version_diff.py <旧版.pdf> <新版.pdf> --model 
 cd doc_parser   && uv run pytest            # 77 passed（含新增 pymupdf 后端测试）
 cd llm_chat     && uv run pytest            # 39 passed
 cd version_diff && uv run pytest            # 96 passed（data/docx 缺失时部分用例环境性失败）
-cd rag_demo     && uv run pytest            # 58 passed, 5 skipped（-k "not gpu and not e2e" 跳过 GPU/端到端）
+cd rag_server     && uv run pytest            # 58 passed, 5 skipped（-k "not gpu and not e2e" 跳过 GPU/端到端）
 ```
 
 > 注：`data/docx/v1|v2`（版本对比测试数据）不入库，缺失时 version_diff 的 test_version_compare / test_version_filter 会环境性失败/报错（与代码无关），需从原项目复制该目录后重跑。依赖外部 LLM 端点的测试（如 test_version_filter.py）离线时可能不稳定。Windows 下个别用例因临时目录/超大环境变量触发环境性失败，详见 [开发指南](docs/开发指南.md) 第 2 节。

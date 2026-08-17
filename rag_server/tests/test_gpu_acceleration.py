@@ -1,5 +1,5 @@
 """
-GPU 加速 — rag_demo 集成测试
+GPU 加速 — rag_server 集成测试
 
 策略:
   - 尽量真实调用: device_utils 检测、实际 FAISS 运算、EmbeddingModel（fastembed）实例化
@@ -31,7 +31,7 @@ class TestDeviceUtilsReal:
     """测试 version_diff.device_utils 的真实检测逻辑"""
 
     def test_resolve_with_actual_config(self):
-        """用 rag_demo config.json 的真实 embedding 段做解析"""
+        """用 rag_server config.json 的真实 embedding 段做解析"""
         from version_diff.device_utils import resolve_embedding_device
 
         # 从真实 config 读取
@@ -234,7 +234,7 @@ class TestDocStoreDeviceConfig:
 
 
 # ---------------------------------------------------------------------------
-# rag_demo config 已包含 GPU 字段
+# rag_server config 已包含 GPU 字段
 # ---------------------------------------------------------------------------
 
 

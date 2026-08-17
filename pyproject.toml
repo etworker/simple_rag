@@ -3,5 +3,5 @@ members = [
     "doc_parser",
     "llm_chat",
     "version_diff",
-    "rag_demo",
+    "rag_server",
 ]

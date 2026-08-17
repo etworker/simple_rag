@@ -1,5 +1,5 @@
 """
-跨页表格合并 — rag_demo 集成测试
+跨页表格合并 — rag_server 集成测试
 
 策略:
   - 直接调用 doc_parser._merge_cross_page_tables 验证合并逻辑 (真实数据)

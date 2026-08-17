@@ -1,10 +1,10 @@
 """
 LLM Profile 共享配置机制。
 
-统一的「命名 LLM 配置」规范，供各模块（rag_demo / version_diff / demo）复用，
+统一的「命名 LLM 配置」规范，供各模块（rag_server / version_diff / demo）复用，
 避免每个模块各自手写 LLM 配置。
 
-约定（与 rag_demo 的 config.json 一致）：
+约定（与 rag_server 的 config.json 一致）：
     llm_profiles: dict[str, dict]     # 名字 -> 完整 LLM 配置（provider/model/base_url/api_key/...）
     llm_routing:  dict[str, str]      # 用途 -> profile 名
 

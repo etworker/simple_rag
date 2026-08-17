@@ -58,7 +58,7 @@ def classify(nid: str, label: str) -> str:
         for k in [
             "ec2",
             "app",
-            "rag_demo",
+            "rag_server",
             "vllm",
             "llm",
             "kserve",

@@ -22,7 +22,7 @@ from pathlib import Path
 
 from doc_parser._docx import extract_docx
 
-# ── 向后兼容 re-exports（测试和 rag_demo 直接 import 这些私有函数） ──
+# ── 向后兼容 re-exports（测试和 rag_server 直接 import 这些私有函数） ──
 from doc_parser._pdf import _is_in_table_region, _words_to_lines, extract_pdf  # noqa: F401
 from doc_parser._tables import (  # noqa: F401
     _append_rows_skip_dup_header,

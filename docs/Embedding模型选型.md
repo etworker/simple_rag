@@ -104,7 +104,7 @@
 ## 6. 配置方法
 
 ```jsonc
-// rag_demo/config.json
+// rag_server/config.json
 {
   "embedding": {
     "model": "BAAI/bge-small-zh-v1.5",             // 默认；GPU 环境 auto 自动加速
