@@ -237,13 +237,14 @@
         .msg.bot .sources .src-text { font-size: 11px; color: var(--text3); margin-top: 2px; line-height: 1.5; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
         .msg.bot .sources .src-doc-block { margin-bottom: 6px; }
         .msg.bot .sources .src-doc-title { display: flex; align-items: center; gap: 4px; padding: 4px 8px; background: var(--primary-bg); border-left: 3px solid var(--primary); border-radius: 3px; font-size: 12px; font-weight: 600; margin-bottom: 4px; }
-        .msg.bot .sources .src-doc-title .src-id { background: var(--primary); color: #fff; border-radius: 3px; font-size: 10px; font-weight: 700; padding: 0 5px; min-width: 22px; text-align: center; }
+        .msg.bot .sources .src-doc-title .src-id { background: var(--warn); color: #fff; border-radius: 3px; font-size: 10px; font-weight: 700; padding: 0 5px; min-width: 22px; text-align: center; }
         .msg.bot .sources .src-ref { display: inline-block; min-width: 24px; padding: 0 4px; background: var(--primary); color: #fff; border-radius: 3px; font-size: 10px; font-weight: 700; text-align: center; margin-right: 4px; }
         .msg.bot .sources .src-doc-block .src-item { margin-left: 4px; }
 
         /* === 答案中的引用编号标记 === */
         .msg.bot .ref-link { display: inline-block; padding: 1px 6px; margin: 0 1px; background: var(--primary-bg); color: var(--primary); border-radius: 3px; font-size: 11px; font-weight: 600; text-decoration: none; cursor: pointer; transition: all 0.15s; vertical-align: baseline; }
         .msg.bot .ref-link:hover { background: var(--primary); color: #fff; }
+        .msg.bot .ref-doc { display: inline-block; padding: 0 3px; margin-left: 2px; background: var(--warn); color: #fff; border-radius: 3px; font-size: 10px; font-weight: 700; vertical-align: baseline; cursor: default; }
         .msg.bot .answer-note { display: block; margin: 6px 0; padding: 6px 10px; background: #fffbe6; border-left: 3px solid var(--warn); border-radius: 4px; font-size: 11px; color: var(--text2); }
         .msg.bot .old-ref-warn { background: #fff1f0; color: var(--danger); font-size: 10px; padding: 1px 4px; border-radius: 3px; text-decoration: line-through; }
         .msg.bot .sources .src-item.ref-flash { animation: refFlash 1.5s ease-out; }

@@ -212,8 +212,9 @@ class DocStore:
         doc_id = f"{doc.filename}#{file_hash[-8:].upper()}"
 
 
-        # 更新段落的 source_file 为 doc_id（保证唯一性）
-        for p in doc.paragraphs:
+        # 更新段落/表格段落的 source_file 为 doc_id（保证唯一性，
+        # 供 QA 引用来源以友好文件名展示，避免暴露磁盘哈希文件名）
+        for p in indexable:
             p.source_file = doc_id
 
         # 记录元数据
@@ -423,6 +424,15 @@ class DocStore:
                     if chars > 0:
                         meta.char_count = chars
                         need_save = True
+            # 迁移：旧数据段落 source_file 可能是磁盘 SHA256 哈希文件名
+            # （如 fcc13f4b....pdf），统一替换为 doc_id（友好名#HASH8）
+            for fname, meta in self._documents.items():
+                disk_name = os.path.basename(meta.filepath) if meta.filepath else ""
+                if disk_name and disk_name != fname:
+                    for p in self._paragraphs:
+                        if p.source_file == disk_name:
+                            p.source_file = fname
+                            need_save = True
             if need_save:
                 self._save_to_disk()
 

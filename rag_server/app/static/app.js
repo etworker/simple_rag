@@ -1405,18 +1405,9 @@ async function sendQuestion(){
         // 后处理：将答案中 LLM 输出的 [1] [2] 编号转为可点击链接
         const cleanAnswer=stripOldSourceLines(data.answer||'');
         let answerHtml=renderMd(cleanAnswer);
-        // 若 LLM 按引用指南使用了 [1] [2] 编号，转成可跳转到底部来源的链接
-        answerHtml=answerHtml.replace(
-            /\[(\d+)\](?![\w\s]*<\/a>)/g,
-            (m, p1) => `<a href="#ref-${p1}" class="ref-link" data-ref="${p1}" onclick="event.preventDefault();scrollToRef(${p1});return false;">[${p1}]</a>`
-        );
-        // 旧格式兼容: （（...来源：...））
-        answerHtml=answerHtml.replace(
-            /（（资料中还[^\uff09]{0,80}?来源[:：][^\uff09]{0,80}?））/g,
-            (m) => `<blockquote class="answer-note">${esc(m)}</blockquote>`
-        );
-        let html=answerHtml;
         let allSources=[];  // 提到外层作用域，供点击事件访问
+        let idxToDoc={};    // 引用编号 idx → 文档级编号（B1/B2...），正文 [n] 后附 Bn
+        let docIds={}, docOrder=[];  // 文档级编号映射（外层声明，legend 渲染共用）
         if(data.sources&&data.sources.length){
             // 去重：同一文档+同一位置只保留一条（取分数最高的）
             const seen=new Map();
@@ -1427,26 +1418,55 @@ async function sendQuestion(){
                 }
             }
             allSources=[...seen.values()];
+            // hash 文件名（底层存储名，如 fcc13f4b....pdf）→ 友好文件名
+            const friendlyName=(did)=>{
+                const m=(did||'').match(/^([0-9a-fA-F]{64})\.pdf(#.*)?$/);
+                if(m&&fileHashToName[m[1].toLowerCase()])return fileHashToName[m[1].toLowerCase()];
+                return did||'';
+            };
             // 文档级编号：优先用知识库列表的 docMap（B1/B2 与列表一致），
             // 未在列表中的文档按出现顺序补 B3/B4...
-            const docIds={};
-            const docOrder=[];
             for(const s of allSources){
                 const did=s.doc_id||s.source_file||'';
                 if(did&&!docIds[did]){
-                    docIds[did]=docMap[did]||('B'+(docOrder.length+1));
+                    docIds[did]=docMap[did]||docMap[friendlyName(did)]||('B'+(docOrder.length+1));
                     docOrder.push(did);
                 }
             }
+            for(const s of allSources){
+                idxToDoc[s.idx]=docIds[s.doc_id||s.source_file||'']||'';
+            }
+        }
+        // 若 LLM 按引用指南使用了 [1] [2] 编号，转成可跳转到底部来源的链接，
+        // 并在编号后附文档编号（如 [1]B1），一眼看清来源文档
+        answerHtml=answerHtml.replace(
+            /\[(\d+)\](?![\w\s]*<\/a>)/g,
+            (m, p1) => {
+                const bn=idxToDoc[p1]||'';
+                const docTag=bn?('<span class="ref-doc">'+bn+'</span>'):'';
+                return '<a href="#ref-'+p1+'" class="ref-link" data-ref="'+p1+'" onclick="event.preventDefault();scrollToRef('+p1+');return false;">['+p1+']'+docTag+'</a>';
+            }
+        );
+        // 旧格式兼容: （（...来源：...））
+        answerHtml=answerHtml.replace(
+            /（（资料中还[^\uff09]{0,80}?来源[:：][^\uff09]{0,80}?））/g,
+            (m) => `<blockquote class="answer-note">${esc(m)}</blockquote>`
+        );
+        let html=answerHtml;
+        if(data.sources&&data.sources.length){
+            // （去重与文档编号构建已前移到 answerHtml 渲染之前）
             // 底部 legend：按文档分组，块标题=Bn+文件名[hash]+tag，块内列出 [idx] 引用项
             let srcHtml=`<div class="sources"><div class="src-title">📎 引用来源</div>`;
             for(const did of docOrder){
                 const bn=docIds[did];
                 const docSources=allSources.filter(x=>(x.doc_id||x.source_file||'')===did);
-                // doc_id 形如 'xxx.pdf#29A17952'：文件名 + 短 hash 显示
+                // 文件名展示：doc_id 形如 '友好名.pdf#29A17952'；
+                // 旧数据可能为磁盘哈希文件名（如 fcc13f4b....pdf），反查 fileHashToName 得友好名
                 const parts=did.split('#');
-                const displayFile=parts[0]||did;
-                const hash8=parts[1]||'';
+                let displayFile=parts[0]||did;
+                const mf=displayFile.match(/^([0-9a-fA-F]{64})\.pdf$/);
+                if(mf&&fileHashToName[mf[1].toLowerCase()])displayFile=fileHashToName[mf[1].toLowerCase()];
+                const hash8=parts[1]||(mf?mf[1].slice(-8).toUpperCase():'');
                 srcHtml+=`<div class="src-doc-block"><div class="src-doc-title"><span class="src-id">${bn}</span><span class="src-file">${esc(displayFile)}</span>`;
                 if(hash8)srcHtml+=` <span class="src-file-hash">#${esc(hash8)}</span>`;
                 const firstSrc=docSources[0];
@@ -1477,7 +1497,7 @@ async function sendQuestion(){
                 });
             });
         }
-    }catch(e){const last=document.querySelector('.qa-messages .msg.bot:last-child');if(last)last.innerHTML='<span style="color:var(--danger);">请求失败</span>';}
+    }catch(e){console.error('QA render error:', e);const last=document.querySelector('.qa-messages .msg.bot:last-child');if(last)last.innerHTML='<span style="color:var(--danger);">请求失败</span>';}
 }
 function appendMsg(role,html){
     const el=document.createElement('div');el.className='msg '+role;el.innerHTML=html;
