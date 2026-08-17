@@ -112,13 +112,23 @@ class QAEngine:
 
         # 6. 封装结果 —— sources 带编号
         # idx 是 chunk 序号（回答中的 [1][2] 引用编号）；
-        # doc_id 是文档级标识（文件名#HASH8），前端用它映射到 B1/B2 文档编号。
+        # doc_id 是文档级标识（文件名#HASH8），前端用它映射到 B1/B2 文档编号；
+        # label 是用户上传时填写的补充描述（tag，如版本号），legend 显示。
+        _doc_meta_cache = {}
+
+        def _get_label(doc_id: str) -> str:
+            if doc_id not in _doc_meta_cache:
+                meta = self._doc_store.get_document(doc_id)
+                _doc_meta_cache[doc_id] = (meta.label if meta else "") or ""
+            return _doc_meta_cache[doc_id]
+
         source_list = [
             {
                 "idx": i,
                 "text": c.text[:200],
                 "source_file": c.source_file,
                 "doc_id": c.source_file,
+                "label": _get_label(c.source_file),
                 "location": c.location,
                 "score": round(c.score, 3),
             }

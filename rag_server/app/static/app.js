@@ -1321,6 +1321,8 @@ async function sendQuestion(){
                 const hash8=parts[1]||'';
                 srcHtml+=`<div class="src-doc-block"><div class="src-doc-title"><span class="src-id">${bn}</span><span class="src-file">${esc(displayFile)}</span>`;
                 if(hash8)srcHtml+=` <span class="src-file-hash">#${esc(hash8)}</span>`;
+                const firstSrc=docSources[0];
+                if(firstSrc&&firstSrc.label)srcHtml+=` <span class="doc-label-tag">${esc(firstSrc.label)}</span>`;
                 srcHtml+=`</div>`;
                 for(const s of docSources){
                     srcHtml+=`<div class="src-item" id="ref-${s.idx}" data-file="${escA(s.source_file||'')}" data-loc="${escA(s.location||'')}">`;
