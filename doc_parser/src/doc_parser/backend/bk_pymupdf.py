@@ -95,6 +95,7 @@ def _is_in_table_region(top, table_regions):
 
 def extract_pdf_with_pymupdf(filepath, config=None, get_config=None):
     """使用 PyMuPDF 解析 PDF，返回 Document 对象。"""
+    from doc_parser._merge import merge_cross_page_paragraphs
     from doc_parser._tables import (
         assign_table_chapters,
         clean_table,
@@ -147,7 +148,7 @@ def extract_pdf_with_pymupdf(filepath, config=None, get_config=None):
                         table_regions.append((bbox[1], bbox[3]))
                     extracted = tf.extract()
                     if extracted:
-                        page_tables.append(extracted)
+                        page_tables.append((extracted, bbox))
             except Exception:
                 page_tables, table_regions = [], []
 
@@ -158,20 +159,22 @@ def extract_pdf_with_pymupdf(filepath, config=None, get_config=None):
                     current_chapter, current_chapter_title = ch
 
             # 提取表格数据
-            for table_data in page_tables:
+            for table_data, bbox in page_tables:
                 if table_data and len(table_data) >= 2:
                     cleaned = clean_table(table_data)
                     if cleaned and len(cleaned) >= 2:
-                        tables.append(
-                            Table(
-                                rows=cleaned,
-                                page=page_num + 1,
-                                chapter=current_chapter,
-                                chapter_title=current_chapter_title,
-                                source_file=os.path.basename(filepath),
-                                index=len(tables) + 1,
-                            )
+                        table = Table(
+                            rows=cleaned,
+                            page=page_num + 1,
+                            chapter=current_chapter,
+                            chapter_title=current_chapter_title,
+                            source_file=os.path.basename(filepath),
+                            index=len(tables) + 1,
                         )
+                        # 供跨页合并判断使用；以私有属性保存，避免改变公开序列化格式。
+                        table._bbox = tuple(bbox)
+                        table._page_height = page_height
+                        tables.append(table)
 
             page_data.append((page_num + 1, page_lines, table_regions, header_y, footer_y))
 
@@ -206,6 +209,10 @@ def extract_pdf_with_pymupdf(filepath, config=None, get_config=None):
 
         # ========== 流式分段 + 章节标记 + 反查页码 ==========
         paragraphs = segment_and_locate(full_text, page_boundaries, filepath, cfg)
+
+        # ========== 跨页段落合并 ==========
+        max_merged = cfg.get("max_paragraph_length", 600) * 2  # 合并上限为普通段落上限的 2 倍
+        paragraphs = merge_cross_page_paragraphs(paragraphs, max_merged_length=max_merged)
 
         # ========== 数字断字后处理 ==========
         if cfg.get("normalize_number_spacing", True):

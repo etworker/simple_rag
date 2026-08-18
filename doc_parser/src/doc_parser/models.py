@@ -16,6 +16,8 @@ class Paragraph:
     index: int = 0
     # 文档内的原始块顺序；0 表示来源未提供顺序信息。
     order: int = 0
+    # 块类型：paragraph / table / heading / list_item 等
+    block_type: str = "paragraph"
 
     @property
     def location(self) -> str:
@@ -42,6 +44,7 @@ class Paragraph:
             "source_file": self.source_file,
             "index": self.index,
             "order": self.order,
+            "block_type": self.block_type,
         }
 
     @classmethod
@@ -55,6 +58,7 @@ class Paragraph:
             source_file=d.get("source_file", ""),
             index=d.get("index", 0),
             order=d.get("order", 0),
+            block_type=d.get("block_type", "paragraph"),
         )
 
     def to_markdown(self) -> str:

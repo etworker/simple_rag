@@ -97,6 +97,7 @@ def _is_in_table_region(line_top, table_regions):
 
 def extract_pdf_with_pdfplumber(filepath, config=None, get_config=None):
     """使用 pdfplumber 解析 PDF，返回 Document 对象。"""
+    from doc_parser._merge import merge_cross_page_paragraphs
     from doc_parser._tables import (
         assign_table_chapters,
         clean_table,
@@ -172,16 +173,18 @@ def extract_pdf_with_pdfplumber(filepath, config=None, get_config=None):
                 if table_data and len(table_data) >= 2:
                     cleaned = clean_table(table_data)
                     if cleaned and len(cleaned) >= 2:
-                        tables.append(
-                            Table(
-                                rows=cleaned,
-                                page=page_num,
-                                chapter=current_chapter,
-                                chapter_title=current_chapter_title,
-                                source_file=os.path.basename(filepath),
-                                index=len(tables) + 1,
-                            )
+                        table = Table(
+                            rows=cleaned,
+                            page=page_num,
+                            chapter=current_chapter,
+                            chapter_title=current_chapter_title,
+                            source_file=os.path.basename(filepath),
+                            index=len(tables) + 1,
                         )
+                        # 供跨页合并判断使用；以私有属性保存，避免改变公开序列化格式。
+                        table._bbox = tuple(pt.bbox)
+                        table._page_height = page_height
+                        tables.append(table)
 
             page_data.append((page_num, page_lines, table_regions, header_y, footer_y))
 
@@ -220,6 +223,10 @@ def extract_pdf_with_pdfplumber(filepath, config=None, get_config=None):
 
     # ========== 流式分段 + 章节标记 + 反查页码 ==========
     paragraphs = segment_and_locate(full_text, page_boundaries, filepath, cfg)
+
+    # ========== 跨页段落合并 ==========
+    max_merged = cfg.get("max_paragraph_length", 600) * 2
+    paragraphs = merge_cross_page_paragraphs(paragraphs, max_merged_length=max_merged)
 
     # ========== 数字断字后处理（PDF 文本层数字拆 run）==========
     normalize_number_spacing = cfg.get("normalize_number_spacing", True)

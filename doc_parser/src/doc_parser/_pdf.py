@@ -1,7 +1,7 @@
 """PDF 解析分发器（后端路由 + 智能选择）与预扫描。
 
 实际解析由 doc_parser.backend 中的各后端模块完成：
-  - bk_pdfplumber：pdfplumber（默认）
+  - bk_pymupdf   ：PyMuPDF 快路径
   - bk_mineru     ：MinerU VLM/OCR
   - bk_docling    ：IBM Docling
 本模块保留：
@@ -23,10 +23,28 @@ from doc_parser.backend.bk_pdfplumber import _assemble_line, _is_in_table_region
 # ============================================================
 
 
+def _sample_page_indices(num_pages: int, sample_pages: int) -> list[int]:
+    """返回均匀覆盖全文的预扫描页下标（0-based）。
+
+    ``sample_pages=0`` 表示扫描全部页面；有限采样时始终包含首页和末页，
+    避免只看前几页而漏掉文档后部的表格或扫描页。
+    """
+    if num_pages <= 0:
+        return []
+    if sample_pages <= 0 or sample_pages >= num_pages:
+        return list(range(num_pages))
+    if sample_pages == 1:
+        return [0]
+
+    indices = {round(i * (num_pages - 1) / (sample_pages - 1)) for i in range(sample_pages)}
+    return sorted(indices)
+
+
 def _quick_scan_pdf(filepath, sample_pages=5, cfg=None):
     """
     快速预扫描 PDF，收集决策所需的统计信息。
-    只读取前 N 页（默认 5 页），耗时通常 < 0.5s。
+    有限采样时均匀覆盖全文（默认 5 页），不是只读取前 N 页；
+    ``sample_pages=0`` 扫描全部页面。
 
     返回 dict:
       num_pages, sampled, avg_text_per_page, avg_tables_per_page,
@@ -49,13 +67,14 @@ def _quick_scan_pdf(filepath, sample_pages=5, cfg=None):
             if num_pages == 0:
                 return result
 
-            n = min(sample_pages, num_pages)
+            page_indices = _sample_page_indices(num_pages, int(sample_pages or 0))
+            n = len(page_indices)
             total_text = 0
             total_tables = 0
             large_image_pages = 0
             drawings_no_tables_pages = 0
 
-            for i in range(n):
+            for i in page_indices:
                 page = pdf.pages[i]
                 text = page.extract_text() or ""
                 tables = page.extract_tables()
@@ -91,7 +110,7 @@ def _quick_scan_pdf(filepath, sample_pages=5, cfg=None):
             result["avg_tables_per_page"] = total_tables / n
             result["large_image_ratio"] = large_image_pages / n
             drawings_ratio = (cfg or {}).get("scan_drawings_no_tables_ratio", 0.4)
-            result["has_drawings_no_tables"] = drawings_no_tables_pages > n * drawings_ratio
+            result["has_drawings_no_tables"] = drawings_no_tables_pages >= n * drawings_ratio
 
     except Exception as e:
         logger.debug(f"预扫描失败: {e}")
@@ -99,32 +118,55 @@ def _quick_scan_pdf(filepath, sample_pages=5, cfg=None):
     return result
 
 
+def _sample_borderless_table_hint(sample: str, table_keywords: list[str]) -> bool:
+    """判断单页文本样本是否包含无框线表格的强线索。"""
+    normalized = re.sub(r"\s+", " ", sample).strip()
+    compact = re.sub(r"\s+", "", sample)
+    keyword_hits = sum(1 for kw in table_keywords if kw and kw in normalized)
+
+    # 规则 PDF 常把“序号”拆成“序\n号”，所以同时检查去空白版本。
+    has_serial_header = "序号" in compact
+    has_table_header_pair = has_serial_header and any(
+        kw in normalized for kw in ("名称", "描述", "风险", "措施", "涉及", "责任")
+    )
+    aligned_lines = bool(re.search(r"\S+\s{3,}\S+\s{3,}\S+", sample))
+
+    # 有些 PDF 文本层只保留单空格，但表头仍呈现为多个短列。
+    short_column_lines = sum(1 for line in sample.splitlines() if len(line.split()) >= 3 and len(line.strip()) <= 80)
+    return has_table_header_pair or (keyword_hits >= 2 and (aligned_lines or short_column_lines >= 2))
+
+
 def _detect_borderless_table_hint(scan, cfg=None):
     """
     基于文本样本检测无框线表格的线索。
 
     判断依据：
-    - 文本中出现表头关键词（序号、名称、描述/风险/措施…）
-    - 短行密集且包含连续空格或制表符（列对齐特征）
+    - 文本中出现多个表头关键词；
+    - 表头存在“序号 + 风险/名称/涉及”等组合；
+    - 短行密集且包含连续空格或制表符（列对齐特征）。
+
+    单个采样页出现强表头组合即可触发，避免短通报中只有一页表格时被
+    全文平均值稀释；普通文本则仍需满足原有比例条件。
     """
     table_keywords = (cfg or {}).get(
         "table_keyword_list",
         ["序号", "名称", "描述", "风险", "措施", "类别", "编号", "责任人", "频率", "要求", "备注", "检查项", "标准"],
     )
+    samples = scan.get("text_samples", [])
+    if any(_sample_borderless_table_hint(sample, table_keywords) for sample in samples):
+        return True
+
     keyword_hits = 0
     aligned_line_hits = 0
-
-    for sample in scan.get("text_samples", []):
-        # 关键词命中
+    for sample in samples:
         for kw in table_keywords:
             if kw in sample:
                 keyword_hits += 1
                 break
-        # 连续空格/制表符 → 列对齐
         if re.search(r"\S+\s{3,}\S+\s{3,}\S+", sample):
             aligned_line_hits += 1
 
-    total = max(1, len(scan.get("text_samples", [])))
+    total = max(1, len(samples))
     keyword_ratio = (cfg or {}).get("table_keyword_hit_ratio", 0.5)
     aligned_ratio = (cfg or {}).get("table_aligned_line_ratio", 0.3)
     return (keyword_hits / total >= keyword_ratio) and (aligned_line_hits / total >= aligned_ratio)
@@ -175,7 +217,7 @@ def select_backend(filepath, cfg):
 
     # 4. 文本中出现表头关键词 + 列对齐特征（疑似无框线表格）→ Docling
     if _detect_borderless_table_hint(scan, cfg) and scan["avg_tables_per_page"] < low_table_rate:
-        return "docling", "文本中出现表格关键词及列对齐特征（疑似无框线表格，用 Docling）"
+        return "docling", "文本中出现表格表头或列对齐特征（疑似无框线表格，用 Docling）"
 
     # 5. 表格正常 → 数字文本快路径 PyMuPDF（秒级；相比 pdfplumber 快 10-50 倍）
     if scan["avg_tables_per_page"] >= 1:

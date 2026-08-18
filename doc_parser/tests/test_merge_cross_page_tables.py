@@ -112,14 +112,24 @@ def test_triple_page_merge():
 
 
 def test_adjacent_tables_without_duplicate_header_merge():
-    """相邻页且列数相同，续页不重复表头 → 合并，全行保留"""
+    """相邻页且列数相同、续页不重复表头时，同章节表格仍可合并。"""
     tables = [
-        _mk_table([["H"], ["a"]], page=1),
-        _mk_table([["b"], ["c"]], page=2),  # 无表头行, 直接数据
+        _mk_table([["H"], ["a"]], page=1, chapter="1"),
+        _mk_table([["b"], ["c"]], page=2, chapter="1"),  # 无表头行, 直接数据
     ]
     merged = _merge_cross_page_tables(tables)
     assert len(merged) == 1
     assert len(merged[0].rows) == 4  # H, a, b, c
+
+
+def test_adjacent_unrelated_tables_do_not_merge():
+    """连续页上的无关表格没有表头/章节连续性证据时不应误合并。"""
+    tables = [
+        _mk_table([["姓名", "年龄"], ["张三", "25"]], page=1, chapter="1"),
+        _mk_table([["设备", "状态"], ["服务器", "正常"]], page=2, chapter="2"),
+    ]
+    merged = _merge_cross_page_tables(tables)
+    assert len(merged) == 2
 
 
 def test_row_token_jaccard():

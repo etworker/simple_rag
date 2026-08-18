@@ -154,3 +154,36 @@ class TestSelectBackendNotScanWhenTextRich:
         monkeypatch.setattr(_pdf, "_quick_scan_pdf", lambda *a, **k: fake_scan)
         backend, _reason = _pdf.select_backend("fake.pdf", _cfg())
         assert backend == "docling"
+
+
+class TestPdfAutoSampling:
+    def test_representative_sampling_includes_document_tail(self):
+        from doc_parser._pdf import _sample_page_indices
+
+        assert _sample_page_indices(9, 5) == [0, 2, 4, 6, 8]
+        assert _sample_page_indices(9, 0) == list(range(9))
+        assert _sample_page_indices(3, 5) == [0, 1, 2]
+
+    def test_borderless_header_split_across_lines_uses_docling(self, monkeypatch):
+        """通报中的“序\n号 + 风险”表头即使只有单空格也应触发 Docling。"""
+        from doc_parser import _pdf
+
+        fake_scan = {
+            "num_pages": 9,
+            "sampled": 5,
+            "avg_text_per_page": 500,
+            "avg_tables_per_page": 0.0,
+            "large_image_ratio": 0.0,
+            "has_drawings_no_tables": False,
+            "text_samples": [
+                "正文内容",
+                "附件\n序\n号 风险措述 涉及企事业单位 局方督导单位部门",
+                "正文内容",
+                "正文内容",
+                "正文内容",
+            ],
+        }
+        monkeypatch.setattr(_pdf, "_quick_scan_pdf", lambda *a, **k: fake_scan)
+        backend, reason = _pdf.select_backend("fake.pdf", _cfg())
+        assert backend == "docling"
+        assert "表格" in reason

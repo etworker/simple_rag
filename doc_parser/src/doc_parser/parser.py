@@ -20,9 +20,9 @@
 import copy
 from pathlib import Path
 
-from doc_parser._docx import extract_docx
-
 # ── 向后兼容 re-exports（测试和 rag_server 直接 import 这些私有函数） ──
+from doc_parser._docx import extract_docx
+from doc_parser._merge import merge_cross_page_paragraphs as _merge_cross_page_paragraphs  # noqa: F401
 from doc_parser._pdf import _is_in_table_region, _words_to_lines, extract_pdf  # noqa: F401
 from doc_parser._tables import (  # noqa: F401
     _append_rows_skip_dup_header,
@@ -159,7 +159,7 @@ DEFAULT_CONFIG = {
     # 仍需按"；"拆分出标题）
     "inline_title_end_chars": "。；！？.!？",
     # ========== PDF 智能后端选择 ==========
-    # 快速预扫描的页数（0 表示全部页）
+    # 快速预扫描的页数（0 表示全部页；有限采样时均匀覆盖首页、中间页和末页）
     "scan_sample_pages": 5,
     # 扫描件判定：平均每页文字低于此值 → 疑似扫描件
     "scan_text_per_page_threshold": 50,

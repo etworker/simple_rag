@@ -70,14 +70,44 @@ def _row_token_jaccard(row_a, row_b) -> float:
     return len(tokens_a & tokens_b) / len(tokens_a | tokens_b)
 
 
+def _table_header(table):
+    """返回表格用于比较的表头；兼容规则后端和 Docling 输出。"""
+    headers = getattr(table, "headers", None) or []
+    if headers:
+        return list(headers)
+    rows = getattr(table, "rows", None) or []
+    return list(rows[0]) if rows else []
+
+
+def _row_is_sparse(row, empty_ratio: float = 0.4) -> bool:
+    """判断续页首行是否像被版面拆开的多行表头/续表首行。"""
+    if not row:
+        return False
+    empty = sum(1 for cell in row if not str(cell or "").strip())
+    return empty / len(row) >= empty_ratio and empty < len(row)
+
+
+def _has_visual_continuation(a, b, edge_ratio: float = 0.2) -> bool:
+    """判断前表接近页底、后表接近页顶的版面续接关系。"""
+    a_bbox = getattr(a, "_bbox", None)
+    b_bbox = getattr(b, "_bbox", None)
+    a_height = getattr(a, "_page_height", None)
+    b_height = getattr(b, "_page_height", None)
+    if not a_bbox or not b_bbox or not a_height or not b_height:
+        return False
+    return a_bbox[3] >= a_height * (1 - edge_ratio) and b_bbox[1] <= b_height * edge_ratio
+
+
 def _should_merge_tables(a, b, header_threshold: float = 0.85) -> bool:
     """判断两张表格是否应为同一逻辑表格的跨页片段。
 
-    合并判定: 同文件 + 页码连续 + 列数兼容 (差异 ≤ 1)。
+    合并判定：同文件、页码连续、列数兼容，并且满足以下至少一项：
+    - 两张表的表头相似；
+    - 两张表属于同一个已识别章节，且列数完全一致；
+    - 续页首行具有明显的稀疏续表特征（常见于跨页多行表头）。
 
-    表头相似度不作为合并前置条件——续页可能不重复表头。
-    表头相似度仅在 ``_append_rows_skip_dup_header`` 阶段用于决定
-    是否跳过续页首行（若与表头高度相似则视为重复表头跳过）。
+    续页可能不重复表头，因此同章节或稀疏续表首行是必要的保守兜底；
+    但没有章节、表头或版面续表证据时不再仅凭“连续页 + 列数相近”合并。
     """
     # 1. 同文件
     if a.source_file != b.source_file:
@@ -97,9 +127,23 @@ def _should_merge_tables(a, b, header_threshold: float = 0.85) -> bool:
     b_cols = len(b_rows[0]) if b_rows[0] else 0
     if abs(a_cols - b_cols) > 1:
         return False
-    # 表头相似度不作为合并条件；仅用于 _append 阶段跳过重复表头
-    _ = header_threshold  # 保留参数签名兼容外部调用
-    return True
+
+    # 4. 至少需要表头或章节连续性证据。
+    header_similarity = _row_token_jaccard(_table_header(a), _table_header(b))
+    same_header = header_similarity >= header_threshold
+    same_chapter = bool(
+        a.chapter
+        and b.chapter
+        and a.chapter == b.chapter
+        and (not a.chapter_title or not b.chapter_title or a.chapter_title == b.chapter_title)
+    )
+    sparse_continuation = _row_is_sparse(b_rows[0])
+    visual_continuation = _has_visual_continuation(a, b)
+    if not same_header and not same_chapter and not sparse_continuation and not visual_continuation:
+        return False
+
+    # 没有重复表头时，不允许列数变化后强行补空/截断。
+    return not (not same_header and a_cols != b_cols)
 
 
 def _append_rows_skip_dup_header(target, source, header_threshold: float = 0.85) -> list:
@@ -109,7 +153,7 @@ def _append_rows_skip_dup_header(target, source, header_threshold: float = 0.85)
     if not source_rows:
         return result
 
-    target_header = result[0] if result else None
+    target_header = _table_header(target)
     target_cols = len(target_header) if target_header else len(source_rows[0])
 
     for idx, row in enumerate(source_rows):
@@ -133,7 +177,8 @@ def merge_cross_page_tables(tables: list) -> list:
     1. 同一 source_file
     2. 页码连续 (后续表格的 page == 前一表格的 page/page_end + 1)
     3. 列数接近 (差异 ≤ 1)
-    续页的表头相似度仅用于 _append 阶段决定是否跳过重复行，不影响是否合并。
+    4. 表头相似、章节连续，或续页首行具有稀疏续表特征
+    续页的表头相似度还用于 _append 阶段决定是否跳过重复行。
 
     合并后:
     - 保留首张表格的 headers / page / chapter
