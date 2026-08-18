@@ -8,9 +8,12 @@
   - 集成 version_diff 进行预审核
 """
 
+import hashlib
 import json
 import os
+import re
 import time
+import unicodedata
 from dataclasses import asdict, dataclass
 
 import numpy as np
@@ -33,7 +36,9 @@ class DocMeta:
     paragraph_count: int = 0
     table_count: int = 0
     added_at: str = ""  # 入库时间 ISO
-    status: str = "active"  # active / rejected / deleted
+    status: str = "active"  # active / inactive / rejected / deleted
+    family_id: str = ""  # 同一逻辑文档族的稳定标识
+    is_primary: bool = False  # 是否为该文档族当前主版本
     page_count: int = 0
     char_count: int = 0
     file_hash: str = ""  # 文件 SHA-256
@@ -169,7 +174,57 @@ class DocStore:
             self._model = load_embedding_model(self._config.get("embedding", {}))
         return self._model
 
-    def add_document(self, filepath: str, original_filename: str = "", label: str = "") -> DocMeta:
+    @staticmethod
+    def family_id_for_filename(filename: str) -> str:
+        """根据文件名生成兼容旧数据的逻辑文档族标识。
+
+        文件名只是默认归族规则；后续可由用户/API 显式指定 family_id，
+        以支持改名后仍属于同一业务文档的情况。
+        """
+        normalized = unicodedata.normalize("NFKC", os.path.basename(filename or "")).strip().casefold()
+        normalized = re.sub(r"\s+", " ", normalized)
+        return "filename:" + hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:16]
+
+    @staticmethod
+    def _added_sort_key(meta: DocMeta) -> tuple[str, str]:
+        return (meta.added_at or "", meta.doc_id or "")
+
+    def get_primary_document(self, family_id: str) -> DocMeta | None:
+        """返回文档族当前主版本。"""
+        candidates = [
+            m
+            for m in self._documents.values()
+            if m.family_id == family_id and m.status == "active"
+        ]
+        if not candidates:
+            return None
+        primaries = [m for m in candidates if m.is_primary]
+        return max(primaries or candidates, key=self._added_sort_key)
+
+    def list_all_documents(self) -> list[DocMeta]:
+        """列出可管理的已入库文档，包括 active 和 inactive 历史版本。"""
+        docs = [m for m in self._documents.values() if m.status in ("active", "inactive")]
+        docs.sort(key=self._added_sort_key)
+        return docs
+
+    def get_document_by_hash(self, file_hash: str) -> DocMeta | None:
+        """按完整 hash 查找所有未删除文档，避免历史版本重复入库。"""
+        if not file_hash:
+            return None
+        for meta in self._documents.values():
+            if meta.status in ("active", "inactive") and meta.file_hash == file_hash:
+                return meta
+        return None
+
+    def add_document(
+        self,
+        filepath: str,
+        original_filename: str = "",
+        label: str = "",
+        family_id: str = "",
+        status: str = "active",
+        is_primary: bool | None = None,
+    ) -> DocMeta:
         """
         入库文档（解析 + embedding + 加入索引）
 
@@ -216,7 +271,12 @@ class DocStore:
         for p in indexable:
             p.source_file = doc_id
 
-        # 记录元数据
+        # 记录元数据。新版本在确认主版本前先以 inactive 写入，避免
+        # 入库过程中出现同一文档族两个 active 版本。
+        if status not in ("active", "inactive"):
+            raise ValueError(f"不支持的文档状态: {status}")
+        resolved_family_id = family_id or self.family_id_for_filename(doc.filename)
+        resolved_primary = bool(is_primary) if is_primary is not None else status == "active"
         meta = DocMeta(
             filename=doc.filename,
             filepath=filepath,
@@ -224,6 +284,9 @@ class DocStore:
             paragraph_count=len(doc.paragraphs),
             table_count=len(doc.tables),
             added_at=time.strftime("%Y-%m-%d %H:%M:%S"),
+            status=status,
+            family_id=resolved_family_id,
+            is_primary=resolved_primary,
             page_count=page_count,
             char_count=char_count,
             file_hash=file_hash,
@@ -313,8 +376,9 @@ class DocStore:
         model = self._get_model()
         q_emb = model.encode([query], normalize_embeddings=True).astype(np.float32)
 
-        # 向量检索（Retriever 抽象，未来可换 pgvector/OpenSearch）
-        scores, indices = self._retriever.search(q_emb, top_k)
+        # 为保证过滤 inactive 后仍能补足 top_k，先检索全部向量，再按文档状态过滤。
+        # 后续可替换为带 metadata filter 的 active-only 索引。
+        scores, indices = self._retriever.search(q_emb, self._retriever.count)
 
         # 封装结果（scores/indices 为一维，已按相似度降序）
         results = []
@@ -324,6 +388,9 @@ class DocStore:
             if score < threshold:
                 continue
             para = self._paragraphs[idx]
+            meta = self._documents.get(para.source_file)
+            if not meta or meta.status != "active":
+                continue
             results.append(
                 RetrievedChunk(
                     text=para.text,
@@ -333,21 +400,57 @@ class DocStore:
                     paragraph_index=idx,
                 )
             )
+            if len(results) >= top_k:
+                break
 
         return results
 
     def list_documents(self) -> list[DocMeta]:
-        """列出所有已入库文档（按入库时间排序）"""
+        """列出当前有效的主版本文档（供问答和预审核使用）。"""
         docs = [m for m in self._documents.values() if m.status == "active"]
-        docs.sort(key=lambda d: d.added_at)
+        docs.sort(key=self._added_sort_key)
         return docs
 
     def get_latest_document_by_filename(self, filename: str) -> DocMeta | None:
-        """返回最新插入的 active 同名文档。"""
-        for meta in reversed(list(self._documents.values())):
-            if meta.filename == filename and meta.status == "active":
-                return meta
-        return None
+        """返回文件名对应的当前 active 版本，按 added_at 稳定选择。"""
+        family_id = self.family_id_for_filename(filename)
+        matches = [
+            m
+            for m in self._documents.values()
+            if (m.family_id == family_id or m.filename == filename) and m.status == "active"
+        ]
+        return max(matches, key=self._added_sort_key) if matches else None
+
+    def set_primary_document(self, doc_id: str) -> DocMeta | None:
+        """将文档设为其文档族的唯一当前版本，其他版本转为 inactive。"""
+        target = self._documents.get(doc_id)
+        if not target or target.status in ("deleted", "rejected"):
+            return None
+        family_id = target.family_id or self.family_id_for_filename(target.filename)
+        target.family_id = family_id
+        previous = {
+            m.doc_id: (m.status, m.is_primary)
+            for m in self._documents.values()
+            if m.family_id == family_id
+        }
+        try:
+            for meta in self._documents.values():
+                if meta.family_id == family_id and meta.status in ("active", "inactive"):
+                    meta.status = "active" if meta.doc_id == doc_id else "inactive"
+                    meta.is_primary = meta.doc_id == doc_id
+            self._save_to_disk()
+        except Exception:
+            for key, (status, is_primary) in previous.items():
+                self._documents[key].status = status
+                self._documents[key].is_primary = is_primary
+            raise
+        log.info(f"切换当前文档版本: {target.filename} -> {target.doc_id}")
+        return target
+
+    def get_active_document_by_hash(self, file_hash: str) -> DocMeta | None:
+        """返回具有相同完整 SHA-256 的 active 文档。"""
+        meta = self.get_document_by_hash(file_hash)
+        return meta if meta and meta.status == "active" else None
 
     def get_document(self, doc_id: str) -> DocMeta | None:
         """获取文档元数据；doc_id 精确匹配，filename 返回最新 active 版本。"""
@@ -417,6 +520,34 @@ class DocStore:
             with open(meta_path, encoding="utf-8") as f:
                 meta_dict = json.load(f)
             self._documents = {k: DocMeta(**v) for k, v in meta_dict.items()}
+            # 兼容旧数据：补全文档族并把同族多个 active 版本收敛为最新主版本。
+            need_save = False
+            families = {}
+            for meta in self._documents.values():
+                if not meta.family_id:
+                    meta.family_id = self.family_id_for_filename(meta.filename)
+                    need_save = True
+                if meta.status in ("active", "inactive"):
+                    families.setdefault(meta.family_id, []).append(meta)
+            for family_docs in families.values():
+                active_docs = [m for m in family_docs if m.status == "active"]
+                if len(active_docs) > 1:
+                    primary = max(active_docs, key=self._added_sort_key)
+                    for meta in active_docs:
+                        new_status = "active" if meta is primary else "inactive"
+                        new_primary = meta is primary
+                        if meta.status != new_status or meta.is_primary != new_primary:
+                            meta.status = new_status
+                            meta.is_primary = new_primary
+                            need_save = True
+                elif len(active_docs) == 1:
+                    if not active_docs[0].is_primary:
+                        active_docs[0].is_primary = True
+                        need_save = True
+                for meta in family_docs:
+                    if meta.status != "active" and meta.is_primary:
+                        meta.is_primary = False
+                        need_save = True
 
             # 2. 段落
             if os.path.exists(paras_path):
@@ -428,7 +559,6 @@ class DocStore:
             self._retriever.load(self._persist_dir)
 
             # 回填缺失的 page_count / char_count（所有数据加载完毕后）
-            need_save = False
             for fname, meta in self._documents.items():
                 if meta.page_count == 0 and meta.filepath and meta.filepath.lower().endswith(".pdf"):
                     try:

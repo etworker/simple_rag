@@ -37,12 +37,12 @@ class AppState:
         self._load_review_cache()
 
     def save_review_cache(self):
-        """原子持久化已完成任务；失败时向调用方传播。"""
+        """原子持久化已完成或失败且带结果的任务；失败时向调用方传播。"""
         os.makedirs(os.path.dirname(self.review_cache_path), exist_ok=True)
         to_save = {}
         for tid, task in self.review_tasks.items():
             status = task.get("status")
-            if status in ("done", "confirmed", "rejected") and task.get("result"):
+            if status in ("done", "error", "confirmed", "rejected") and task.get("result"):
                 to_save[tid] = {
                     "status": status,
                     "filename": task["filename"],
@@ -53,6 +53,10 @@ class AppState:
                     "old_version_filepath": task.get("old_version_filepath", ""),
                     "old_doc_filename": task.get("old_doc_filename", ""),
                     "replace_doc_id": task.get("replace_doc_id", ""),
+                    "existing_primary_doc_id": task.get("existing_primary_doc_id", ""),
+                    "family_id": task.get("family_id", ""),
+                    "version_action": task.get("version_action", ""),
+                    "ingested_doc_id": task.get("ingested_doc_id", ""),
                     "label": task.get("label", ""),
                 }
         cache = {"tasks": to_save, "confirmed_or_rejected": list(self.confirmed_or_rejected)}
@@ -67,7 +71,7 @@ class AppState:
             raise
 
     def _load_review_cache(self):
-        """启动时恢复已完成的 review task 及确认状态"""
+        """启动时恢复已完成或失败的 review task 及确认状态"""
         if os.path.exists(self.review_cache_path):
             try:
                 with open(self.review_cache_path, encoding="utf-8") as f:

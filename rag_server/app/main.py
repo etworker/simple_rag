@@ -8,6 +8,8 @@ RAG 文档问答系统 — FastAPI 主入口
 
 import os
 import sys
+import time
+import uuid
 
 from loguru import logger
 
@@ -45,7 +47,7 @@ _load_secrets()
 
 import asyncio
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.websockets import WebSocket, WebSocketDisconnect
@@ -144,6 +146,38 @@ _state.init_qa(qa_engine)
 
 # FastAPI app
 app = FastAPI(title="RAG 文档问答系统", version="0.1.0")
+
+
+@app.middleware("http")
+async def request_logging(request: Request, call_next):
+    """记录 API 请求生命周期，不读取请求正文或查询参数。"""
+    path = request.url.path
+    if not path.startswith("/api/") or path == "/api/logs/tail":
+        return await call_next(request)
+
+    request_id = request.headers.get("x-request-id") or uuid.uuid4().hex[:12]
+    started = time.perf_counter()
+    log.info("HTTP 开始: id={} {} {}", request_id, request.method, path)
+    response = None
+    try:
+        response = await call_next(request)
+        return response
+    except Exception:
+        log.exception("HTTP 异常: id={} {} {}", request_id, request.method, path)
+        raise
+    finally:
+        status_code = response.status_code if response is not None else 500
+        elapsed_ms = (time.perf_counter() - started) * 1000
+        log.info(
+            "HTTP 结束: id={} {} {} status={} elapsed_ms={:.1f}",
+            request_id,
+            request.method,
+            path,
+            status_code,
+            elapsed_ms,
+        )
+        if response is not None:
+            response.headers["X-Request-ID"] = request_id
 
 # 静态文件
 os.makedirs(STATIC_DIR, exist_ok=True)

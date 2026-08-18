@@ -6,7 +6,7 @@
     <title>RAG 文档问答系统</title>
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
-    <link rel="stylesheet" href="/static/style.css?v=5">
+    <link rel="stylesheet" href="/static/style.css?v=13">
 </head>
 <body>
 <div class="topbar">
@@ -29,7 +29,6 @@
                     📄 <span>点击或拖拽上传（PDF/Word）</span>
                     <input type="file" id="fileInput" accept=".pdf,.docx" onchange="handleUpload(this.files[0])">
                 </div>
-                <input type="text" id="docLabelInput" class="doc-label-input" placeholder="补充描述（可选，建议填版本号如 R5-21）" onkeydown="if(event.key==='Enter'){event.stopPropagation();}" title="为文档添加补充描述（如版本号），便于同名文档区分">
             </div>
             <div class="step-area" id="stepArea">
                 <div class="step-title"><span id="stepTitle">处理中...</span><span class="step-cancel" onclick="cancelUpload()">✕</span></div>
@@ -70,8 +69,10 @@
             <div class="review-panel" id="reviewPanel">
 <div class="review-actions">
 <span class="info" id="reviewInfo">⚠️ 发现矛盾</span>
-<button class="btn btn-ok" onclick="confirmIngest()">确认入库</button>
-<button class="btn btn-no" onclick="rejectIngest()">取消入库</button>
+<button id="reviewRerunBtn" class="btn btn-rerun" onclick="forceReReview()" style="display:none">↻ 重新执行预审核</button>
+<button id="reviewExportBtn" class="btn btn-export" onclick="exportReviewReport()" disabled>导出 HTML 报告</button>
+<button id="reviewConfirmBtn" class="btn btn-ok" onclick="confirmIngest()" disabled>确认入库</button>
+<button id="reviewRejectBtn" class="btn btn-no" onclick="rejectIngest()" disabled>取消入库</button>
 </div>
                 <div class="conflict-list" id="conflictList"></div>
                 <div class="compare-panel" id="comparePanel">
@@ -97,6 +98,9 @@
             </div>
             <div class="qa-sidebar-list" id="qaSessionList">
                 <div class="qa-sidebar-empty">暂无历史会话</div>
+            </div>
+            <div class="qa-danger-zone">
+                <button class="text-btn danger" onclick="clearQaHistory()" title="删除全部问答历史">🔴 清空历史</button>
             </div>
         </div>
         <div class="qa-sidebar-toggle" id="qaSidebarToggle" onclick="toggleQaSidebar()">◀</div>
@@ -200,8 +204,11 @@
                 <textarea id="prompt-context" class="prompt-area" rows="3"></textarea>
                 <div class="setting-section-title">冲突警告模板</div>
                 <textarea id="prompt-conflict" class="prompt-area" rows="3"></textarea>
-                <div class="setting-section-title">Judge Prompt 文件路径（空=内置默认）</div>
-                <div class="setting-row"><input id="judge-prompt_file" class="long" placeholder="留空使用内置 prompt"></div>
+                <div class="setting-section-title">跨文档一致性 Judge Prompt</div>
+                <div class="hint prompt-help">用于预审核的跨文档矛盾判断，也用于问答中的跨文档冲突检测。留空使用系统内置 prompt；模板必须保留 <code>{count}</code> 和 <code>{items}</code> 占位符。</div>
+                <textarea id="judge-prompt_template" class="prompt-area" rows="18" placeholder="留空使用内置 prompt。自定义模板示例：请判断以下 {count} 对段落...\n\n{items}\n\n请返回 JSON 数组..."></textarea>
+                <div class="setting-section-title">Judge Prompt 文件路径（优先级高于上面的模板）</div>
+                <div class="setting-row"><input id="judge-prompt_file" class="long" placeholder="留空使用上面的模板或内置 prompt"></div>
             </div>
             <!-- Chat -->
             <div class="sp" id="sp-chat">
@@ -226,6 +233,6 @@
     </div>
 </div>
 
-<script src="/static/app.js?v=8"></script>
+<script src="/static/app.js?v=21"></script>
 </body>
 </html>

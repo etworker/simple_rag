@@ -61,6 +61,7 @@ DEFAULT_CONFIG = {
     "retrieval": {
         "top_k": 5,
         "similarity_threshold": 0.5,
+        "context_radius": 2,
     },
     "pre_review": {
         "similarity_threshold": 0.80,
@@ -90,12 +91,15 @@ DEFAULT_CONFIG = {
         "system": (
             "你是一个企业文档问答助手。根据提供的参考资料回答用户问题。\n"
             "要求：\n"
-            "1. 仅基于参考资料回答，不要编造信息\n"
-            "2. 引用来源时使用简短编号，如 [1] [2]，对应参考资料列表中的编号，不要写出完整文件名或路径\n"
-            "3. 参考资料已以 [1] 文件名 | 位置\\n段落内容 的形式给出，编号 [1] / [2] 对应底部来源编号 B1 / B2\n"
-            "4. 如果参考资料中有矛盾描述，必须醒目指出\n"
-            "5. 如果参考资料不足以回答，明确告知用户\n"
-            "6. 对于关于知识库本身的元数据问题（如共几篇文档），根据参考资料的来源信息如实回答"
+            "1. 先直接回答用户问题，再补充必要的解释；仅基于参考资料，不要编造信息。\n"
+            "2. 先综合所有相关资料，再组织成一份连贯、去重的答案；不要把每个参考片段逐条改写成列表。相同事实只表达一次，可在结论末尾合并多个引用编号。\n"
+            "3. 流程、方法、规范类问题：按照资料明确的先后顺序或逻辑阶段整理（例如适用条件/触发场景→识别或执行→审批、记录、上报→后续处置）；资料没有明确顺序时不要自行补造顺序。\n"
+            "4. 资料中有明确的条款、方法、条件或例外时，应完整归纳关键内容，不要只回答章节标题或转述‘见某表/某程序’。如果细节确实只在被引用的表单或附件中，需明确说明资料边界。\n"
+            "5. 引用来源时使用简短编号，如 [1] [2]，对应参考资料列表中的编号，不要写出完整文件名或路径；只在对应事实后使用必要引用，不要单独罗列来源清单。\n"
+            "6. 参考资料已以 [1] 文件名 | 位置\\n段落内容的形式给出，编号 [1] / [2] 对应底部来源编号 B1 / B2。\n"
+            "7. 如果参考资料中有矛盾描述，必须醒目指出，并分别说明差异；不要自行选择或合并矛盾内容。\n"
+            "8. 如果参考资料不足以回答，明确告知用户缺少什么信息；不要用常识补全。\n"
+            "9. 对于关于知识库本身的元数据问题（如共几篇文档），根据参考资料的来源信息如实回答"
         ),
         "context_template": "[{idx}] {source} | {location}\n{text}\n",
         "conflict_warning": "\n⚠️ 注意：以下文档对此问题的描述存在矛盾：\n{conflicts}\n请以最新版本或上级文档为准。",
@@ -124,6 +128,7 @@ CONFIG_DESCRIPTIONS = {
     "embedding.device": "向量模型运行设备。auto=自动选择，cpu=仅CPU，cuda=GPU，mps=Mac GPU。",
     "embedding.dtype": "向量模型精度。auto=自动，float16=半精度（省显存），float32=全精度（更准）。",
     "retrieval.top_k": "检索时返回的最相关段落数量。增大可提高召回率但可能引入噪音。",
+    "retrieval.context_radius": "每个命中段落额外带入的同文档前后相邻段落数量。用于补齐被拆分的流程上下文。",
     "retrieval.similarity_threshold": "检索相似度下限。低于此分数的段落不会返回给用户。",
     "pre_review.similarity_threshold": "版本对比时的段落配对相似度阈值。只有向量相似度超过此值的段落对才会进入差异比较流程。",
     "pre_review.version_similarity_threshold": "整篇文档相似度达到此阈值时走版本差异对比，否则走跨文档一致性检查。",
@@ -131,6 +136,8 @@ CONFIG_DESCRIPTIONS = {
     "pre_review.parse_backend": "PDF 解析后端。auto=智能路由（扫描件→mineru，无框线表格→docling，数字文本→pymupdf）；pymupdf=快路径；docling=深度学习版面+表格（最准，GPU 加速）；mineru=中文扫描件 OCR；pdfplumber=轻量兜底。",
     "pre_review.docling_device": "docling 推理设备。auto=自动探测（有 GPU 用 cuda）；cuda=强制 GPU；cpu=强制 CPU。仅 parse_backend=docling 时生效。",
     "pre_review.docling_batch_size": "docling 推理 batch（0=默认 4）。layout/table/ocr 多页一起推理可提升 GPU 利用率；T4 建议 16-32，显存小或报 OOM 时调回 4。",
+    "judge.prompt_file": "跨文档 Judge Prompt 文件路径。设置后优先使用该文件；留空则使用下面的自定义模板或系统内置默认。",
+    "judge.prompt_template": "跨文档一致性判断 Prompt 模板。必须保留 {count}（段落对数量）和 {items}（待判断内容）占位符；留空使用系统内置默认。该配置同时用于预审核跨文档矛盾检测和问答冲突检测。",
     "conflict_detection.min_score": "冲突检测最低置信度。LLM返回的冲突置信度低于此值时不报告为冲突。",
     "conflict_detection.min_similarity": "冲突检测段落配对最低相似度。只有超过此相似度的跨文档段落对才进入冲突检测。",
     "conflict_detection.max_similarity": "冲突检测段落配对最高相似度。超过此值的段落对被视为内容相同（非冲突），不进入检测。",

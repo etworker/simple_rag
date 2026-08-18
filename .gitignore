@@ -83,3 +83,5 @@ backend_compare/
 *.log
 
 semantic-review/
+screenshots/
+ab_ppt/

@@ -8,10 +8,14 @@ PDF 页面渲染缓存服务
 
 import hashlib
 import os
+from threading import Lock
 
 from loguru import logger as log
 
 from app.paths import cache_subdir
+
+
+_RENDER_LOCK = Lock()
 
 
 def _tolerant_search_rects(pg, highlight, min_len: int = 12):
@@ -113,10 +117,16 @@ class PageRenderer:
             png_path = os.path.join(cache_subdir, f"page_{page:03d}.png")
 
         if os.path.exists(png_path):
+            log.debug("页面缓存命中: {} 第{}页 highlight={}", os.path.basename(pdf_path), page, bool(highlight))
             return png_path
 
-        # 按需渲染
-        self._render_page(pdf_path, page, png_path, highlight)
+        # 同一页面并发请求时，二次检查避免重复打开 PDF 和渲染。
+        with _RENDER_LOCK:
+            if os.path.exists(png_path):
+                log.debug("页面缓存命中（并发等待后）: {} 第{}页 highlight={}", os.path.basename(pdf_path), page, bool(highlight))
+                return png_path
+            log.debug("页面缓存未命中，开始渲染: {} 第{}页 highlight={}", os.path.basename(pdf_path), page, bool(highlight))
+            self._render_page(pdf_path, page, png_path, highlight)
         return png_path
 
     def get_page_count(self, pdf_path: str) -> int:
