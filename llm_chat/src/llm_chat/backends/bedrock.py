@@ -6,7 +6,7 @@ import json
 import urllib.request
 
 from llm_chat.backends.base import BaseHTTPBackend
-from llm_chat.defaults import BEDROCK_DEFAULTS
+from llm_chat.defaults import BEDROCK_DEFAULTS, DEFAULT_LLM_MODEL
 from llm_chat.retry import retry_http
 
 
@@ -37,7 +37,7 @@ class BedrockBackend(BaseHTTPBackend):
         retry_backoff: float = 0,
         **kwargs,
     ):
-        self.model = model or BEDROCK_DEFAULTS.get("model", "zai.glm-4.7-flash")
+        self.model = model or BEDROCK_DEFAULTS.get("model", DEFAULT_LLM_MODEL)
         self.region = region or BEDROCK_DEFAULTS["region"]
         self._init_common(BEDROCK_DEFAULTS, api_key_env, api_key, max_tokens, timeout, max_retries, retry_backoff)
 

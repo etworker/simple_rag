@@ -7,20 +7,29 @@ llm_chat 默认配置常量
 
 import os
 
+# 环境变量名（集中常量，避免裸字面量散落多处）
+ENV_LLM_BACKEND = "LLM_BACKEND"
+ENV_LLM_MODEL = "LLM_MODEL"
+ENV_AWS_REGION = "AWS_REGION"
+BEDROCK_API_KEY_ENV = "AWS_BEARER_TOKEN_BEDROCK"  # Bedrock Bearer Token 所在环境变量
+
+# 默认模型（按后端分）
+DEFAULT_LLM_MODEL = "zai.glm-4.7-flash"  # Bedrock 默认
+
 # 默认后端
-DEFAULT_BACKEND = os.environ.get("LLM_BACKEND", "bedrock")
+DEFAULT_BACKEND = os.environ.get(ENV_LLM_BACKEND, "bedrock")
 
 # 默认模型（按后端分）
 DEFAULT_MODELS = {
-    "bedrock": os.environ.get("LLM_MODEL", "zai.glm-4.7-flash"),
-    "bedrock_converse": os.environ.get("LLM_MODEL", "zai.glm-4.7-flash"),
-    "openai": os.environ.get("LLM_MODEL", "gpt-4o"),
+    "bedrock": os.environ.get(ENV_LLM_MODEL, DEFAULT_LLM_MODEL),
+    "bedrock_converse": os.environ.get(ENV_LLM_MODEL, DEFAULT_LLM_MODEL),
+    "openai": os.environ.get(ENV_LLM_MODEL, "gpt-4o"),
 }
 
 # Bedrock 后端默认配置
 BEDROCK_DEFAULTS = {
-    "region": os.environ.get("AWS_REGION", "us-east-1"),
-    "api_key_env": "AWS_BEARER_TOKEN_BEDROCK",
+    "region": os.environ.get(ENV_AWS_REGION, "us-east-1"),
+    "api_key_env": BEDROCK_API_KEY_ENV,
     "max_tokens": 2048,
     "timeout": 120,
     "max_retries": 3,

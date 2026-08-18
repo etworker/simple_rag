@@ -10,7 +10,7 @@ llm-chat — 轻量多后端 LLM 多轮对话管理
         backend="bedrock",
         model="zai.glm-4.7-flash",
         region="us-east-1",
-        api_key_env="AWS_BEARER_TOKEN_BEDROCK",
+        api_key_env=BEDROCK_API_KEY_ENV,
     )
 
     # OpenAI 兼容
@@ -31,6 +31,7 @@ from loguru import logger
 logger.disable("llm_chat")  # 库默认安静：由应用入口(rag_server)或 examples 的 configure_logger() 开启
 
 from llm_chat.defaults import (  # noqa: E402
+    BEDROCK_API_KEY_ENV,
     BEDROCK_DEFAULTS,
     DEFAULT_BACKEND,
     DEFAULT_MODELS,
@@ -42,8 +43,10 @@ from llm_chat.profile import resolve_llm_config, resolve_llm_profile  # noqa: E4
 from llm_chat.session import ChatSession, Message  # noqa: E402
 
 __all__ = [
+    "BEDROCK_API_KEY_ENV",
     "BEDROCK_DEFAULTS",
     "DEFAULT_BACKEND",
+    "DEFAULT_LLM_MODEL",
     "DEFAULT_MODELS",
     "OPENAI_DEFAULTS",
     "SESSION_DEFAULTS",
