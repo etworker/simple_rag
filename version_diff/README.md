@@ -13,7 +13,7 @@
 
 ```bash
 # 推荐：仓库根目录一键安装（uv workspace，自动装齐 4 模块 + 匹配 GPU 的 torch）
-cd .. && python scripts/install_system.py
+cd .. && python setup_env.py
 
 # 或仅同步本模块（uv workspace 自动解析 doc_parser + llm_chat）
 cd version_diff

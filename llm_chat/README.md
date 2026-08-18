@@ -31,7 +31,7 @@ Python >= 3.10
 
 ```bash
 # 推荐：在 simple_rag 仓库根目录一键安装（uv workspace，含 LLM 之外的全部模块）
-python scripts/install_system.py
+python setup_env.py
 
 # 或单独同步本模块（uv workspace 自动解析）
 cd llm_chat

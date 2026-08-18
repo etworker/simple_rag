@@ -7,23 +7,16 @@ echo.
 
 cd /d "%~dp0"
 
-REM 检查 uv 是否可用
-where uv >nul 2>&1
+REM 创建虚拟环境、安装并校验 CPU/GPU 依赖
+echo [1/3] 配置环境...
+call setup_env.bat
 if %errorlevel% neq 0 (
-    echo [错误] 未找到 uv，请先安装: https://docs.astral.sh/uv/
+    echo [错误] 环境配置失败
     pause
     exit /b 1
 )
 
-REM 同步依赖
-echo [1/3] 同步依赖...
-cd rag_demo
-uv sync
-if %errorlevel% neq 0 (
-    echo [错误] 依赖同步失败
-    pause
-    exit /b 1
-)
+cd rag_server
 
 REM 加载环境变量
 if exist ".env" (
@@ -47,4 +40,5 @@ echo   访问地址: http://localhost:8000
 echo   API 文档: http://localhost:8000/docs
 echo   按 Ctrl+C 停止
 echo.
-uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+REM 使用已同步的 workspace 虚拟环境启动，避免 uv run 再次按无 extra 状态同步
+..\.venv\Scripts\python.exe -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000

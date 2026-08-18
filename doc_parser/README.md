@@ -43,18 +43,19 @@ Python >= 3.10
 
 ```bash
 # 方式一：一键安装（推荐，在 simple_rag 仓库根目录）
-#   - 有 NVIDIA GPU  → CUDA 版 torch（默认 cu124，可用 --cuda 覆盖）
+#   - 有 NVIDIA GPU  → CUDA 版 torch（cu126）
 #   - 无 GPU        → CPU 版 torch（docling/mineru 均可用，仅推理较慢）
 #   - 同时安装 dev + docling + mineru 全部 extras
 
 # 机器有系统 Python 时：
-python scripts/install_system.py                 # 全量
+python setup_env.py                 # 全量
 
 # 机器只有 uv、没有系统 Python 时（uv 会自动下载托管 Python，无需先装 python）：
-uv run --no-project python scripts/install_system.py
+uv run --no-project python setup_env.py
 
-python scripts/install_system.py --sync-only     # 跳过 torch 步骤，仅 uv sync
-python scripts/install_system.py --cuda 121      # 指定 CUDA 版本
+# 强制选择运行时：
+python setup_env.py --device cpu
+python setup_env.py --device gpu
 
 # 方式二：手动 uv 安装（在仓库根目录执行，uv workspace 统一解析）
 uv sync --project doc_parser                     # doc_parser 基础依赖
