@@ -16,7 +16,9 @@ from doc_parser import Document
 from doc_parser import parse as _raw_parse
 from loguru import logger as log
 
-_DEFAULT_CACHE_DIR = os.path.join(os.path.expanduser("~"), ".simple_rag", "parse_cache")
+from version_diff.paths import cache_subdir
+
+_DEFAULT_CACHE_DIR = cache_subdir("parse_cache")
 
 
 def compute_sha256(filepath: str) -> str:

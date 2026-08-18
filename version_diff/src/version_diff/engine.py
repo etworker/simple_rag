@@ -266,6 +266,8 @@ class DiffEngine:
             judge_config=self.config.judge,
             on_batch=_on_batch_callback,
         )
+        if judge_result.incomplete:
+            raise RuntimeError("LLM 矛盾判断未完成，预审核结果不可判定为安全")
         log.info(
             f"判断完成: {len(judge_result.inconsistent_items)} 处矛盾"
             f" (+{len(judge_result.suspect_items)} 疑似)（跨文档） ({time.time() - t4:.1f}s)"
@@ -906,11 +908,26 @@ class DiffEngine:
         import difflib as _difflib
 
         _deterministic = []
+        # 数值与业务单位同时出现时，数值变化本身就是可确定的实质变更。
+        # 这类变化（例如 30分钟→15分钟、75%→70%）不得交给 LLM 决定，
+        # 避免模型波动把明确的 SLA/阈值变化误归为元数据。
+        _quantity_pattern = re.compile(
+            r"(?<![\d.])\d+(?:\.\d+)?\s*(?:%|％|秒|分钟|小时|天|人|个|次|项|台|年|月|日|[KMGT]B)(?![A-Za-z0-9_])",
+            re.IGNORECASE,
+        )
         for c in need_llm:
             _old_n = re.sub(r"\s+", "", c.old_text or "")
             _new_n = re.sub(r"\s+", "", c.new_text or "")
             if not _old_n or not _new_n:
                 continue
+
+            _old_quantities = _quantity_pattern.findall(_old_n)
+            _new_quantities = _quantity_pattern.findall(_new_n)
+            if _old_quantities != _new_quantities and (_old_quantities or _new_quantities):
+                c.summary = f"数值变化: {', '.join(_old_quantities) or '无'} → {', '.join(_new_quantities) or '无'}"
+                keep.append(_classify_change("content", c))
+                continue
+
             _sm = _difflib.SequenceMatcher(None, _old_n, _new_n, autojunk=False)
             _ops = _sm.get_opcodes()
             # 只有 equal+delete（内容被删）或 equal+insert（内容被加）
@@ -948,7 +965,7 @@ class DiffEngine:
         noise_count = modified_total - len(need_llm)
         log.info(
             f"  版本diff过滤: {modified_total} modified → "
-            f"规则过滤 {noise_count} (含跟踪表/日期/编号) → "
+            f"规则过滤 {noise_count} (含跟踪表/日期/编号/数值变化) → "
             f"LLM判断 {len(need_llm)} ({num_batches} batches)"
         )
 
@@ -966,25 +983,43 @@ class DiffEngine:
             prompt = self._VERSION_FILTER_PROMPT.format(count=len(batch), items=items_text)
 
             results = call_llm_json(prompt, llm_config)
-            if results:
-                for r in results:
-                    if not isinstance(r, dict):
-                        continue
-                    idx = int(r.get("index", 0)) - 1
-                    if 0 <= idx < len(batch):
-                        c = batch[idx]
-                        if r.get("keep", False):
-                            c.summary = r.get("summary", "")
-                            c = _classify_change("content", c)
-                            keep.append(c)
-                        else:
-                            c.summary = r.get("summary", "") or "非实质变更"
-                            c = _classify_change("metadata", c)
-                            minor.append(c)
-            else:
+            if not results:
                 # LLM 失败全部保留（保守策略）
                 for c in batch:
                     keep.append(_classify_change("content", c))
+                continue
+
+            # 响应必须恰好覆盖批次中的每个索引。缺失、重复、非法或越界项
+            # 不得导致变更静默消失；无法可靠判定的项按实质变更保留。
+            indexed_results: dict[int, dict] = {}
+            invalid_indices: set[int] = set()
+            for r in results:
+                if not isinstance(r, dict):
+                    continue
+                try:
+                    idx = int(r.get("index", 0)) - 1
+                except (TypeError, ValueError):
+                    continue
+                if not 0 <= idx < len(batch):
+                    continue
+                if type(r.get("keep")) is not bool:
+                    invalid_indices.add(idx)
+                    continue
+                if idx in indexed_results:
+                    invalid_indices.add(idx)
+                    continue
+                indexed_results[idx] = r
+
+            for idx, c in enumerate(batch):
+                r = indexed_results.get(idx)
+                if r is None or idx in invalid_indices:
+                    keep.append(_classify_change("content", c))
+                elif r.get("keep", False):
+                    c.summary = r.get("summary", "")
+                    keep.append(_classify_change("content", c))
+                else:
+                    c.summary = r.get("summary", "") or "非实质变更"
+                    minor.append(_classify_change("metadata", c))
 
         log.info(f"  版本diff过滤完成: {len(changes)} → {len(keep)} 实质性 + {len(minor)} 细微变更")
         for i, c in enumerate(keep, 1):

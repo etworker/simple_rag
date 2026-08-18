@@ -8,16 +8,23 @@
 缓存策略：按文档内容哈希作为 key，同一文件内容只计算一次。
 """
 
+from __future__ import annotations
+
 import hashlib
 import json
 import os
+from typing import TYPE_CHECKING
 
-import faiss
 import numpy as np
 from loguru import logger as log
 
-# 默认缓存目录（~/.simple_rag/vector_cache/）
-DEFAULT_CACHE_DIR = os.path.join(os.path.expanduser("~"), ".simple_rag", "vector_cache")
+from version_diff.paths import cache_subdir
+
+if TYPE_CHECKING:
+    import faiss
+
+# 默认缓存目录（<root>/vector_cache/）
+DEFAULT_CACHE_DIR = cache_subdir("vector_cache")
 
 
 class VectorStore:
@@ -52,6 +59,8 @@ class VectorStore:
         Returns:
             (embeddings: np.ndarray, faiss_index: faiss.Index)
         """
+        import faiss
+
         if not paragraphs:
             log.info(f"  ⏭️ {filepath} 无段落，跳过嵌入计算")
             return np.empty((0, 0), dtype=np.float32), None
@@ -153,6 +162,8 @@ class VectorStore:
 
     def _load_cache(self, cache_key: str) -> dict | None:
         """从磁盘加载缓存"""
+        import faiss
+
         cache_path = self._cache_path(cache_key)
         index_file = os.path.join(cache_path, "index.faiss")
         emb_file = os.path.join(cache_path, "embeddings.npy")
@@ -170,6 +181,8 @@ class VectorStore:
 
     def _save_cache(self, cache_key: str, embeddings: np.ndarray, index, paragraphs: list):
         """持久化到磁盘"""
+        import faiss
+
         cache_path = self._cache_path(cache_key)
         os.makedirs(cache_path, exist_ok=True)
 

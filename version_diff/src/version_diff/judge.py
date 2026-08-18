@@ -34,6 +34,7 @@ class JudgeResult:
     suspect_items: list = field(default_factory=list)  # 疑似不一致（confidence=low）
     rule_filtered: int = 0  # 规则预过滤排除的数量
     llm_judged: int = 0  # 实际送 LLM 判断的数量
+    incomplete: bool = False  # 是否有批次因 LLM 失败而未完成判断
 
 
 # ============================================================
@@ -52,7 +53,7 @@ _FALLBACK_PROMPT = """请判断以下 {count} 对段落是否存在文档间不�
 
 {items}
 
-回复JSON数组：[{{"index": N, "inconsistent": true/false, "point": "...", "doc_a_says": "...", "doc_b_says": "..."}}]
+回复JSON数组：[{{"index": N, "inconsistent": true/false, "point": "..."}}]
 宁可漏报不要误报。"""
 
 
@@ -160,11 +161,71 @@ def _resolve_prompt_template(judge_config: dict) -> str:
 
 
 def _judge_batch(items, llm_config: dict, prompt_template: str = ""):
-    """对一批候选对调用 LLM 判断是否存在不一致"""
+    """调用 LLM 并要求响应完整覆盖当前批次，否则返回 None。"""
     items_text = _format_judge_items(items)
     template = prompt_template or CONSISTENCY_JUDGE_PROMPT
     prompt = template.format(count=len(items), items=items_text)
-    return call_llm_json(prompt, llm_config)
+    results = call_llm_json(prompt, llm_config)
+    if not isinstance(results, list) or len(results) != len(items):
+        log.error(f"    judge 响应数量不完整: expected={len(items)}, actual={len(results) if results else 0}")
+        return None
+
+    seen = set()
+    for result in results:
+        if not isinstance(result, dict) or type(result.get("inconsistent")) is not bool:
+            log.error(f"    judge 响应结构非法: {result!r}")
+            return None
+        try:
+            idx = int(result.get("index", 0)) - 1
+        except (TypeError, ValueError):
+            return None
+        if not 0 <= idx < len(items) or idx in seen:
+            log.error(f"    judge 响应 index 缺失、重复或越界: {result.get('index')!r}")
+            return None
+        seen.add(idx)
+    return results
+
+
+def _judge_batch_with_split_retry(items, llm_config: dict, prompt_template: str = "", min_split: int = 2):
+    """调用 _judge_batch，失败时拆半重试（fail-closed：最终仍失败返回 None）。
+
+    策略：
+      - 首次尝试完整 batch
+      - 失败 → 拆成两半分别尝试
+      - 每半仍失败 → 不再继续拆（min_split 保底），该半标记为失败
+      - 拆半的结果合并返回；任一半失败则整体标记 incomplete
+
+    Returns:
+        (results: list | None, has_failure: bool)
+    """
+    # 首次完整尝试
+    results = _judge_batch(items, llm_config, prompt_template)
+    if results is not None:
+        return results, False
+
+    # 批次太小，不再拆分
+    if len(items) <= min_split:
+        return None, True
+
+    # 拆半重试
+    mid = len(items) // 2
+    log.info(f"      ↪ 拆半重试: {len(items)} → {mid} + {len(items) - mid}")
+    left = _judge_batch(items[:mid], llm_config, prompt_template)
+    right = _judge_batch(items[mid:], llm_config, prompt_template)
+
+    has_failure = left is None or right is None
+    # 合并可用的结果（调整 right 的 index 偏移）
+    merged = []
+    if left:
+        merged.extend(left)
+    if right:
+        # right 中的 index 需要加上 mid 的偏移
+        for r in right:
+            if isinstance(r, dict) and "index" in r:
+                r["index"] = int(r["index"]) + mid
+        merged.extend(right)
+
+    return merged or None, has_failure
 
 
 # ============================================================
@@ -176,11 +237,12 @@ def _calculate_batch_size(llm_config: dict, sample_items: list) -> int:
     """
     根据 context_window 动态计算 batch_size
 
-    如果配置了 batch_size > 0，直接使用。
+    如果配置了 batch_size > 0，直接使用（原型阶段默认 5）。
     否则根据 context_window、max_tokens、prompt 模板开销、平均每对大小估算。
     """
-    # 如果显式配置了 batch_size > 0，直接使用
-    explicit_bs = llm_config.get("batch_size", 0) or 0
+    # 如果显式配置了 batch_size > 0，直接使用；
+    # 原型阶段默认 5（计划 B3 要求）
+    explicit_bs = llm_config.get("batch_size", 5) or 5
     if explicit_bs > 0:
         return explicit_bs
 
@@ -200,18 +262,18 @@ def _calculate_batch_size(llm_config: dict, sample_items: list) -> int:
     # 可用空间 = 上下文窗口 - prompt模板 - 响应预留
     usable = context_window - prompt_overhead - max_tokens
     if usable <= 0:
-        return 5  # 安全默认
+        return 5  # 原型阶段安全默认
 
     calculated = int(usable / avg_pair_size)
     return max(1, min(calculated, 50))  # clamp [1, 50]
 
 
 def _run_batches_sequential(batches, llm_config, prompt_template, num_batches):
-    """串行执行所有批次"""
+    """串行执行所有批次（失败时拆半重试）"""
     results = []
     for batch_idx, batch in enumerate(batches):
         log.info(f"    batch {batch_idx + 1}/{num_batches} ({len(batch)} pairs)...")
-        batch_results = _judge_batch(batch, llm_config, prompt_template)
+        batch_results, _has_failure = _judge_batch_with_split_retry(batch, llm_config, prompt_template)
         results.append((batch_idx, batch, batch_results))
     return results
 
@@ -267,7 +329,11 @@ def _run_batches_concurrent(batches, llm_config, prompt_template, num_batches, c
 
 
 def _process_batch_results(batch, results):
-    """处理单个批次的 LLM 结果，返回 (确认不一致项, 疑似不一致项)"""
+    """处理单个批次的 LLM 结果，返回 (确认不一致项, 疑似不一致项)。
+
+    doc_a_says / doc_b_says 由程序从原始 pair 中确定性回填，
+    不再依赖 LLM 输出（避免模型幻觉/复述偏差）。
+    """
     new_items = []
     suspect_items = []
     if not results:
@@ -284,14 +350,17 @@ def _process_batch_results(batch, results):
         if 0 <= idx < len(batch) and r.get("inconsistent", False):
             item = batch[idx]
             point = r.get("point", "")
-            doc_a_says = r.get("doc_a_says", "")
-            doc_b_says = r.get("doc_b_says", "")
             confidence = r.get("confidence", "high")
+            # 确定性回填 A/B 原文摘要（截取前 80 字符），不依赖 LLM 复述
+            doc_a_says = getattr(item, "para_a", None)
+            doc_b_says = getattr(item, "para_b", None)
+            a_text = (doc_a_says.text[:80] if doc_a_says else "").replace("\n", " ")
+            b_text = (doc_b_says.text[:80] if doc_b_says else "").replace("\n", " ")
             item.llm_point = point
-            item.llm_doc_a_says = doc_a_says
-            item.llm_doc_b_says = doc_b_says
-            if point and doc_a_says and doc_b_says:
-                item.llm_reason = f"{point}：A称「{doc_a_says}」，B称「{doc_b_says}」"
+            item.llm_doc_a_says = a_text
+            item.llm_doc_b_says = b_text
+            if point and a_text and b_text:
+                item.llm_reason = f"{point}：A称「{a_text}」，B称「{b_text}」"
             elif point:
                 item.llm_reason = point
             else:
@@ -350,6 +419,8 @@ def filter_diffs(diff_items, llm_config: dict | None = None, judge_config: dict 
 
     # ========== 阶段2：LLM 判断（支持增量回调）==========
     inconsistent_items = []
+    suspect_items = []
+    llm_failed = False
 
     if uncertain:
         batch_size = _calculate_batch_size(llm_config, uncertain)
@@ -368,13 +439,15 @@ def filter_diffs(diff_items, llm_config: dict | None = None, judge_config: dict 
         )
 
         # 有回调 → 逐批串行处理（保证顺序 + 每批完成后回调）
-        # 无回调且并发 > 1 → 并发执行（旧行为）
-        suspect_items = []
-
+        # 无回调且并发 > 1 → 并发执行
         if on_batch is not None:
             for batch_idx, batch in enumerate(batches):
                 log.info(f"    batch {batch_idx + 1}/{num_batches} ({len(batch)} pairs)...")
                 batch_results = _judge_batch(batch, llm_config, prompt_template)
+                if batch_results is None:
+                    llm_failed = True
+                    log.error(f"    batch {batch_idx + 1}/{num_batches} LLM 判断失败")
+                    continue
                 new_items, new_suspects = _process_batch_results(batch, results=batch_results)
                 inconsistent_items.extend(new_items)
                 suspect_items.extend(new_suspects)
@@ -385,14 +458,22 @@ def filter_diffs(diff_items, llm_config: dict | None = None, judge_config: dict 
                 )
                 on_batch(batch_idx, num_batches, new_items)
         elif concurrency > 1:
-            batch_results = _run_batches_concurrent(batches, llm_config, prompt_template, num_batches, concurrency)
-            for _, batch, results in batch_results:
+            resolved_batches = _run_batches_concurrent(batches, llm_config, prompt_template, num_batches, concurrency)
+            for batch_idx, batch, results in resolved_batches:
+                if results is None:
+                    llm_failed = True
+                    log.error(f"    batch {batch_idx + 1}/{num_batches} LLM 判断失败")
+                    continue
                 new_items, new_suspects = _process_batch_results(batch, results)
                 inconsistent_items.extend(new_items)
                 suspect_items.extend(new_suspects)
         else:
-            batch_results = _run_batches_sequential(batches, llm_config, prompt_template, num_batches)
-            for _, batch, results in batch_results:
+            resolved_batches = _run_batches_sequential(batches, llm_config, prompt_template, num_batches)
+            for batch_idx, batch, results in resolved_batches:
+                if results is None:
+                    llm_failed = True
+                    log.error(f"    batch {batch_idx + 1}/{num_batches} LLM 判断失败")
+                    continue
                 new_items, new_suspects = _process_batch_results(batch, results)
                 inconsistent_items.extend(new_items)
                 suspect_items.extend(new_suspects)
@@ -410,6 +491,7 @@ def filter_diffs(diff_items, llm_config: dict | None = None, judge_config: dict 
         suspect_items=suspect_items,
         rule_filtered=len(pre_classified),
         llm_judged=len(uncertain),
+        incomplete=llm_failed,
     )
 
 

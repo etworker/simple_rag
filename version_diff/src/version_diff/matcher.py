@@ -12,7 +12,6 @@ import difflib
 import re
 from dataclasses import dataclass, field
 
-import faiss
 from loguru import logger as log
 
 from version_diff.vectorstore import VectorStore
@@ -70,6 +69,8 @@ def pair_paragraphs(
     """
     if not paras_a or not paras_b:
         return []
+
+    import faiss
 
     vs = vector_store or _default_vector_store
 

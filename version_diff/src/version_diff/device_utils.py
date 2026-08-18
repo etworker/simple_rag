@@ -26,6 +26,8 @@ if TYPE_CHECKING:
 
 from loguru import logger as log
 
+from version_diff.paths import ENV_EMBEDDING_DEVICE, cache_subdir
+
 
 def is_cuda_available() -> bool:
     """检测当前环境是否可用 CUDA GPU。"""
@@ -98,7 +100,7 @@ def resolve_embedding_device(config_embedding: str | dict | None) -> str:
         3. 默认 "auto"
     """
     # 1. 环境变量最高优先级
-    env_device = os.environ.get("SIMPLE_RAG_EMBEDDING_DEVICE")
+    env_device = os.environ.get(ENV_EMBEDDING_DEVICE)
     if env_device:
         return _normalize_device_str(env_device)
 
@@ -255,7 +257,10 @@ def load_embedding_model(emb_config: dict) -> EmbeddingModel:
         已加载的 EmbeddingModel 实例。
     """
     model_name = emb_config.get("model", "")
-    cache_dir = emb_config.get("cache_dir") or None
+    # cache_dir 为空时默认落到 <root>/model_cache（与 FAISS 索引的
+    # vector_cache 分开，避免 VectorStore.clear_cache 误删模型权重）；
+    # 不往项目目录塞缓存，统一收在缓存根目录下（解析见 version_diff.paths）。
+    cache_dir = emb_config.get("cache_dir") or cache_subdir("model_cache")
     device = resolve_embedding_device(emb_config)
 
     cache_key = (model_name, device, cache_dir)

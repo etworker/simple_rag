@@ -29,9 +29,11 @@ import pathlib
 import sys
 import time
 
+from llm_chat.defaults import DEFAULT_LLM_MODEL
 from loguru import logger as log
 
 from version_diff.log import configure_logger
+from version_diff.paths import DEFAULT_EMBEDDING_MODEL, cache_subdir
 
 configure_logger()  # 独立 example：开启 version_diff 日志（console + ./logs/version_diff.log）
 
@@ -163,7 +165,7 @@ def main(old_path, new_path, model, do_summary):
             _llm, _parse_cfg = None, None
 
     if _llm is None:
-        _emb = {"model": "BAAI/bge-small-zh-v1.5", "device": "auto"}
+        _emb = {"model": DEFAULT_EMBEDDING_MODEL, "device": "auto"}
         _diff = {"similarity_threshold": 0.80, "top_k": 3, "batch_size": 5}
         _llm = {
             "provider": "bedrock_converse",
@@ -179,8 +181,8 @@ def main(old_path, new_path, model, do_summary):
         "llm": _llm,
         "diff": _diff,
         "cache": {
-            "vector_cache_dir": os.path.join(os.path.expanduser("~"), ".simple_rag", "vector_cache"),
-            "parse_cache_dir": os.path.join(os.path.expanduser("~"), ".simple_rag", "parse_cache"),
+            "vector_cache_dir": cache_subdir("vector_cache"),
+            "parse_cache_dir": cache_subdir("parse_cache"),
         },
     }
     if _parse_cfg is not None:
@@ -249,7 +251,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="验证版本差异识别 + LLM 归纳（示例脚本）")
     parser.add_argument("old", nargs="?", default=str(DEFAULT_OLD), help="旧版 PDF 路径")
     parser.add_argument("new", nargs="?", default=str(DEFAULT_NEW), help="新版 PDF 路径")
-    parser.add_argument("--model", default="zai.glm-4.7-flash", help="归纳用 LLM 模型")
+    parser.add_argument("--model", default=DEFAULT_LLM_MODEL, help="归纳用 LLM 模型")
     parser.add_argument("--no-summary", action="store_true", help="仅做差异识别，跳过 LLM 归纳")
     parser.add_argument("--list-pairs", action="store_true", help="列出 data/pdf 下所有可对比的多版本组")
     args = parser.parse_args()

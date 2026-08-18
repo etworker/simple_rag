@@ -4,7 +4,21 @@ import os
 from dataclasses import dataclass, field
 from typing import Any
 
+from llm_chat.defaults import (
+    BEDROCK_API_KEY_ENV,
+    DEFAULT_LLM_MODEL,
+    ENV_AWS_REGION,
+    ENV_LLM_BACKEND,
+    ENV_LLM_MODEL,
+)
 from loguru import logger as log
+
+from version_diff.paths import (
+    DEFAULT_EMBEDDING_MODEL,
+    ENV_EMBEDDING_DEVICE,
+    ENV_EMBEDDING_DTYPE,
+    ENV_EMBEDDING_MODEL,
+)
 
 
 @dataclass
@@ -25,10 +39,10 @@ class Config:
 
     embedding: dict[str, Any] = field(
         default_factory=lambda: {
-            "model": os.environ.get("EMBEDDING_MODEL", "BAAI/bge-small-zh-v1.5"),
-            "device": os.environ.get("SIMPLE_RAG_EMBEDDING_DEVICE", "auto"),
+            "model": os.environ.get(ENV_EMBEDDING_MODEL, DEFAULT_EMBEDDING_MODEL),
+            "device": os.environ.get(ENV_EMBEDDING_DEVICE, "auto"),
             # dtype: "auto" / "float16" / "bfloat16" / "float32"，仅在 device 非 cpu 时生效
-            "dtype": os.environ.get("SIMPLE_RAG_EMBEDDING_DTYPE", ""),
+            "dtype": os.environ.get(ENV_EMBEDDING_DTYPE, ""),
             # 多 GPU 场景下的 GPU 设备 ID
             "gpu_id": 0,
         }
@@ -36,10 +50,10 @@ class Config:
 
     llm: dict[str, Any] = field(
         default_factory=lambda: {
-            "provider": os.environ.get("LLM_BACKEND", "bedrock_converse"),
-            "model": os.environ.get("LLM_MODEL", "zai.glm-4.7-flash"),
-            "region": os.environ.get("AWS_REGION", "us-east-1"),
-            "api_key_env": "AWS_BEARER_TOKEN_BEDROCK",
+            "provider": os.environ.get(ENV_LLM_BACKEND, "bedrock_converse"),
+            "model": os.environ.get(ENV_LLM_MODEL, DEFAULT_LLM_MODEL),
+            "region": os.environ.get(ENV_AWS_REGION, "us-east-1"),
+            "api_key_env": BEDROCK_API_KEY_ENV,
             "max_tokens": 2048,
             "timeout": 120,
             "max_retries": 3,

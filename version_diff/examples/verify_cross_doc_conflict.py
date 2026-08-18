@@ -32,9 +32,11 @@ import pathlib
 import sys
 import time
 
+from llm_chat.defaults import DEFAULT_LLM_MODEL
 from loguru import logger as log
 
 from version_diff.log import configure_logger
+from version_diff.paths import DEFAULT_EMBEDDING_MODEL
 
 configure_logger()  # 独立 example：开启 version_diff 日志（console + ./logs/version_diff.log）
 
@@ -102,7 +104,7 @@ def main(existing_paths, new_path, model, do_summary):
     print(f"待审核文档: {new_path}")
 
     cfg = {
-        "embedding": {"model": "BAAI/bge-small-zh-v1.5", "device": "cpu"},
+        "embedding": {"model": DEFAULT_EMBEDDING_MODEL, "device": "cpu"},
         "llm": {
             "provider": "bedrock_converse",
             "model": model,
@@ -224,7 +226,7 @@ if __name__ == "__main__":
         help="已有文档路径（可重复指定多个）",
     )
     parser.add_argument("--new", default=str(DEFAULT_NEW), help="待审核文档路径")
-    parser.add_argument("--model", default="zai.glm-4.7-flash", help="归纳用 LLM 模型")
+    parser.add_argument("--model", default=DEFAULT_LLM_MODEL, help="归纳用 LLM 模型")
     parser.add_argument("--no-summary", action="store_true", help="仅做冲突检测，跳过 LLM 归纳")
     args = parser.parse_args()
 
