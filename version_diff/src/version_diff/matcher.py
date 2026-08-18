@@ -10,6 +10,7 @@
 
 import difflib
 import re
+import unicodedata
 from dataclasses import dataclass, field
 
 from loguru import logger as log
@@ -48,6 +49,86 @@ _default_vector_store = VectorStore()
 # ============================================================
 
 
+_ZERO_WIDTH_RE = re.compile(r"[\u200b\u200c\u200d\ufeff\u2060]")
+_NUMBERED_ITEM_RE = re.compile(r"(^|[。；;])\d+(?:\.\d+)+[、.]?", re.MULTILINE)
+_MATCH_BOUNDARIES = set("。；;！？!?．")
+
+
+def _normalize_match_text(text: str, *, ignore_item_numbers: bool = False) -> str:
+    """生成用于确定性配对的文本 key。
+
+    PDF/Office 解析可能插入零宽字符、全角字符或内部空白；条款编号也可能
+    因为新版增删条款而重新编号。仅在第二阶段配对时忽略句首/分号后的
+    多级条款编号，正文内容本身仍保持不变。
+    """
+    normalized = unicodedata.normalize("NFKC", str(text or ""))
+    normalized = _ZERO_WIDTH_RE.sub("", normalized)
+    normalized = re.sub(r"\s+", "", normalized)
+    if ignore_item_numbers:
+        normalized = _NUMBERED_ITEM_RE.sub(r"\1", normalized)
+    return normalized
+
+
+def _contains_complete_text(longer: str, shorter: str) -> bool:
+    """判断 shorter 是否作为完整句子/条款出现在 longer 中。"""
+    if not shorter or len(shorter) >= len(longer):
+        return False
+    start = longer.find(shorter)
+    while start >= 0:
+        end = start + len(shorter)
+        before_ok = start == 0 or longer[start - 1] in _MATCH_BOUNDARIES
+        after_ok = end == len(longer) or longer[end - 1] in _MATCH_BOUNDARIES or longer[end] in _MATCH_BOUNDARIES
+        if before_ok and after_ok:
+            return True
+        start = longer.find(shorter, start + 1)
+    return False
+
+
+def _pair_normalized_content(paras_a, paras_b, remaining_a, remaining_b):
+    """配对同章中因合并/重新编号而变形、但正文内容仍相同的段落。
+
+    这是精确文本和 FAISS 之间的保守补充：要求条款编号归一化后相等，或较短
+    文本以完整句子边界包含在较长文本中，且两段属于同一章节。这样不会把
+    任意相似段落强行合并，也保留重复文本按文档顺序消费的行为。
+    """
+    pairs = []
+    used_a, used_b = set(), set()
+    b_keys = {
+        j: _normalize_match_text(paras_b[j].text, ignore_item_numbers=True) for j in remaining_b
+    }
+
+    for i in remaining_a:
+        a_key = _normalize_match_text(paras_a[i].text, ignore_item_numbers=True)
+        if len(a_key) < 12:
+            continue
+        candidates = []
+        for j in remaining_b:
+            if j in used_b:
+                continue
+            if (getattr(paras_a[i], "chapter", "") or "") != (getattr(paras_b[j], "chapter", "") or ""):
+                continue
+            b_key = b_keys[j]
+            if not b_key or a_key == b_key:
+                relation, score = 2, 1.0
+            elif _contains_complete_text(b_key, a_key) or _contains_complete_text(a_key, b_key):
+                relation, score = 1, 0.95
+            else:
+                continue
+            candidates.append((relation, score, -abs(i - j), -j, j))
+        if not candidates:
+            continue
+        _, score, _, _, j = max(candidates)
+        used_a.add(i)
+        used_b.add(j)
+        pairs.append((i, j, score))
+    return pairs, used_a, used_b
+
+
+# ============================================================
+# Embedding 段落配对（使用 FAISS）
+# ============================================================
+
+
 def pair_paragraphs(
     paras_a,
     paras_b,
@@ -78,7 +159,7 @@ def pair_paragraphs(
     # 相同文本（如"网络与信息安全管理手册"这类每节重复的"支持性文件/记录"短行）
     # 在两版出现多次时，若走 FAISS 贪心会被"含该文本的正文段"抢占，
     # 导致相同短段配不上 → 产生大量假 added/removed。
-    # 先按 strip 后文本精确配对，消除这类抢占。
+    # 先按去除解析空白/零宽字符后的文本精确配对，消除这类抢占。
     exact_pairs = []
     used_a = set()
     used_b = set()
@@ -86,9 +167,9 @@ def pair_paragraphs(
     remaining_b = list(range(len(paras_b)))
     b_by_text: dict[str, list[int]] = {}
     for j, p in enumerate(paras_b):
-        b_by_text.setdefault(p.text.strip(), []).append(j)
+        b_by_text.setdefault(_normalize_match_text(p.text), []).append(j)
     for i in remaining_a:
-        text = paras_a[i].text.strip()
+        text = _normalize_match_text(paras_a[i].text)
         bucket = b_by_text.get(text)
         if bucket:
             j = bucket.pop(0)
@@ -99,6 +180,20 @@ def pair_paragraphs(
                 b_by_text.pop(text, None)
     if exact_pairs:
         log.info(f"  🎯 精确文本配对: {len(exact_pairs)} 对")
+    remaining_a = [i for i in remaining_a if i not in used_a]
+    remaining_b = [j for j in remaining_b if j not in used_b]
+
+    # ── 第 0.5 步：同章规范化内容配对 ──
+    # 解析器可能把旧版独立条款并入新版相邻条款，且新版条款号会重新编号。
+    # 只接受同章、完整句子边界包含或编号归一化后相等的配对。
+    normalized_pairs, normalized_a, normalized_b = _pair_normalized_content(
+        paras_a, paras_b, remaining_a, remaining_b
+    )
+    if normalized_pairs:
+        log.info(f"  🔗 规范化内容配对: {len(normalized_pairs)} 对")
+        exact_pairs.extend(normalized_pairs)
+        used_a.update(normalized_a)
+        used_b.update(normalized_b)
     remaining_a = [i for i in remaining_a if i not in used_a]
     remaining_b = [j for j in remaining_b if j not in used_b]
 

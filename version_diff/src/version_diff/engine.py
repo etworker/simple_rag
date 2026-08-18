@@ -59,6 +59,20 @@ def _classify_change(category: str, change):
     return change
 
 
+def _fallback_change_summary(change) -> str:
+    """为 LLM 未返回摘要的变更提供稳定、可读的兜底摘要。"""
+    change_type = getattr(change, "change_type", "modified")
+    old_text = (getattr(change, "old_text", "") or "").replace("\n", " ").strip()
+    new_text = (getattr(change, "new_text", "") or "").replace("\n", " ").strip()
+    if change_type == "added":
+        return f"[新增] {new_text[:160]}"
+    if change_type == "removed":
+        return f"[删除] {old_text[:160]}"
+    if old_text and new_text:
+        return f"[修改] {old_text[:80]} → {new_text[:80]}"
+    return "[修改] 内容发生变化"
+
+
 # 版本过滤 prompt（随包发布，外部文件优先）
 _VERSION_FILTER_PROMPT_FILE = os.path.join(os.path.dirname(__file__), "prompts", "version_filter.txt")
 
@@ -120,13 +134,19 @@ class DiffEngine:
             self._model = load_embedding_model(self.config.embedding)
         return self._model
 
-    def _notify(self, callback, step, percent, message):
-        """发送进度通知"""
+    def _notify(self, callback, step, percent, message, details=None):
+        """发送进度通知；details 可选，兼容旧的三参数 callback。"""
         if callback:
             with suppress(Exception):
-                callback(step, percent, message)
+                if details is None:
+                    callback(step, percent, message)
+                else:
+                    try:
+                        callback(step, percent, message, details)
+                    except TypeError:
+                        callback(step, percent, message)
 
-    def add(self, filepath: str) -> None:
+    def add(self, filepath: str, on_progress: Callable | None = None) -> None:
         """
         添加文档到已有库
 
@@ -139,7 +159,7 @@ class DiffEngine:
 
         # 计算 embedding
         model = self._get_model()
-        emb, _ = self._vector_store.get_or_compute(doc.filename, doc.paragraphs, model)
+        emb, _ = self._vector_store.get_or_compute(doc.filename, doc.paragraphs, model, on_progress=on_progress)
 
         # 追加到全局列表
         self._all_paras.extend(doc.paragraphs)
@@ -200,7 +220,28 @@ class DiffEngine:
         self._notify(on_progress, "embedding", 0.2, "计算语义向量...")
         t1 = time.time()
         model = self._get_model()
-        new_emb, _ = self._vector_store.get_or_compute(new_doc.filename, new_doc.paragraphs, model)
+
+        def _embedding_progress(details):
+            status = details.get("status", "running")
+            completed = details.get("completed", 0)
+            total = details.get("total", 0)
+            if status == "cached":
+                message = f"已命中语义向量缓存（{completed}/{total} 段）"
+            elif status == "empty":
+                message = "无段落，跳过语义向量计算"
+            else:
+                message = (
+                    f"计算语义向量：{completed}/{total} 段"
+                    f"（第 {details.get('batch_index', 0)}/{details.get('batch_total', 0)} 批）"
+                )
+            self._notify(on_progress, "embedding", 0.2, message, details)
+
+        new_emb, _ = self._vector_store.get_or_compute(
+            new_doc.filename,
+            new_doc.paragraphs,
+            model,
+            on_progress=_embedding_progress,
+        )
         log.info(f"Embedding 完成 ({time.time() - t1:.1f}s)")
 
         # 如果库中没有已有文档，跳过对比步骤，直接返回安全结果
@@ -263,7 +304,10 @@ class DiffEngine:
         judge_result = filter_diffs(
             diff_items,
             llm_config=self.config.llm,
-            judge_config=self.config.judge,
+            judge_config={
+                **self.config.judge,
+                "cache_dir": self.config.cache.get("judge_cache_dir", ""),
+            },
             on_batch=_on_batch_callback,
         )
         if judge_result.incomplete:
@@ -690,7 +734,7 @@ class DiffEngine:
         # modified，丢失"旧行删除 + 新行新增"的信息。仅对正文段落做二次配对。
         def _is_table_row(c) -> bool:
             loc = c.location or ""
-            return loc.startswith("行:") or loc.startswith("表格")
+            return bool(c.table_name or c.row_key or c.cell_changes) or loc.startswith("行:") or loc.startswith("表格")
 
         # 计算所有 removed×added 相似度，贪心合并
         candidates = []
@@ -1015,7 +1059,7 @@ class DiffEngine:
                 if r is None or idx in invalid_indices:
                     keep.append(_classify_change("content", c))
                 elif r.get("keep", False):
-                    c.summary = r.get("summary", "")
+                    c.summary = r.get("summary", "") or _fallback_change_summary(c)
                     keep.append(_classify_change("content", c))
                 else:
                     c.summary = r.get("summary", "") or "非实质变更"

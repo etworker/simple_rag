@@ -9,7 +9,110 @@ if(typeof pdfjsLib!=='undefined'){pdfjsLib.GlobalWorkerOptions.workerSrc='https:
 function esc(s){s=s==null?'':String(s);return s?s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'):'';} 
 function escA(s){return s?s.replace(/"/g,'&quot;'):'';}
 function renderMd(s){return (typeof marked!=='undefined')?marked.parse(s||''):esc(s||'');}
-function fmtDocName(name,hash){const h=hash?hash.slice(-8).toUpperCase():'';return h?`${name} [${h}]`:name;}
+function fmtDocName(name,hash,label){
+  const h=hash?hash.slice(-8).toUpperCase():'';
+  const base=name||'';
+  return base+(label?` [${label}]`:'')+(h?` [${h}]`:'');
+}
+function fmtDocNameHtml(name,hash,label){return esc(fmtDocName(name,hash,label));}
+function compareDocName(group){
+  if(!group)return '';
+  return fmtDocName(group.doc_filename||'',group.file_hash||'',group.label||'');
+}
+function tableChangeSummary(change){
+  if(!change?.table_name&&!change?.cell_changes?.length)return '';
+  const type=change.type==='added'?'新增':change.type==='removed'?'删除':'修改';
+  const table=change.table_name||String(change.section||'').replace(/^表格[:：]?\s*/, '')||'未命名表格';
+  const oldTable=_changeLocationForSide(change,'old');
+  const newTable=_changeLocationForSide(change,'new');
+  const tableLabel=change.type==='modified'&&oldTable&&newTable
+    ? `${oldTable} → ${newTable}`
+    : change.type==='removed'&&oldTable ? oldTable
+    : change.type==='added'&&newTable ? newTable
+    : table;
+  const row=change.row_key?`；行标识：${change.row_key}`:'';
+  const rowIndex=change.row_index?`；数据第 ${change.row_index} 行`:'';
+  const cells=(change.cell_changes||[]).map(cell=>{
+    const oldValue=String(cell.old_value||'');
+    const newValue=String(cell.new_value||'');
+    if(change.type==='added')return `${cell.column}=${newValue}`;
+    if(change.type==='removed')return `${cell.column}=${oldValue}`;
+    return `${cell.column}：${oldValue||'（空）'} → ${newValue||'（空）'}`;
+  });
+  const detail=cells.length?`；列变化：${cells.join('；')}`:'';
+  if((change.new_text||'').startsWith('新增列:')||(change.old_text||'').startsWith('删除列:'))return `[表格${type}列] ${tableLabel}${change.new_text||change.old_text?`；${change.new_text||change.old_text}`:''}`;
+  return `[表格${type}行] ${tableLabel}${rowIndex}${row}${detail}`;
+}
+function changeSummary(change){
+  const tableSummary=tableChangeSummary(change);
+  if(tableSummary)return tableSummary;
+  if(change?.summary)return change.summary;
+  const oldText=String(change?.old_text||'').replace(/\s+/g,' ').trim();
+  const newText=String(change?.new_text||'').replace(/\s+/g,' ').trim();
+  if(change?.type==='added')return `[新增] ${newText.slice(0,160)}`;
+  if(change?.type==='removed')return `[删除] ${oldText.slice(0,160)}`;
+  if(oldText&&newText)return `[修改] ${oldText.slice(0,80)} → ${newText.slice(0,80)}`;
+  return '[修改] 内容发生变化';
+}
+function _hasPageLocation(loc){return /第\s*\d+\s*页/.test(String(loc||''));}
+function _changeLocationForSide(change,side){
+  const direct=side==='old'?change?.old_location:change?.location;
+  if(_hasPageLocation(direct))return String(direct);
+  // table_name is retained as a legacy fallback for the old table side. The new
+  // side must be supplied by the backend's direction-aware location field.
+  if(side==='old'&&_hasPageLocation(change?.table_name))return String(change.table_name);
+  return String(direct||'');
+}
+function _changePageForSide(change,side){
+  const loc=_changeLocationForSide(change,side);
+  const match=String(loc||'').match(/第\s*(\d+)\s*页/);
+  return match?parseInt(match[1],10):1;
+}
+function tableChangeDetailsHtml(change){
+  if(!change?.table_name&&!change?.cell_changes?.length)return '';
+  const table=change.table_name||String(change.section||'').replace(/^表格[:：]?\s*/, '')||'未命名表格';
+  const oldTableLocation=_changeLocationForSide(change,'old')||table;
+  const newTableLocation=_hasPageLocation(change?.location)?String(change.location):'';
+  const cells=change.cell_changes||[];
+  let html='<div class="vc-table-details">';
+  html+=`<div class="vc-table-context"><b>旧版表格：</b>${esc(oldTableLocation||table)}`;
+  if(newTableLocation)html+=`　<b>新版表格：</b>${esc(newTableLocation)}`;
+  if(change.row_index)html+=`　<b>数据行：</b>第 ${change.row_index} 行`;
+  if(change.row_key)html+=`　<b>行标识：</b>${esc(change.row_key)}`;
+  html+='</div>';
+  if(cells.length){
+    html+='<table class="vc-cell-change-table"><thead><tr><th>列</th><th>旧版值</th><th>新版值</th></tr></thead><tbody>';
+    cells.forEach(cell=>{
+      html+=`<tr><td>${esc(cell.column||'')}</td><td>${esc(cell.old_value??'')}</td><td>${esc(cell.new_value??'')}</td></tr>`;
+    });
+    html+='</tbody></table>';
+  }
+  html+='</div>';
+  return html;
+}
+function compareGroupSummary(group,bTag){
+  if(!group)return '等待比较';
+  const isVersion=group.compare_type==='version_diff';
+  const entries=isVersion
+    ? (group.version_changes||[]).map(changeSummary)
+    : (group.inconsistencies||[]).map(item=>normalizeConflictText(item.point||'内容差异',bTag));
+  if(!isVersion){
+    (group.suspects||[]).forEach(item=>entries.push(`疑似待复核：${normalizeConflictText(item.point||'内容差异',bTag)}`));
+  }
+  if(!entries.length){
+    if(group.status==='running')return '本组比较中，结果尚未产生';
+    if(group.status==='error')return group.error||'比较失败';
+    return isVersion?'未发现实质性差异':'未发现矛盾';
+  }
+  const shown=entries.slice(0,2).join('；');
+  const rest=entries.length>2?`；另有 ${entries.length-2} 项`:'';
+  return shown+rest;
+}
+function normalizeConflictText(text,bTag){
+  let value=String(text||'');
+  for(const [from,to] of [['文档 A','N'],['文档A','N'],['文档 a','N'],['文档a','N'],['A文档','N'],['文档 B',bTag],['文档B',bTag],['文档 b',bTag],['文档b',bTag],['B文档',bTag]]) value=value.split(from).join(to);
+  return value;
+}
 function splitFileHash(sf){
   if(!sf)return {name:'',hash:''};
   const i=sf.lastIndexOf('#');
@@ -88,8 +191,10 @@ function toggleKbSidebar(){
 // ============================================================
 // 知识库管理 — 状态
 // ============================================================
-let docMap={}, fileHashToName={}, docRefToId={}, reviewResult=null, reviewTaskId=null, newDocFile=null, newDocHash='', activeFileName=null;
+let docMap={}, fileHashToName={}, docRefToId={}, docLabelMap={}, reviewResult=null, reviewTaskId=null, newDocFile=null, newDocHash='', newDocLabel='', activeFileName=null;
 let currentDoc=null, currentPage=1, totalPages=1;
+const reviewPageInfoCache=new Map();
+const openCompareGroups=new Set();
 
 // 自定义确认对话框（是/否），返回 Promise<boolean>
 function customConfirm(message){
@@ -121,28 +226,100 @@ async function refreshDocList(){
     docMap={};
     fileHashToName={};
     docRefToId={};
+    docLabelMap={};
     const el=document.getElementById('docList');
-    let pendingHtml='', ingestedHtml='';
-// 待审核文档（放上面）
-if(newDocFile&&!docMap[newDocFile]){
-docMap[newDocFile]='N';
-if(newDocHash)fileHashToName[newDocHash]=newDocFile;
-const hashShort=newDocHash?newDocHash.slice(-8).toUpperCase():'';
-const pendingName=hashShort?`${esc(newDocFile)} <span style="color:var(--text3);font-size:10px;">[${hashShort}]</span>`:esc(newDocFile);
-const cls=(currentDoc===newDocFile)?'doc-item pending active':'doc-item pending';
-const pendingStatus=reviewTaskId?'预审核进行中...':'等待审核';
-pendingHtml=`<div class="doc-list-title" style="color:var(--warn);">待审核</div><div class="${cls}" onclick="selectPendingDoc('${escA(newDocFile)}')" title="${escA(newDocFile)}"><span class="id" style="color:var(--warn);">N</span><div class="info"><div class="name">${pendingName}</div><div class="stats">${pendingStatus}</div></div></div>`;
-}
-    // 已入库文档
-    if(!data.documents||!data.documents.length){
-        ingestedHtml='<div class="doc-list-title">已入库文档</div><div style="color:#aaa;padding:12px;font-size:12px;">请上传第一份文档</div>';
-    } else {
-        ingestedHtml='<div class="doc-list-title">已入库文档</div>';
-data.documents.forEach((d,i)=>{const id='B'+(i+1);const hashShort=d.file_hash?d.file_hash.slice(-8).toUpperCase():'';const docId=d.doc_id||d.filename;docMap[docId]=id;docMap[d.filename]=id;docRefToId[docId]=docId;docRefToId[d.filename]=docId;if(d.file_hash){fileHashToName[d.file_hash]=d.filename;docRefToId[d.file_hash]=docId;docRefToId[d.file_hash+'.pdf']=docId;}const cls=(currentDoc===docId||currentDoc===d.filename)?'doc-item active':'doc-item';const pg=d.page_count||kbTotalPagesCache[d.filename]||'';const stats=[];if(pg)stats.push(pg+'页');if(d.char_count)stats.push(d.char_count+'字');if(d.paragraph_count)stats.push(d.paragraph_count+'段');if(d.table_count)stats.push(d.table_count+'表');if(d.added_at){const dt=new Date(d.added_at);const pad=n=>String(n).padStart(2,'0');stats.push((dt.getMonth()+1)+'/'+pad(dt.getDate())+' '+pad(dt.getHours())+':'+pad(dt.getMinutes()));}const verTag=(d.label||d.version)?`<span class="doc-label-tag" onclick="event.stopPropagation();editDocLabel('${escA(d.doc_id||'')}')" title="点击修改补充描述" style="cursor:pointer;">${esc(d.label||d.version)} ✎</span>`:'';const displayName=hashShort?`${esc(d.filename)}<span style="color:var(--text3);font-size:10px;"> [${hashShort}]</span>${verTag}`:esc(d.filename);ingestedHtml+=`<div class="${cls}" data-filename="${escA(d.filename)}" data-hash="${escA(d.file_hash||'')}" onclick="selectDoc('${escA(docId)}')" title="${escA(d.filename)} [${hashShort}]"><span class="id">${id}</span><div class="info"><div class="name">${displayName}</div>${stats.length?'<div class="stats">'+stats.join(' · ')+'</div>':''}</div><span class="del-btn" onclick="event.stopPropagation();removeDoc('${escA(docId)}')">🗑️</span></div>`;});
+    let pendingHtml='', activeHtml='', inactiveHtml='';
+
+    // 待审核文档（放上面）
+    if(newDocFile){
+        docMap[newDocFile]='N';
+        if(newDocHash)fileHashToName[newDocHash]=newDocFile;
+        const pendingName=fmtDocNameHtml(newDocFile,newDocHash,'');
+        const pendingLabel=newDocLabel||'添加描述';
+        const pendingLabelClass=newDocLabel?'doc-label-tag':'doc-label-tag doc-label-placeholder';
+        const pendingTask=reviewTaskId||'';
+        const cls=(currentDoc===newDocFile)?'doc-item pending active':'doc-item pending';
+        const pendingStatus=reviewTaskId?'预审核进行中...':'等待审核';
+        pendingHtml=`<div class="doc-list-title" style="color:var(--warn);">待审核</div><div class="${cls}" data-task-id="${escA(pendingTask)}" onclick="selectPendingDoc('${escA(newDocFile)}','${escA(pendingTask)}')" title="${escA(fmtDocName(newDocFile,newDocHash,newDocLabel))}"><span class="id" style="color:var(--warn);">N</span><div class="info"><div class="name">${pendingName} <span class="${pendingLabelClass}" onclick="event.stopPropagation();editPendingDocLabel('${escA(pendingTask)}')" title="点击修改补充描述" style="cursor:pointer;">${esc(pendingLabel)} ✎</span></div><div class="stats">${pendingStatus}</div></div></div>`;
     }
-    el.innerHTML=pendingHtml+ingestedHtml;
+
+    const docs=(data.documents||[]);
+    const activeDocs=docs.filter(d=>(d.status||'active')==='active');
+    const inactiveDocs=docs.filter(d=>d.status==='inactive');
+    const nameOwners={};
+    const registerDoc=(d,id)=>{
+        const docId=d.doc_id||d.filename;
+        docMap[docId]=id;
+        docRefToId[docId]=docId;
+        if(d.file_hash){
+            fileHashToName[d.file_hash]=d.filename;
+            docRefToId[d.file_hash]=docId;
+            docRefToId[d.file_hash+'.pdf']=docId;
+        }
+        docLabelMap[docId]=d.label||d.version||'';
+        if(nameOwners[d.filename]){
+            delete docMap[d.filename];
+            delete docRefToId[d.filename];
+        }else{
+            nameOwners[d.filename]=docId;
+            docMap[d.filename]=id;
+            docRefToId[d.filename]=docId;
+            docLabelMap[d.filename]=d.label||d.version||'';
+        }
+    };
+    const renderDoc=(d,id,inactive)=>{
+        registerDoc(d,id);
+        const docId=d.doc_id||d.filename;
+        const hashShort=d.file_hash?d.file_hash.slice(-8).toUpperCase():'';
+        const cls=(currentDoc===docId)?`doc-item${inactive?' inactive':''} active`:`doc-item${inactive?' inactive':''}`;
+        const pg=d.page_count||kbTotalPagesCache[docId]||'';
+        const stats=[];
+        if(pg)stats.push(pg+'页');
+        if(d.char_count)stats.push(d.char_count+'字');
+        if(d.paragraph_count)stats.push(d.paragraph_count+'段');
+        if(d.table_count)stats.push(d.table_count+'表');
+        if(d.added_at){
+            const dt=new Date(d.added_at);
+            const pad=n=>String(n).padStart(2,'0');
+            stats.push((dt.getMonth()+1)+'/'+pad(dt.getDate())+' '+pad(dt.getHours())+':'+pad(dt.getMinutes()));
+        }
+        const label=d.label||d.version||'添加描述';
+        const labelClass=d.label||d.version?'doc-label-tag':'doc-label-tag doc-label-placeholder';
+        const verTag=`<span class="${labelClass}" onclick="event.stopPropagation();editDocLabel('${escA(docId)}')" title="点击修改补充描述" style="cursor:pointer;">${esc(label)} ✎</span>`;
+        const displayName=hashShort?`${esc(d.filename)}<span style="color:var(--text3);font-size:10px;"> [${hashShort}]</span>${verTag}`:esc(d.filename)+verTag;
+        const statusTag=inactive?'<span class="doc-status-tag">历史版本 · 不参与问答</span>':'<span class="doc-status-tag primary">当前版本</span>';
+        const action=inactive
+            ?`<button class="primary-doc-btn" onclick="event.stopPropagation();setPrimaryDoc('${escA(docId)}')">设为当前</button>`
+            :`<span class="del-btn" onclick="event.stopPropagation();removeDoc('${escA(docId)}')">🗑️</span>`;
+        return `<div class="${cls}" data-doc-id="${escA(docId)}" data-filename="${escA(d.filename)}" data-hash="${escA(d.file_hash||'')}" onclick="selectDoc('${escA(docId)}')" title="${escA(d.filename)} [${hashShort}]"><span class="id">${id}</span><div class="info"><div class="name">${displayName} ${statusTag}</div>${stats.length?'<div class="stats">'+stats.join(' · ')+'</div>':''}</div>${action}</div>`;
+    };
+
+    if(!activeDocs.length){
+        activeHtml='<div class="doc-list-title">当前知识库</div><div style="color:#aaa;padding:12px;font-size:12px;">请上传第一份文档</div>';
+    }else{
+        activeHtml='<div class="doc-list-title">当前知识库</div>';
+        activeDocs.forEach((d,i)=>{activeHtml+=renderDoc(d,'B'+(i+1),false);});
+    }
+    if(inactiveDocs.length){
+        inactiveHtml='<div class="doc-list-title history-title">历史版本（'+inactiveDocs.length+'）</div>';
+        inactiveDocs.forEach((d,i)=>{inactiveHtml+=renderDoc(d,'H'+(i+1),true);});
+    }
+    el.innerHTML=pendingHtml+activeHtml+inactiveHtml;
 }
 
+async function setPrimaryDoc(docId){
+    if(!docId)return;
+    if(!confirm('将此历史版本设为当前版本？原当前版本会保留为历史版本。'))return;
+    const fd=new FormData();
+    fd.append('doc_id',docId);
+    try{
+        const res=await fetch('/api/documents/primary',{method:'POST',body:fd});
+        const data=await res.json();
+        if(!res.ok){alert(data.detail||'切换当前版本失败');return;}
+        if(currentDoc===docId)loadKbPreview(docId.split('#')[0]);
+        refreshDocList();
+    }catch(e){alert('切换当前版本失败: '+e.message);}
+}
 async function removeDoc(name){
     if(!confirm('确定删除「'+name+'」？'))return;
     await fetch('/api/documents/remove/'+encodeURIComponent(name),{method:'DELETE'});
@@ -166,13 +343,10 @@ async function resetKnowledgeBase(){
 // 文档预览
 // ============================================================
 // 预览待审核文档（支持 PDF / docx 等）
-async function selectPendingDoc(filename){
-    // 如果正在预审核 tab，弹窗确认
+async function selectPendingDoc(filename, taskId=reviewTaskId){
+    // 点击待审核文档即切换到文档预览；进行中的审核结果仍由顶部标签保留入口。
     const reviewTabActive=document.getElementById('reviewPanel').classList.contains('active');
-    if(reviewTabActive){
-        if(!confirm('当前正在查看预审核结果，确定切换到文档预览？'))return;
-        switchKbTab('preview');
-    }
+    if(reviewTabActive)switchKbTab('preview');
     // 清理 PDF 状态
     kbPdfDoc=null;kbPdfUrl=null;
     currentDoc=filename;
@@ -180,14 +354,14 @@ async function selectPendingDoc(filename){
     document.getElementById('previewEmpty').style.display='none';
     document.getElementById('previewContent').style.display='flex';
     const ext = filename.split('.').pop().toLowerCase();
-    document.getElementById('previewTitle').textContent='X '+filename;
+    document.getElementById('previewTitle').textContent='N '+fmtDocName(filename,newDocHash,newDocLabel);
     if(ext === 'pdf'){
-        if(!reviewTaskId){
+        if(!taskId){
             document.getElementById('kbPdfContainer').innerHTML=
                 '<div style="padding:20px;color:var(--danger);text-align:center;">预审核任务不存在，请重新上传文档</div>';
             return;
         }
-        const url=`/api/documents/review/pdf?task_id=${reviewTaskId}`;
+        const url=`/api/documents/review/pdf?task_id=${encodeURIComponent(taskId)}`;
         try{
             kbPdfDoc=await pdfjsLib.getDocument(url).promise;
         }catch(e){
@@ -204,18 +378,19 @@ async function selectPendingDoc(filename){
         scrollToPage('kbPdfContainer', currentPage);
     } else {
         // 非 PDF：用文本段落预览
-        await loadPendingTextPreview(filename);
+        await loadPendingTextPreview(filename,taskId);
     }
 }
 
 // 待审核文档（尚未入库）的文本段落预览
-async function loadPendingTextPreview(filename){
+async function loadPendingTextPreview(filename,taskId=reviewTaskId){
     const container=document.getElementById('kbPdfContainer');
     container.innerHTML='<div style="padding:16px;color:var(--text3);">加载中...</div>';
     const pager=document.getElementById('kbPager');
     if(pager)pager.style.display='none';
     try{
-        const resp=await fetch(`/api/documents/review/paragraphs?file=${encodeURIComponent(filename)}`);
+        const query=`file=${encodeURIComponent(filename)}${taskId?'&task_id='+encodeURIComponent(taskId):''}`;
+        const resp=await fetch(`/api/documents/review/paragraphs?${query}`);
         const data=await resp.json();
         if(!data.paragraphs||!data.paragraphs.length){
             container.innerHTML='<div style="padding:16px;color:var(--text3);">该文档无段落内容</div>';
@@ -261,12 +436,33 @@ function promptLabel(message, initial){
     });
 }
 
+async function editPendingDocLabel(taskId){
+    taskId=taskId||reviewTaskId;
+    if(!taskId)return;
+    const val=await promptLabel('修改待审核文档补充描述（建议填版本号）：',newDocLabel);
+    if(val===null)return;
+    const fd=new FormData();
+    fd.append('label',val);
+    try{
+        const r=await fetch(`/api/documents/review/${encodeURIComponent(taskId)}/label`,{method:'POST',body:fd});
+        const d=await r.json();
+        if(!r.ok){alert(d.detail||'更新失败');return;}
+        if(taskId===reviewTaskId){
+            newDocLabel=d.label||'';
+            if(reviewResult)reviewResult.new_doc_label=newDocLabel;
+            const title=document.getElementById('stepTitle');
+            if(title&&newDocFile)title.textContent='预审核: '+fmtDocName(newDocFile,newDocHash,newDocLabel);
+            if(reviewResult)buildReviewPanel();
+        }
+        refreshDocList();
+    }catch(e){alert('更新失败: '+e.message);}
+}
+
 async function editDocLabel(docId){
     if(!docId)return;
-    const current = docMap[docId] ? '' : '';
-    // 从文档列表找当前 label
+    // 以唯一 doc_id 查找列表项；同名多版本不能再按文件名取描述。
     let curLabel='';
-    const el = document.querySelector(`.doc-item[data-filename="${CSS.escape(docId.split('#')[0])}"]`);
+    const el = document.querySelector(`.doc-item[data-doc-id="${CSS.escape(docId)}"]`);
     if(el){
         const tag=el.querySelector('.doc-label-tag');
         if(tag) curLabel=tag.textContent.replace('✎','').trim();
@@ -340,7 +536,7 @@ async function loadKbPreview(basename){
     }
     document.getElementById('previewEmpty').style.display='none';
     document.getElementById('previewContent').style.display='flex';
-    document.getElementById('previewTitle').textContent=(docMap[currentDoc]||'')+' '+basename;
+    document.getElementById('previewTitle').textContent=(docMap[currentDoc]||'')+' '+fmtDocName(basename,currentDoc.includes('#')?currentDoc.split('#').pop():'',docLabelMap[currentDoc]||docLabelMap[basename]||'');
     // 确保翻页控件可见（从文本预览切回 PDF 时）
     const pager=document.getElementById('kbPager');
     if(pager)pager.style.display='';
@@ -373,7 +569,8 @@ async function loadKbPreview(basename){
 async function loadTextPreview(filename){
     document.getElementById('previewEmpty').style.display='none';
     document.getElementById('previewContent').style.display='flex';
-    document.getElementById('previewTitle').textContent=(docMap[filename]||'')+' '+filename;
+    const textDocHash=currentDoc&&currentDoc.includes('#')?currentDoc.split('#').pop():'';
+    document.getElementById('previewTitle').textContent=(docMap[currentDoc]||docMap[filename]||'')+' '+fmtDocName(filename,textDocHash,docLabelMap[currentDoc]||docLabelMap[filename]||'');
     const container=document.getElementById('kbPdfContainer');
     container.innerHTML='<div style="padding:16px;color:var(--text3);">加载中...</div>';
     // 隐藏翻页控件（文本预览不需要）
@@ -486,9 +683,37 @@ function showPreviewEmpty(){document.getElementById('previewEmpty').style.displa
 // ============================================================
 // KB Tab 切换
 // ============================================================
+let reviewViewState=null;
+
+function rememberVersionCompare(){
+    const panel=document.getElementById('versionComparePanel');
+    if(!panel||!panel.classList.contains('show'))return;
+    reviewViewState={
+        gi:Number(panel.dataset.groupIdx),
+        ci:Number(panel.dataset.vcIdx),
+        side:panel.querySelector('.vc-quick-tab.active')?.dataset.side||'new',
+        showAll:panel.dataset.showAll==='1',
+    };
+    panel.classList.remove('show');
+}
+
+function restoreVersionCompare(){
+    if(!reviewViewState||!reviewResult)return;
+    const state=reviewViewState;
+    const g=reviewResult.compare_groups?.[state.gi];
+    if(!g?.version_changes?.[state.ci])return;
+    showVersionDiffForGroup(state.gi,state.ci).then(()=>{
+        const panel=document.getElementById('versionComparePanel');
+        if(!panel)return;
+        panel.dataset.showAll=state.showAll?'1':'0';
+        switchVcTab(state.side);
+    });
+}
+
 function switchKbTab(tab){
     document.querySelectorAll('.kb-tabs .kb-tab').forEach(b=>b.classList.remove('active'));
     if(tab==='preview'){
+        rememberVersionCompare();
         document.querySelector('.kb-tabs .kb-tab:first-child').classList.add('active');
         document.getElementById('previewPanel').classList.add('active');
         document.getElementById('reviewPanel').classList.remove('active');
@@ -496,18 +721,55 @@ function switchKbTab(tab){
         document.getElementById('reviewTabBtn').classList.add('active');
         document.getElementById('previewPanel').classList.remove('active');
         document.getElementById('reviewPanel').classList.add('active');
+        restoreVersionCompare();
     }
 }
 
+function updateReviewTab(){
+    const reviewTabBtn=document.getElementById('reviewTabBtn');
+    if(!reviewTabBtn)return;
+    reviewTabBtn.style.display='';
+    const groups=reviewResult&&reviewResult.compare_groups?reviewResult.compare_groups:[];
+    let n=0,vc=0,suspect=0;
+    groups.forEach(g=>{
+        if(g.compare_type==='version_diff') vc+=(g.version_changes||[]).length;
+        else { n+=(g.inconsistencies||[]).length; suspect+=(g.suspects||[]).length; }
+    });
+    let label='预审核';
+    if(reviewResult?.phase==='error'||reviewResult?.incomplete){
+        label=`预审核失败 (${reviewResult.n_error_groups||groups.filter(g=>g.status==='error').length||1}组)`;
+    }else{
+        const parts=[];
+        if(n>0)parts.push(`${n}矛盾`);
+        if(suspect>0)parts.push(`${suspect}疑似待复核`);
+        if(vc>0)parts.push(`${vc}变更`);
+        if(parts.length)label=`预审核 (${parts.join('+')})`;
+    }
+    reviewTabBtn.textContent=`⚠️ ${label}`;
+}
+
 function showReviewTab(){
-document.getElementById('reviewTabBtn').style.display='';
-const groups=reviewResult&&reviewResult.compare_groups?reviewResult.compare_groups:[];
-let n=0, vc=0;
-groups.forEach(g=>{ if(g.compare_type==='version_diff') vc+=(g.version_changes||[]).length; else n+=(g.inconsistencies||[]).length; });
-let label='预审核';
-if(n>0||vc>0) label=`预审核 (${n}矛盾+${vc}变更)`;
-document.getElementById('reviewTabBtn').textContent=`⚠️ ${label}`;
-switchKbTab('review');
+    updateReviewTab();
+    switchKbTab('review');
+}
+
+function updatePartialReviewButton(){
+    const reviewBtn=document.getElementById('reviewBtn');
+    const groups=reviewResult?.compare_groups||[];
+    if(!reviewBtn||!groups.length)return;
+    let conflictCount=0,versionCount=0,suspectCount=0;
+    groups.forEach(g=>{
+        if(g.compare_type==='version_diff') versionCount+=(g.version_changes||[]).length;
+        else { conflictCount+=(g.inconsistencies||[]).length; suspectCount+=(g.suspects||[]).length; }
+    });
+    let text='';
+    if(conflictCount>0)text+=`⚠️ ${conflictCount} 处内容矛盾`;
+    if(suspectCount>0)text+=`${text?'，':''}🔎 ${suspectCount} 处疑似待人工复核`;
+    if(versionCount>0)text+=`${text?'，':''}📝 ${versionCount} 处版本变更`;
+    if(!text)text='🔎 已产生部分比对结果';
+    reviewBtn.textContent=text+' → 查看详情';
+    reviewBtn.classList.add('show');
+    updateReviewTab();
 }
 
 function onReviewBtnClick(){
@@ -529,54 +791,135 @@ uploadZone.addEventListener('dragover',e=>{e.preventDefault();uploadZone.style.b
 uploadZone.addEventListener('dragleave',()=>{uploadZone.style.borderColor='';});
 uploadZone.addEventListener('drop',e=>{e.preventDefault();uploadZone.style.borderColor='';if(!uploadZone.classList.contains('disabled')&&e.dataTransfer.files.length)handleUpload(e.dataTransfer.files[0]);});
 
+function renderUploadTransferProgress(pct){
+    const known=Number.isFinite(Number(pct));
+    const value=known?Math.max(0,Math.min(100,Math.round(Number(pct)))):0;
+    const pctText=known?`<span class="step-pct">${value}%</span>`:'';
+    const fillClass=known?'':' indeterminate';
+    const title=known?`上传文件 ${value}%`:'正在上传文件（进度暂不可计算）';
+    const items=document.getElementById('stepItems');
+    if(items)items.innerHTML=`<div class="step-item upload-transfer-item"><div class="dot active">↑</div><span class="step-label">${title}</span>${pctText}<div class="step-bar" title="${title}"><div class="step-bar-fill${fillClass}" style="width:${value}%"></div></div></div>`;
+}
+
+function uploadWithProgress(formData){
+    return new Promise((resolve,reject)=>{
+        const xhr=new XMLHttpRequest();
+        renderUploadTransferProgress(null);
+        xhr.upload.addEventListener('progress',event=>{
+            renderUploadTransferProgress(event.lengthComputable&&event.total>0?(event.loaded/event.total)*100:null);
+        });
+        xhr.onload=()=>{
+            let data={};
+            try{data=JSON.parse(xhr.responseText||'{}');}catch(e){data={detail:xhr.responseText||'上传响应格式错误'};}
+            if(xhr.status>=200&&xhr.status<300)renderUploadTransferProgress(100);
+            resolve({ok:xhr.status>=200&&xhr.status<300,status:xhr.status,data});
+        };
+        xhr.onerror=()=>reject(new Error('网络连接失败'));
+        xhr.onabort=()=>reject(new Error('上传已中止'));
+        xhr.open('POST','/api/documents/upload');
+        xhr.send(formData);
+    });
+}
+
 async function handleUpload(file){
 if(!file)return;
 // 上传前弹窗输入补充描述（用户可取消 → 空描述）
-const labelVal=await promptLabel('为文档「'+file.name+'」添加补充描述（建议填版本号，如 R5-21；可留空）：', document.getElementById('docLabelInput')?.value||'');
+const labelVal=await promptLabel('为文档「'+file.name+'」添加补充描述（可手工填写版本号；系统不会自动识别版本号；可留空）：','');
 window.__uploadLabel=labelVal===null?'':labelVal;
+newDocLabel=window.__uploadLabel;
 // 清理上一轮预审核结果，避免在 SSE 首个事件到达前仍显示旧结果
-reviewResult=null;reviewTaskId=null;
+reviewResult=null;reviewTaskId=null;reviewViewState=null;openCompareGroups.clear();
+const oldVersionPanel=document.getElementById('versionComparePanel');
+if(oldVersionPanel){oldVersionPanel.classList.remove('show');oldVersionPanel.replaceChildren();}
 const oldBtn=document.getElementById('reviewBtn');if(oldBtn){oldBtn.classList.remove('show');oldBtn.textContent='';}
 const oldPanel=document.getElementById('reviewPanel');if(oldPanel)oldPanel.classList.remove('active');
-// 新一轮审核复用固定的操作栏；上一轮确认入库会暂时禁用按钮，必须在新任务开始前恢复。
-const reviewOkBtn=document.querySelector('.review-actions .btn-ok');
-const reviewNoBtn=document.querySelector('.review-actions .btn-no');
-if(reviewOkBtn){reviewOkBtn.disabled=false;reviewOkBtn.textContent='确认入库';}
-if(reviewNoBtn)reviewNoBtn.disabled=false;
+// 新一轮审核开始前，结果操作按钮全部保持禁用，直到收到最终结果。
+const reviewOkBtn=document.getElementById('reviewConfirmBtn');
+const reviewNoBtn=document.getElementById('reviewRejectBtn');
+const reviewExportBtn=document.getElementById('reviewExportBtn');
+if(reviewOkBtn){reviewOkBtn.disabled=true;reviewOkBtn.textContent='等待审核完成';}
+if(reviewNoBtn){reviewNoBtn.disabled=true;reviewNoBtn.textContent='取消入库';}
+if(reviewExportBtn)reviewExportBtn.disabled=true;
 newDocFile=file.name;newDocHash='';activeFileName=file.name;
 uploadZone.classList.add('disabled');
 document.getElementById('stepArea').classList.add('show');
 document.getElementById('stepTitle').textContent='上传: '+file.name;
-document.getElementById('stepItems').innerHTML='<div class="step-item"><div class="dot active">⏳</div><span>上传中...</span></div>';
+document.getElementById('stepItems').innerHTML='';
+renderUploadTransferProgress(null);
 const fd=new FormData();fd.append('file',file);fd.append('label',window.__uploadLabel||'');
 try{
-const res=await fetch('/api/documents/upload',{method:'POST',body:fd});
-if(!res.ok){const e=await res.json();alert(e.detail||'上传失败');resetUpload();return;}
-const data=await res.json();
-// 同名文档：需要用户选择覆盖/预审核（自定义是/否对话框）
+const uploadResponse=await uploadWithProgress(fd);
+if(!uploadResponse.ok){alert(uploadResponse.data.detail||'上传失败');resetUpload();return;}
+const data=uploadResponse.data;
+// 同名文档：保留旧版本并进入版本审核，最终确认时再选择当前版本
 if(data.needs_choice){
-    const overwrite=await customConfirm(
-        `知识库已有同名文档「${data.filename}」（${data.existing.paragraph_count}段）。\n是否直接覆盖？\n\n· 是：删除旧文档，替换为新文档。\n· 否：走预审核流程（版本差异审核）。`
+    const proceed=await customConfirm(
+        `检测到疑似同一文档的已有版本「${data.filename}」（${data.existing.label||'未标注版本'}）。\n\n将保留旧版本，并在预审核完成后让你选择：\n· 是：继续预审核并保留两个版本\n· 否：取消本次上传`
     );
-    const choice = overwrite ? 'overwrite' : 'coexist';
-    // 重新上传，带 choice 参数
-    const fd2=new FormData();fd2.append('file',file);fd2.append('choice',choice);fd2.append('label',window.__uploadLabel||'');
-    const res2=await fetch('/api/documents/upload',{method:'POST',body:fd2});
-    if(!res2.ok){const e=await res2.json();alert(e.detail||'上传失败');resetUpload();return;}
-    const data2=await res2.json();
+    if(!proceed){resetUpload();return;}
+    const fd2=new FormData();
+    fd2.append('file',file);
+    fd2.append('choice','coexist');
+    fd2.append('label',window.__uploadLabel||'');
+    const uploadResponse2=await uploadWithProgress(fd2);
+    if(!uploadResponse2.ok){alert(uploadResponse2.data.detail||'上传失败');resetUpload();return;}
+    const data2=uploadResponse2.data;
     reviewTaskId=data2.task_id;
     newDocHash=data2.file_hash||'';
-    document.getElementById('stepTitle').textContent='预审核: '+fmtDocName(data2.filename,newDocHash);
+    document.getElementById('stepTitle').textContent='预审核: '+fmtDocName(data2.filename,newDocHash,newDocLabel);
     refreshDocList();
     connectSSE(data2.task_id);
     return;
 }
 reviewTaskId=data.task_id;
 newDocHash=data.file_hash||'';
-document.getElementById('stepTitle').textContent='预审核: '+fmtDocName(data.filename,newDocHash);
+document.getElementById('stepTitle').textContent='预审核: '+fmtDocName(data.filename,newDocHash,newDocLabel);
 refreshDocList();
 connectSSE(data.task_id);
 }catch(e){alert('上传失败: '+e.message);resetUpload();}
+}
+
+function showTerminalReviewResult(d){
+    const isError=d.status==='error';
+    const result=d.result&&typeof d.result==='object'
+        ? d.result
+        : {phase:isError?'error':'done',compare_groups:[],message:d.current_step||'预审核未完成'};
+    if(isError){
+        result.phase='error';
+        result.incomplete=true;
+        result.message=result.message||d.current_step||result.error||'预审核失败，请重新上传';
+        result.n_error_groups=result.n_error_groups||0;
+    }
+    reviewResult=result;
+    if(d.new_doc_label!==undefined) reviewResult.new_doc_label=d.new_doc_label;
+    if(d.result?.new_doc_label!==undefined) reviewResult.new_doc_label=d.result.new_doc_label;
+    if(d.old_version_filepath) reviewResult.old_version_filepath=d.old_version_filepath;
+    if(d.old_doc_filename) reviewResult.old_doc_filename=d.old_doc_filename;
+    document.getElementById('stepArea').classList.remove('show');
+
+    const groups=reviewResult.compare_groups||[];
+    let n=0,vc=0,suspect=0;
+    groups.forEach(g=>{
+        if(g.compare_type==='version_diff') vc+=(g.version_changes||[]).length;
+        else { n+=(g.inconsistencies||[]).length; suspect+=(g.suspects||[]).length; }
+    });
+    const reviewBtn=document.getElementById('reviewBtn');
+    if(isError){
+        const errorCount=reviewResult.n_error_groups||groups.filter(g=>g.status==='error').length||1;
+        reviewBtn.textContent=`❌ 预审核失败：${errorCount} 组比较失败 → 查看详情`;
+        uploadZone.classList.remove('disabled');
+    }else{
+        let btnText='';
+        if(n>0) btnText+=`⚠️ ${n} 处内容矛盾`;
+        if(suspect>0) btnText+=`${btnText?'，':''}🔎 ${suspect} 处疑似待人工复核`;
+        if(vc>0) btnText+=`${n>0||suspect>0?'，':''}📝 ${vc} 处版本变更`;
+        if(!btnText) btnText='✅ 未发现异常 → 确认入库';
+        else btnText+=' → 查看详情';
+        reviewBtn.textContent=btnText;
+    }
+    reviewBtn.classList.add('show');
+    buildReviewPanel();
+    showReviewTab();
 }
 
 function connectSSE(taskId){
@@ -584,39 +927,24 @@ function connectSSE(taskId){
     es.onmessage=function(event){
         const d=JSON.parse(event.data);
         renderSteps(d);
-        // ★ 增量结果推送：运行中 + phase≠done 时，实时更新预审核面板
-        if(d.status==='running'&&d.result&&d.result.phase&&d.result.phase!=='done'){
-            reviewResult=d.result;
-            if(d.old_version_filepath) reviewResult.old_version_filepath = d.old_version_filepath;
-            if(d.old_doc_filename) reviewResult.old_doc_filename = d.old_doc_filename;
-            // 用 buildReviewPanel 渲染，保留点击等交互能力
-            buildReviewPanel();
-            // 确保 reviewPanel 可见
-            const area=document.getElementById('reviewPanel');
-            if(area) area.classList.add('active');
-            const preview=document.getElementById('previewPanel');
-            if(preview) preview.classList.remove('active');
+        // 增量结果推送：已有比较组时允许用户随时打开右侧预审核面板。
+        if((d.status==='running'||d.status==='paused')&&d.result&&d.result.phase&&d.result.phase!=='done'){
+            reviewResult={...d.result,status:d.status};
+            if(d.new_doc_label!==undefined) newDocLabel=d.new_doc_label||'';
+            if(d.result?.new_doc_label!==undefined) reviewResult.new_doc_label=d.result.new_doc_label;
+            const compareStarted=d.result.phase==='comparing' || (d.result.compare_groups||[]).length>0;
+            if(compareStarted){
+                if(d.old_version_filepath) reviewResult.old_version_filepath=d.old_version_filepath;
+                if(d.old_doc_filename) reviewResult.old_doc_filename=d.old_doc_filename;
+                updatePartialReviewButton();
+                buildReviewPanel();
+            }
         }
         if(d.status==='done'||d.status==='error'||d.status==='cancelled'){
             es.close();
-            if(d.status==='done'&&d.result){
-                reviewResult=d.result;
-                if(d.old_version_filepath) reviewResult.old_version_filepath = d.old_version_filepath;
-                if(d.old_doc_filename) reviewResult.old_doc_filename = d.old_doc_filename;
-                document.getElementById('stepArea').classList.remove('show');
-                const groups=d.result.compare_groups||[];
-                let n=0, vc=0;
-                groups.forEach(g=>{ if(g.compare_type==='version_diff') vc+=(g.version_changes||[]).length; else n+=(g.inconsistencies||[]).length; });
-                let btnText='';
-                if(n>0) btnText+=`⚠️ ${n} 处内容矛盾`;
-                if(vc>0) btnText+=`${n>0?'，':''}📝 ${vc} 处版本变更`;
-                if(!btnText) btnText='✅ 未发现异常 → 确认入库';
-                else btnText+=' → 查看详情';
-                document.getElementById('reviewBtn').textContent=btnText;
-                document.getElementById('reviewBtn').classList.add('show');
-                buildReviewPanel();
-                if(vc>0||(!n&&!vc)) showReviewTab();
-            } else {
+            if((d.status==='done'||d.status==='error')&&d.result){
+                showTerminalReviewResult(d);
+            }else{
                 resetUpload();
             }
         }
@@ -625,30 +953,40 @@ function connectSSE(taskId){
 
 let stepTimer=null,lastSSEElapsed=0,lastSSETime=Date.now();
 function renderSteps(d){
-    const all=d.all_steps||[],comp=d.completed_steps||[],compIds=comp.map(s=>s.id);
-    if(!all.length){document.getElementById('stepItems').innerHTML=`<div class="step-item"><div class="dot active">⏳</div><span>${esc(d.current_step||'')}</span></div>`;return;}
-    const doneCount=comp.filter(c=>c.elapsed!=null).length;
-    document.getElementById('stepTitle').textContent=`预审核: ${esc(fmtDocName(activeFileName||'',newDocHash))} (${doneCount}/${all.length})`;
-    lastSSEElapsed=d.current_elapsed||0;lastSSETime=Date.now();
+    const all=d.all_steps||[],comp=d.completed_steps||[];
+    if(!all.length){
+        document.getElementById('stepItems').innerHTML=`<div class="step-item"><div class="dot active">⏳</div><span class="step-label">${esc(d.current_step||'处理中...')}</span><div class="step-bar" title="进度暂不可计算"><div class="step-bar-fill indeterminate" style="width:40%"></div></div></div>`;
+        return;
+    }
+    const byId=new Map(comp.map(s=>[s.id,s]));
+    const doneCount=all.filter(s=>{
+        const state=byId.get(s.id);
+        return state&&(state.status==='done'||state.elapsed!=null);
+    }).length;
+    const overallPct=Number.isFinite(Number(d.progress))?Math.max(0,Math.min(100,Math.round(Number(d.progress)))):null;
+    document.getElementById('stepTitle').textContent=`预审核: ${fmtDocName(activeFileName||'',newDocHash,newDocLabel)} (${doneCount}/${all.length})${overallPct!==null?` · ${overallPct}%`:''}`;
+    lastSSEElapsed=d.current_elapsed||0;
+    lastSSETime=Date.now();
     let html='';
-    for(let i=0;i<all.length;i++){
-        const s=all[i],cs=comp.find(function(x){return x.id===s.id;});
-        const hasEl=cs&&cs.elapsed!=null,isIn=compIds.indexOf(s.id)>=0;
-        const isDone=isIn&&hasEl,isAct=isIn&&!hasEl;
+    for(const s of all){
+        const cs=byId.get(s.id);
+        const status=cs?.status||((cs?.elapsed!=null)?'done':(cs?'active':'pending'));
+        const isDone=status==='done', isAct=status==='active';
         const cls=isDone?'done':(isAct?'active':'pending');
-        const icon=isDone?'\u2713':(isAct?'\u25B8':'\u00B7');
+        const icon=isDone?'✓':(isAct?'▸':'·');
+        const details=cs?.details&&typeof cs.details==='object'?cs.details:null;
+        const dynamicLabel=(s.id==='loading'||s.id==='embedding')&&cs?.message?cs.message:s.label;
         let time='';
-        if(isDone&&cs){time='<span class="time">'+Math.round(cs.elapsed)+'s</span>';}
-        else if(isAct){time='<span class="time" id="activeTimer">'+Math.floor(d.current_elapsed||0)+'s</span>';}
-        // 进度条：done 显示满条；active 显示流动动画（docling 无进度回调，
-        // pct 只有阶段起止点，用 indeterminate 动画表达'进行中'，避免静止误导）
-        let bar='';
-        if(isDone){
-            bar='<div class="step-bar"><div class="step-bar-fill" style="width:100%"></div></div>';
-        }else if(isAct){
-            bar='<div class="step-bar"><div class="step-bar-fill indeterminate"></div></div>';
-        }
-        html+='<div class="step-item"><div class="dot '+cls+'">'+icon+'</div><span>'+esc(s.label)+'</span>'+time+bar+'</div>';
+        if(isDone&&cs) time=`<span class="time">${Math.round(cs.elapsed||0)}s</span>`;
+        else if(isAct) time=`<span class="time" id="activeTimer">${Math.floor(d.current_elapsed||0)}s</span>`;
+        const rawPct=details?.stage_pct??cs?.pct??d.progress;
+        const pctKnown=isAct&&rawPct!==null&&rawPct!==undefined&&Number.isFinite(Number(rawPct));
+        const pct=pctKnown?Math.max(0,Math.min(100,Math.round(Number(rawPct)))):0;
+        const pctText=pctKnown?`<span class="step-pct">${pct}%</span>`:'';
+        const fillClass=!pctKnown?' indeterminate':'';
+        const barTitle=pctKnown?`${pct}%`:'该阶段进度暂不可计算';
+        const bar=isAct?`<div class="step-bar" title="${barTitle}"><div class="step-bar-fill${fillClass}" style="width:${pct}%"></div></div>`:'';
+        html+=`<div class="step-item"><div class="dot ${cls}">${icon}</div><span class="step-label">${esc(dynamicLabel)}</span>${pctText}${time}${bar}</div>`;
     }
     document.getElementById('stepItems').innerHTML=html;
     if(!stepTimer&&doneCount<all.length)stepTimer=setInterval(tickTimer,1000);
@@ -659,7 +997,32 @@ function tickTimer(){const el=document.getElementById('activeTimer');if(!el)retu
 function resetUpload(){
     document.getElementById('stepArea').classList.remove('show');
     uploadZone.classList.remove('disabled');
+    // 清理当前审核上下文，避免上一轮终态按钮残留到下一轮或重新上传流程。
+    reviewResult=null;
+    reviewTaskId=null;
+    reviewViewState=null;
+    openCompareGroups.clear();
+    const fileInput=document.getElementById('fileInput');
+    if(fileInput)fileInput.value='';
+    const exportBtn=document.getElementById('reviewExportBtn');
+    const rerunBtn=document.getElementById('reviewRerunBtn');
+    const okBtn=document.getElementById('reviewConfirmBtn');
+    const noBtn=document.getElementById('reviewRejectBtn');
+    if(exportBtn)exportBtn.disabled=true;
+    if(rerunBtn){rerunBtn.disabled=true;rerunBtn.style.display='none';}
+    if(okBtn){okBtn.disabled=true;okBtn.textContent='等待审核完成';}
+    if(noBtn){noBtn.disabled=true;noBtn.textContent='取消入库';}
     newDocFile=null;refreshDocList();
+}
+function startReupload(){
+    // 错误任务无法重跑或用户希望从头执行时，直接打开本地文件选择器。
+    hideReviewTab();
+    resetUpload();
+    const fileInput=document.getElementById('fileInput');
+    if(fileInput){
+        fileInput.value='';
+        fileInput.click();
+    }
 }
 function cancelUpload(){
     if(reviewTaskId)fetch(`/api/documents/review/${reviewTaskId}/cancel`,{method:'POST'});
@@ -685,49 +1048,123 @@ function resumeReview(){
 }
 function cancelReviewWithConfirm(){
     if(!reviewTaskId)return;
-    if(!confirm('确定要中断本次文档检测吗？已完成的对比结果会保留，未完成的将丢弃。'))return;
+    if(!confirm('确定要停止本次文档检测吗？已完成的对比结果会保留，未完成的将丢弃。'))return;
     fetch(`/api/documents/review/${reviewTaskId}/cancel`,{method:'POST'}).then(r=>r.json()).then(d=>{
         if(reviewResult)reviewResult.status='cancelled';
         buildReviewPanel();
     });
 }
 
+function updateReviewActionButtons(){
+    const exportBtn=document.getElementById('reviewExportBtn');
+    const rerunBtn=document.getElementById('reviewRerunBtn');
+    const okBtn=document.getElementById('reviewConfirmBtn');
+    const noBtn=document.getElementById('reviewRejectBtn');
+    const r=reviewResult||{};
+    const phase=r.phase||'';
+    const isError=phase==='error'||r.incomplete===true;
+    const isTerminal=phase==='done'||isError;
+    const canExport=Boolean(reviewTaskId&&isTerminal);
+    const canConfirm=Boolean(reviewTaskId&&phase==='done'&&!r.incomplete&&!r.cancelled);
+    const canReject=Boolean(reviewTaskId&&isTerminal&&!r.cancelled);
+    if(exportBtn)exportBtn.disabled=!canExport;
+    if(rerunBtn){
+        rerunBtn.style.display=isError&&reviewTaskId?'inline-block':'none';
+        rerunBtn.disabled=!isError||!reviewTaskId;
+    }
+    if(okBtn){
+        okBtn.disabled=!canConfirm;
+        okBtn.textContent=canConfirm?'确认入库':isError?'无法确认入库':'等待审核完成';
+    }
+    if(noBtn)noBtn.disabled=!canReject;
+}
+
 function buildReviewPanel(){
 const r=reviewResult;if(!r)return;
 const groups=r.compare_groups||[];
 const phase = r.phase || 'done';
-const compareTotal = r.compare_total || groups.length;
-const compareDone = r.compare_done || (phase==='done'?groups.length:0);
-const newDocName = newDocFile || r.new_filename || '';
+const isError = phase==='error' || r.incomplete===true;
+const isCancelled = phase==='cancelled' || r.cancelled===true;
+const isTerminal = phase==='done' || isError || isCancelled;
+const compareTotal = r.compare_total ?? groups.length;
+const compareDone = r.compare_done ?? groups.filter(g=>g.status==='done').length;
+const currentGroup=r.current_group&&typeof r.current_group==='object'?r.current_group:null;
+const currentGroupKind=currentGroup?.compare_type==='version_diff'?'版本差异':'跨文档矛盾检测';
+const currentGroupName=currentGroup?fmtDocName(currentGroup.doc_filename||'',currentGroup.file_hash||'',currentGroup.label||''):'';
+const batchTotal=Number(currentGroup?.batch_total||0);
+const batchDone=Math.min(batchTotal,Math.max(0,Number(currentGroup?.batch_done||0)));
+const newDocName = fmtDocName(newDocFile || r.new_filename || '',newDocHash,r.new_doc_label||newDocLabel);
+const statusTag=r.status==='paused'?'<span style="color:var(--warn);font-size:10px;">已暂停</span>':'';
+updateReviewActionButtons();
+
+// ====== 控制按钮（进行中：暂停/续跑/取消） ======
+let controlsHtml='';
+if(!isTerminal){
+    const paused = r.status==='paused';
+    controlsHtml='<div class="review-controls">';
+    controlsHtml+=paused
+        ? `<button onclick="resumeReview()" class="review-control-btn resume">▶ 续跑</button>`
+        : `<button onclick="pauseReview()" class="review-control-btn pause">⏸ 暂停</button>`;
+    controlsHtml+=`<button onclick="cancelReviewWithConfirm()" class="review-control-btn cancel">⏹ 停止</button>`;
+    controlsHtml+='</div>';
+}
 
 // ====== 进行中：进度条 + 动态 message ======
 let progressHtml='';
-if(phase!=='done'){
+if(!isTerminal){
     const pct = compareTotal>0 ? Math.round(compareDone/compareTotal*100) : 0;
+    const progressKnown=Number.isFinite(Number(r.progress));
+    const safePct=progressKnown?Math.max(0,Math.min(100,Math.round(Number(r.progress)))):pct;
+    const progressFillClass=progressKnown?'':' indeterminate';
     const progressColor = r.phase==='scoring' ? 'var(--primary)' : '#722ed1';
     const icon = r.phase==='scoring' ? '🔍' : r.phase==='comparing' ? '🔁' : '🧠';
-    const label = r.phase==='scoring' ? '评估相似度' : r.phase==='comparing' ? '逐文档比较中' : '处理中';
-    const statusTag = r.status==='paused' ? '<span style="color:var(--warn);font-weight:700;">⏸ 已暂停</span>' : '';
-    progressHtml=`<div class="judging-banner" style="padding:8px 10px;margin-bottom:8px;border-radius:4px;font-size:12px;background:rgba(114,46,209,0.06);">`;
-    progressHtml+=`<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;"><span class="pulse-dot" style="width:8px;height:8px;background:${progressColor};border-radius:50%;animation:pulse 1s infinite;display:inline-block;"></span><b>${icon} ${label}</b> <span style="color:var(--text3);">${compareDone}/${compareTotal} 组</span> ${statusTag}</div>`;
-    progressHtml+=`<div style="height:6px;background:#eee;border-radius:3px;overflow:hidden;"><div style="height:100%;width:${pct}%;background:${progressColor};transition:width .4s;"></div></div>`;
-    progressHtml+=`<div style="margin-top:4px;color:var(--text3);font-size:11px;">${esc(r.message||'处理中...')}</div>`;
+    const label = r.phase==='scoring' ? '评估相似度' : r.phase==='comparing' ? '逐文档比较' : '处理中';
+    const currentGroupHtml=currentGroup
+        ? `<div class="judging-current-group" title="${esc(r.message||currentGroupName)}"><span class="judging-group-index">第 ${currentGroup.index}/${currentGroup.total} 组</span><span class="judging-group-kind">${esc(currentGroupKind)}</span><span class="judging-group-name">${esc(currentGroupName)}</span></div>`
+        : '';
+    const batchLabel=currentGroup&&currentGroup.compare_type!=='version_diff'
+        ? (batchTotal>0?`LLM batch ${batchDone}/${batchTotal}`:'LLM batch 准备中')
+        : '当前组处理中';
+    const percentLabel=progressKnown?`${safePct}%`:'进度计算中';
+    const progressMetaHtml=`<div class="judging-progress-meta"><span>${batchLabel}</span><span>${percentLabel}</span></div>`;
+    progressHtml=`<div class="judging-banner">`;
+    progressHtml+=`<div class="judging-title"><span class="judging-title-main"><span class="pulse-dot" style="background:${progressColor};"></span><b>${icon} ${label}</b> <span class="judging-count">${compareDone}/${compareTotal} 组</span> ${statusTag}</span></div>`;
+    progressHtml+=currentGroupHtml+progressMetaHtml;
+    progressHtml+=`<div class="judging-progress-row"><div class="judging-progress-track"><div class="judging-progress-fill${progressFillClass}" style="width:${safePct}%;background:${progressColor};"></div></div>${controlsHtml}</div>`;
     progressHtml+=`</div>`;
+} else if(isError){
+    const errorCount=r.n_error_groups||groups.filter(g=>g.status==='error').length||1;
+    progressHtml=`<div class="review-error-banner"><div class="review-error-title">❌ 预审核未完成：${errorCount} 组比较失败</div><div class="review-error-message">${esc(r.message||'存在库中文件缺失或比较异常，不能判定为安全。')}<br><span style="color:var(--text3);">如果重跑失败，可重新选择原文档从头执行。</span></div><div class="review-error-actions"><button class="review-control-btn resume" onclick="forceReReview()">↻ 重新执行预审核</button><button class="review-control-btn cancel" onclick="startReupload()">📄 重新上传文档</button></div></div>`;
 } else if(groups.length===0){
     if(r.kb_empty){ progressHtml='<div style="padding:20px;text-align:center;color:var(--text3);">📭 首篇文档，无对比对象，可入库</div>'; }
     else { progressHtml='<div style="padding:20px;text-align:center;color:var(--text3);">✅ 预审核通过，未发现矛盾或版本差异</div>'; }
 }
 
-// ====== 控制按钮（进行中：暂停/续跑/取消） ======
-let controlsHtml='';
-if(phase!=='done'){
-    const paused = r.status==='paused';
-    controlsHtml='<div class="review-controls" style="margin-bottom:8px;display:flex;gap:6px;">';
-    controlsHtml+=paused
-        ? `<button onclick="resumeReview()" style="padding:4px 12px;border-radius:4px;border:1px solid var(--primary);background:var(--primary);color:#fff;font-size:11px;cursor:pointer;">▶ 续跑</button>`
-        : `<button onclick="pauseReview()" style="padding:4px 12px;border-radius:4px;border:1px solid var(--warn);background:none;color:var(--warn);font-size:11px;cursor:pointer;">⏸ 暂停</button>`;
-    controlsHtml+=`<button onclick="cancelReviewWithConfirm()" style="padding:4px 12px;border-radius:4px;border:1px solid var(--danger);background:none;color:var(--danger);font-size:11px;cursor:pointer;">✕ 中断</button>`;
-    controlsHtml+='</div>';
+// ====== 比较结果摘要：按文档纵向列出，并可跳转到对应比较组 ======
+let compareSummaryHtml='';
+if(groups.length){
+    compareSummaryHtml='<div class="compare-summary"><div class="compare-summary-title">比较结果总览 <span class="summary-hint">点击文档可展开对应比较组</span></div><div class="compare-summary-list">';
+    groups.forEach((g,gi)=>{
+        const isVersion=g.compare_type==='version_diff';
+        const count=isVersion?(g.version_changes||[]).length:(g.inconsistencies||[]).length;
+        const suspectCount=isVersion?0:(g.suspects||[]).length;
+        const minorCount=(g.minor_changes||[]).length;
+        const label=docMap[g.doc_id]||'B—';
+        const kind=isVersion?'版本差异':'跨文档矛盾检测';
+        let detail;
+        if(g.status==='error') detail='比较失败';
+        else if(isVersion) detail=`${count} 处实质性变更${minorCount?`，${minorCount} 处细微差异`:''}`;
+        else {
+            detail=`${count} 处矛盾`;
+            if(suspectCount) detail+=`，${suspectCount} 处疑似待复核`;
+        }
+        const summary=compareGroupSummary(g,label);
+        compareSummaryHtml+=`<button type="button" class="compare-summary-card" data-gi="${gi}" onclick="jumpToCompareGroup(${gi})">`;
+        compareSummaryHtml+=`<span class="src-id">${esc(label)}</span><span class="summary-doc">${esc(compareDocName(g))}</span>`;
+        compareSummaryHtml+=`<span class="summary-kind">${kind} · ${detail} · 相似度 ${g.similarity!==undefined?(g.similarity*100).toFixed(0)+'%':'—'}</span>`;
+        compareSummaryHtml+=`<span class="summary-detail">${esc(summary)}</span></button>`;
+    });
+    compareSummaryHtml+='</div></div>';
 }
 
 // ====== 分组 fold（compare_groups） ======
@@ -738,24 +1175,26 @@ if(groups.length>0){
         const changes = g.version_changes||[];
         const minor = g.minor_changes||[];
         const incons = g.inconsistencies||[];
+        const suspects = g.suspects||[];
         const isVersion = g.compare_type==='version_diff';
-        const typeBadge = isVersion
+        const typeBadge = g.status==='error'
+            ? `<span class="badge badge-warn">❌ 无法比较</span>`
+            : isVersion
             ? `<span class="badge badge-primary">📝 版本差异 ${changes.length}</span>`
-            : `<span class="badge badge-warn">⚠️ 内容检查 ${incons.length}</span>`;
+            : `<span class="badge badge-warn">⚠️ 跨文档矛盾检测 ${incons.length}</span>${suspects.length?` <span class="badge" style="color:var(--warn);border-color:var(--warn);">🔎 疑似 ${suspects.length}</span>`:''}`;
         const gHash = g.file_hash ? '#'+g.file_hash.slice(-8).toUpperCase() : '';
         const simTag = g.similarity!==undefined ? `<span style="color:var(--text3);font-size:10px;">相似度 ${(g.similarity*100).toFixed(0)}%</span>` : '';
         const statusIcon = g.status==='done' ? '✅' : g.status==='error' ? '❌' : '⏳';
-        const itemCount = isVersion ? changes.length : incons.length;
+        const groupOpen=openCompareGroups.has(String(gi));
         groupsHtml+=`<div class="compare-group" data-gi="${gi}">`;
-        groupsHtml+=`<div class="compare-group-title" onclick="toggleCompareGroup(${gi})">`;
+        const bTag=docMap[g.doc_id]||'B—';
+        groupsHtml+=`<div class="compare-group-title" onclick="toggleCompareGroup(${gi})" aria-expanded="${groupOpen}">`;
         groupsHtml+=`<span class="cg-caret" style="display:inline-block;transition:transform .2s;">▶</span>`;
-        groupsHtml+=`<span class="src-id">${docMap[g.doc_id]||('B'+(gi+1))}</span>`;
-        groupsHtml+=`<span class="src-file">${esc(g.doc_filename||'')}</span>`;
-        groupsHtml+=gHash?` <span class="src-file-hash">${esc(gHash)}</span>`:'';
-        groupsHtml+=g.label?` <span class="doc-label-tag">${esc(g.label)}</span>`:'';
+        groupsHtml+=`<span class="src-id">${bTag}</span>`;
+        groupsHtml+=`<span class="src-file">${esc(compareDocName(g))}</span>`;
         groupsHtml+=` ${typeBadge} ${simTag} <span style="color:var(--text3);font-size:10px;">${statusIcon}</span>`;
         groupsHtml+=`</div>`;
-        groupsHtml+=`<div class="compare-group-body" style="display:none;">`;
+        groupsHtml+=`<div class="compare-group-body" style="display:${groupOpen?'block':'none'};">`;
         if(g.error){ groupsHtml+=`<div style="padding:8px;color:var(--danger);font-size:11px;">${esc(g.error)}</div>`; }
         if(isVersion){
             if(changes.length===0 && minor.length===0 && g.status==='done'){
@@ -764,22 +1203,42 @@ if(groups.length>0){
             changes.forEach((c,ci)=>{
                 const icon=c.type==='modified'?'✏️':c.type==='added'?'➕':'➖';
                 const tl=c.type==='modified'?'修改':c.type==='added'?'新增':'删除';
+                const bTag=docMap[g.doc_id]||'B—';
+                const newLoc=c.location||'';
+                const oldLoc=c.old_location||'';
+                const locText=c.type==='added'?`N ${newLoc}`:c.type==='removed'?`${bTag} ${oldLoc}`:`N ${newLoc} · ${bTag} ${oldLoc}`;
                 groupsHtml+=`<div class="version-diff-item" onclick="showGroupVersionDiff(${gi},${ci})" data-gi="${gi}" data-ci="${ci}">`;
-                groupsHtml+=`<div class="vd-header"><span class="vd-type">${icon} ${tl}</span><span class="vd-loc">${esc(c.location||'')}</span><span class="vd-summary">${esc(c.summary||'')}</span></div>`;
+                groupsHtml+=`<div class="vd-header"><span class="vd-type">${icon} ${tl}</span><span class="vd-loc">${esc(locText)}</span><span class="vd-summary">${esc(changeSummary(c))}</span></div>`;
                 groupsHtml+=`</div>`;
             });
         } else {
-            if(incons.length===0 && g.status==='done'){
+            if(incons.length===0 && suspects.length===0 && g.status==='done'){
                 groupsHtml+='<div style="padding:8px;color:var(--text3);font-size:11px;">未发现矛盾</div>';
             }
             incons.forEach((inc,ci)=>{
+                const bTag=docMap[g.doc_id]||'B—';
+                const point=normalizeConflictText(inc.point||'内容差异',bTag);
+                const nSays=normalizeConflictText(inc.doc_a_says||'',bTag);
+                const bSays=normalizeConflictText(inc.doc_b_says||'',bTag);
                 groupsHtml+=`<div class="conflict-item" data-gi="${gi}" data-ci="${ci}" style="cursor:pointer;" onclick="showGroupConflict(${gi},${ci})">`;
-                groupsHtml+=`<div class="title">${esc(inc.point||'内容差异')}</div>`;
-                groupsHtml+=`<div class="desc"><span style="color:var(--primary);">新:</span> ${esc((inc.doc_a_says||'').slice(0,100))}`;
-                groupsHtml+=`<br><span style="color:var(--warn);">旧:</span> ${esc((inc.doc_b_says||'').slice(0,100))}</div>`;
+                groupsHtml+=`<div class="title">${esc(point)}</div>`;
+                groupsHtml+=`<div class="desc"><span style="color:var(--primary);">N:</span> ${esc(nSays.slice(0,100))}`;
+                groupsHtml+=`<br><span style="color:var(--warn);">${esc(bTag)}:</span> ${esc(bSays.slice(0,100))}</div>`;
+                groupsHtml+=`</div>`;
+            });
+            suspects.forEach((inc,si)=>{
+                const bTag=docMap[g.doc_id]||'B—';
+                const point=normalizeConflictText(inc.point||'内容差异',bTag);
+                const nSays=normalizeConflictText(inc.doc_a_says||'',bTag);
+                const bSays=normalizeConflictText(inc.doc_b_says||'',bTag);
+                groupsHtml+=`<div class="suspect-item" data-gi="${gi}" data-si="${si}" style="cursor:pointer;border-left:3px solid var(--warn);background:rgba(250,173,20,.08);" onclick="showGroupSuspect(${gi},${si})">`;
+                groupsHtml+=`<div class="title" style="color:var(--warn);">🔎 疑似待人工复核：${esc(point)}</div>`;
+                groupsHtml+=`<div class="desc"><span style="color:var(--primary);">N:</span> ${esc(nSays.slice(0,100))}`;
+                groupsHtml+=`<br><span style="color:var(--warn);">${esc(bTag)}:</span> ${esc(bSays.slice(0,100))}</div>`;
                 groupsHtml+=`</div>`;
             });
         }
+        groupsHtml+=`<div class="compare-group-back"><button type="button" onclick="backToCompareSummary(${gi},event)">↑ 返回总览并收起本组</button></div>`;
         groupsHtml+=`</div></div>`;
     });
     groupsHtml+='</div>';
@@ -787,29 +1246,58 @@ if(groups.length>0){
 
 // info 汇总
 let infoText='';
-if(phase!=='done'){
-    infoText = r.message || '处理中...';
-    infoText+=`　（新文档: ${esc(newDocName)}）`;
+if(!isTerminal){
+    // 当前组、batch 和总体百分比已在上方进度横幅展示，这里只保留简短状态，避免重复。
+    infoText=r.status==='paused'?'⏸ 已暂停':'预审核进行中';
 } else {
     const nIssue = r.n_issue_groups || 0;
-    if(r.cancelled){ infoText='⏹ 已中断'; }
-    else if(nIssue>0){ infoText=`⚠️ 共 ${nIssue} 组存在差异/矛盾（${r.n_version_groups||0} 组版本差异 + ${r.n_conflict_groups||0} 组内容检查）`; }
+    const nSuspects = r.n_suspects || groups.reduce((sum,g)=>sum+(g.suspects||[]).length,0);
+    if(isError){ infoText=`❌ 预审核未完成：${r.n_error_groups||groups.filter(g=>g.status==='error').length||1} 组比较失败`; }
+    else if(r.cancelled){ infoText='⏹ 已中断'; }
+    else if(nIssue>0){ infoText=`⚠️ 共 ${nIssue} 组存在差异/矛盾（${r.n_version_groups||0} 组版本差异 + ${r.n_conflict_groups||0} 组跨文档矛盾检测）`; }
+    else if(nSuspects>0){ infoText=`🔎 无确定性矛盾，但有 ${nSuspects} 处疑似项需人工复核`; }
     else if(r.kb_empty){ infoText='📭 首篇文档，无对比对象，可入库'; }
     else { infoText='✅ 未发现内容矛盾，可安全入库'; }
     infoText+=`　（新文档: ${esc(newDocName)}）`;
 }
 document.getElementById('reviewInfo').textContent=infoText;
-document.getElementById('conflictList').innerHTML=progressHtml+controlsHtml+groupsHtml;
+document.getElementById('conflictList').innerHTML=progressHtml+compareSummaryHtml+groupsHtml;
 }
 
-function toggleCompareGroup(gi){
-    const el=document.querySelectorAll('.compare-group')[gi];
+function setCompareGroupOpen(gi,open){
+    const key=String(gi);
+    if(open)openCompareGroups.add(key);else openCompareGroups.delete(key);
+    const el=document.querySelector(`.compare-group[data-gi="${gi}"]`);
     if(!el)return;
     const body=el.querySelector('.compare-group-body');
     const caret=el.querySelector('.cg-caret');
-    const open=body.style.display!=='none';
-    body.style.display=open?'none':'block';
-    caret.style.transform=open?'':'rotate(90deg)';
+    const title=el.querySelector('.compare-group-title');
+    if(body)body.style.display=open?'block':'none';
+    if(caret)caret.style.transform=open?'rotate(90deg)':'';
+    if(title)title.setAttribute('aria-expanded',String(open));
+}
+
+function jumpToCompareGroup(gi){
+    setCompareGroupOpen(gi,true);
+    const el=document.querySelector(`.compare-group[data-gi="${gi}"]`);
+    if(!el)return;
+    el.scrollIntoView({behavior:'smooth',block:'start'});
+    el.classList.add('compare-group-jump');
+    setTimeout(()=>el.classList.remove('compare-group-jump'),1200);
+}
+
+function backToCompareSummary(gi,event){
+    if(event)event.stopPropagation();
+    setCompareGroupOpen(gi,false);
+    const summary=document.querySelector(`.compare-summary-card[data-gi="${gi}"]`);
+    if(summary)summary.scrollIntoView({behavior:'smooth',block:'start'});
+}
+
+function toggleCompareGroup(gi){
+    const el=document.querySelector(`.compare-group[data-gi="${gi}"]`);
+    if(!el)return;
+    const body=el.querySelector('.compare-group-body');
+    setCompareGroupOpen(gi,!body||body.style.display==='none');
 }
 
 function showGroupVersionDiff(gi,ci){
@@ -818,8 +1306,14 @@ function showGroupVersionDiff(gi,ci){
     if(!vc)return;
     // 复用现有版本差异详情面板（用一个全局指向当前组）
     window.__groupIdx=gi;
-    document.querySelectorAll('.version-diff-item').forEach((el,i)=>el.classList.toggle('selected', i===ci && Number(el.dataset.gi)===gi));
+    document.querySelectorAll('.version-diff-item').forEach(el=>el.classList.toggle('selected', Number(el.dataset.gi)===gi && Number(el.dataset.ci)===ci));
     showVersionDiffForGroup(gi,ci);
+}
+
+async function openVersionDiffSide(gi,ci,side,event){
+    if(event)event.stopPropagation();
+    await showVersionDiffForGroup(gi,ci);
+    switchVcTab(side);
 }
 
 async function showVersionDiffForGroup(gi,ci){
@@ -829,53 +1323,63 @@ async function showVersionDiffForGroup(gi,ci){
     window.__groupIdx=gi;
     const panel=document.getElementById('versionComparePanel');
     if(!panel)return;
+    const viewToken=`${Date.now()}-${gi}-${ci}`;
+    panel.dataset.viewToken=viewToken;
     panel.classList.add('show');
     panel.dataset.vcIdx=ci;
     panel.dataset.groupDocId=g.doc_id||'';
     panel.dataset.groupIdx=gi;
+    panel.dataset.showAll='0';
     const typeIcon=vc.type==='modified'?'✏️':vc.type==='added'?'➕':'➖';
     const typeLabel=vc.type==='modified'?'修改':vc.type==='added'?'新增':'删除';
-    const diffPage=extractPageFromLoc(vc.location||vc.old_location)||1;
+    const newDiffPage=_changePageForSide(vc,'new');
+    const oldDiffPage=_changePageForSide(vc,'old');
+    const diffPage=newDiffPage;
+    panel.dataset.newDiffPage=newDiffPage;
+    panel.dataset.oldDiffPage=oldDiffPage;
+    reviewViewState={gi:Number(gi),ci:Number(ci),side:'new',showAll:false,newDiffPage,oldDiffPage};
     let html='';
     html+=`<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 14px;border-bottom:1px solid var(--border);background:var(--card);flex-shrink:0;">`;
-    html+=`<span style="font-weight:600;">${typeIcon} ${typeLabel} · ${esc(g.doc_filename||'')} 差异 #${ci+1}</span>`;
+    html+=`<span style="font-weight:600;">${typeIcon} ${typeLabel} · ${esc(compareDocName(g))} 差异 #${ci+1}</span>`;
     html+=`<button onclick="closeVersionCompare()" style="background:none;border:1px solid var(--border);border-radius:4px;padding:3px 12px;cursor:pointer;font-size:11px;">✕ 返回列表</button></div>`;
     // sticky: 差异定位 + 摘要 + 文字差异 + 页面切换
     html+=`<div class="vc-sticky-header">`;
-    const oldLoc=parseLoc(vc.old_location||'');
-    const newLoc=parseLoc(vc.location||'');
+    const oldLoc=parseLoc(_changeLocationForSide(vc,'old'));
+    const newLoc=parseLoc(_changeLocationForSide(vc,'new'));
     html+=`<div class="vc-loc-bar">`;
-    const bnTag=docMap[g.doc_id]||('B'+(gi+1));
-    html+=`<div class="vc-loc-side vc-loc-old"><span class="vc-loc-tag">${bnTag} 对比文档</span><span class="vc-loc-page">第 ${oldLoc.page||diffPage} 页</span><span class="vc-loc-section" title="${escA((g.doc_filename||'') + ' ' + (oldLoc.section||''))}">${esc(g.doc_filename||'')}${oldLoc.section?(' ' + esc(oldLoc.section)):''}</span></div>`;
+    const bnTag=docMap[g.doc_id]||'B—';
+    html+=`<div class="vc-loc-side vc-loc-old"><span class="vc-loc-tag">${bnTag} 对比文档</span><span class="vc-loc-page">第 ${oldLoc.page||oldDiffPage} 页</span><span class="vc-loc-section" title="${escA(oldLoc.raw||'')}">${esc(oldLoc.raw||'—')}</span></div>`;
     html+=`<div class="vc-loc-arrow">→</div>`;
-    const newName=newDocFile||reviewResult?.new_filename||'新文档';
-    html+=`<div class="vc-loc-side vc-loc-new"><span class="vc-loc-tag">N 新文档</span><span class="vc-loc-page">第 ${newLoc.page||diffPage} 页</span><span class="vc-loc-section" title="${escA(newName + ' ' + (newLoc.section||''))}">${esc(newName)}${newLoc.section?(' ' + esc(newLoc.section)):''}</span></div>`;
+    const newName=fmtDocName(newDocFile||reviewResult?.new_filename||'新文档',newDocHash,reviewResult?.new_doc_label||newDocLabel);
+    html+=`<div class="vc-loc-side vc-loc-new"><span class="vc-loc-tag">N 新文档</span><span class="vc-loc-page">第 ${newLoc.page||newDiffPage} 页</span><span class="vc-loc-section" title="${escA(newName + ' ' + (newLoc.raw||''))}">${esc(newName)}${newLoc.raw?(' · '+esc(newLoc.raw)):''}</span></div>`;
     html+=`</div>`;
-    if(vc.summary) html+=`<div class="vc-summary-bar">💡 ${esc(vc.summary)}</div>`;
+    html+=`<div class="vc-summary-bar">💡 ${esc(changeSummary(vc))}</div>`;
+    html+=tableChangeDetailsHtml(vc);
     html+=`<div class="vc-text-diff">`;
     html+=`<div style="font-size:11px;font-weight:600;color:var(--text3);margin-bottom:8px;">📝 文字差异对比</div>`;
     const oldText=vc.old_text||'';
     const newText=vc.new_text||'';
     if(vc.type==='added'){
-        html+=`<div class="vc-diff-row vc-diff-new-row"><span class="vc-diff-tag">N</span><span class="vc-diff-text">${esc(newText)}</span></div>`;
+        html+=`<div class="vc-diff-row vc-diff-new-row"><span class="vc-diff-tag vc-diff-jump" title="打开新版预览" onclick="openVersionDiffSide(${gi},${ci},'new',event)">N</span><span class="vc-diff-text">${esc(newText)}</span></div>`;
         html+=`<div class="vc-diff-empty">（旧版无此内容 — 新增段落）</div>`;
     } else if(vc.type==='removed'){
-        html+=`<div class="vc-diff-row vc-diff-old-row"><span class="vc-diff-tag">${bnTag}</span><span class="vc-diff-text">${esc(oldText)}</span></div>`;
+        html+=`<div class="vc-diff-row vc-diff-old-row"><span class="vc-diff-tag vc-diff-jump" title="打开对比文档预览" onclick="openVersionDiffSide(${gi},${ci},'old',event)">${bnTag}</span><span class="vc-diff-text">${esc(oldText)}</span></div>`;
         html+=`<div class="vc-diff-empty">（新版已删除此段落）</div>`;
     } else {
-        html+=`<div class="vc-diff-row vc-diff-old-row"><span class="vc-diff-tag">${bnTag}</span><span class="vc-diff-text">${diffMark(newText,oldText,'b')}</span></div>`;
-        html+=`<div class="vc-diff-row vc-diff-new-row"><span class="vc-diff-tag">N</span><span class="vc-diff-text">${diffMark(newText,oldText,'a')}</span></div>`;
+        html+=`<div class="vc-diff-row vc-diff-old-row"><span class="vc-diff-tag vc-diff-jump" title="打开对比文档预览" onclick="openVersionDiffSide(${gi},${ci},'old',event)">${bnTag}</span><span class="vc-diff-text">${diffMark(newText,oldText,'b')}</span></div>`;
+        html+=`<div class="vc-diff-row vc-diff-new-row"><span class="vc-diff-tag vc-diff-jump" title="打开新版预览" onclick="openVersionDiffSide(${gi},${ci},'new',event)">N</span><span class="vc-diff-text">${diffMark(newText,oldText,'a')}</span></div>`;
     }
     html+=`</div>`;
     // 页面切换
     html+=`<div style="padding:8px 14px;background:var(--card);border-top:1px solid var(--border);display:flex;align-items:center;gap:8px;">`;
-    html+=`<span style="font-size:11px;font-weight:600;color:var(--text3);">📄 页面定位：第 ${diffPage} 页</span>`;
+    html+=`<span style="font-size:11px;font-weight:600;color:var(--text3);">📄 页面定位：N 第 ${newLoc.page||newDiffPage} 页 / ${bnTag} 第 ${oldLoc.page||oldDiffPage} 页</span>`;
     html+=`<div style="margin-left:auto;display:flex;gap:6px;">`;
     html+=`<button class="vc-quick-tab active" data-side="new" onclick="switchVcTab('new')" style="padding:4px 14px;border:1px solid var(--border);border-radius:4px;background:var(--primary);color:#fff;cursor:pointer;font-size:11px;">N 新版</button>`;
-    html+=`<button class="vc-quick-tab" data-side="old" onclick="switchVcTab('old')" style="padding:4px 14px;border:1px solid var(--border);border-radius:4px;background:transparent;cursor:pointer;font-size:11px;color:var(--text3);">B 对比文档</button>`;
+    html+=`<button class="vc-quick-tab" data-side="old" onclick="switchVcTab('old')" style="padding:4px 14px;border:1px solid var(--border);border-radius:4px;background:transparent;cursor:pointer;font-size:11px;color:var(--text3);">${bnTag} 对比文档</button>`;
     html+=`</div></div>`;
     html+=`</div>`;
     html+=`<div class="vc-scroll-area" id="vcPagesContainer" data-diff-page="${diffPage}"><div style="padding:20px;text-align:center;color:var(--text3);">正在加载文档预览...</div></div>`;
+    html+=`<div class="vc-bottom-actions"><button class="vc-back-btn" onclick="closeVersionCompare()">⟵ 返回差异列表</button></div>`;
     panel.innerHTML=html;
     // 获取新旧页数（B 侧用组 doc_id）
     const gid=panel.dataset.groupDocId||'';
@@ -884,9 +1388,12 @@ async function showVersionDiffForGroup(gi,ci){
         fetch('/api/documents/review/info?task_id='+reviewTaskId).then(r=>r.json()),
         fetch('/api/documents/review/old/info?task_id='+reviewTaskId+q.trim()).then(r=>r.json()),
     ]);
+    if(panel.dataset.viewToken!==viewToken || !panel.classList.contains('show'))return;
     panel.dataset.newPages=newInfo.page_count||0;
     panel.dataset.oldPages=oldInfo.page_count||0;
-    panel.dataset.diffPage=diffPage;
+    panel.dataset.newDiffPage=newDiffPage;
+    panel.dataset.oldDiffPage=oldDiffPage;
+    panel.dataset.diffPage=newDiffPage;
     renderVcPages('new');
 }
 
@@ -897,32 +1404,43 @@ async function showVersionDiff(idx){
 
     const panel = document.getElementById('versionComparePanel');
     if(!panel)return;
+    const viewToken = `${Date.now()}-${idx}`;
+    panel.dataset.viewToken = viewToken;
     panel.classList.add('show');
     panel.dataset.vcIdx = idx;
+    panel.dataset.groupIdx = 0;
+    panel.dataset.showAll = '0';
+    const legacyGroup=reviewResult?.compare_groups?.[0];
+    const legacyBTag=legacyGroup? (docMap[legacyGroup.doc_id]||'B1') : 'B';
+    const newDiffPage=_changePageForSide(vc,'new');
+    const oldDiffPage=_changePageForSide(vc,'old');
+    const diffPage=newDiffPage;
+    panel.dataset.newDiffPage=newDiffPage;
+    panel.dataset.oldDiffPage=oldDiffPage;
+    reviewViewState={gi:0,ci:Number(idx),side:'new',showAll:false,newDiffPage,oldDiffPage};
 
     const typeIcon = vc.type==='modified'?'✏️':vc.type==='added'?'➕':'➖';
     const typeLabel = vc.type==='modified'?'修改':vc.type==='added'?'新增':'删除';
-    const diffPage = extractPageFromLoc(vc.location||vc.old_location)||1;
 
     // 顶部标题栏（固定不滚动）
     let html = '';
     html += `<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 14px;border-bottom:1px solid var(--border);background:var(--card);flex-shrink:0;">`;
-    html += `<span style="font-weight:600;">${typeIcon} ${typeLabel} · 差异 #${idx+1}</span>`;
+    html += `<span style="font-weight:600;">${typeIcon} ${typeLabel} · ${esc(fmtDocName(newDocFile||reviewResult?.new_filename||'新文档',newDocHash,reviewResult?.new_doc_label||newDocLabel))} 差异 #${idx+1}</span>`;
     html += `<button onclick="closeVersionCompare()" style="background:none;border:1px solid var(--border);border-radius:4px;padding:3px 12px;cursor:pointer;font-size:11px;">✕ 返回列表</button>`;
     html += `</div>`;
 
     // ★ sticky 区域：差异定位 + 摘要 + 文字差异 + 页面切换（滚动时固定在顶部）
     html += `<div class="vc-sticky-header">`;
     // 差异定位
-    const oldLoc = parseLoc(vc.old_location||'');
-    const newLoc = parseLoc(vc.location||'');
+    const oldLoc = parseLoc(_changeLocationForSide(vc,'old'));
+    const newLoc = parseLoc(_changeLocationForSide(vc,'new'));
     html += `<div class="vc-loc-bar">`;
-    html += `<div class="vc-loc-side vc-loc-old"><span class="vc-loc-tag">旧 B1</span><span class="vc-loc-page">第 ${oldLoc.page||diffPage} 页</span><span class="vc-loc-section">${esc(oldLoc.section||'—')}</span></div>`;
+    html += `<div class="vc-loc-side vc-loc-old"><span class="vc-loc-tag">${legacyBTag} 对比文档</span><span class="vc-loc-page">第 ${oldLoc.page||oldDiffPage} 页</span><span class="vc-loc-section">${esc(oldLoc.raw||'—')}</span></div>`;
     html += `<div class="vc-loc-arrow">→</div>`;
-    html += `<div class="vc-loc-side vc-loc-new"><span class="vc-loc-tag">N 新</span><span class="vc-loc-page">第 ${newLoc.page||diffPage} 页</span><span class="vc-loc-section">${esc(newLoc.section||'—')}</span></div>`;
+    html += `<div class="vc-loc-side vc-loc-new"><span class="vc-loc-tag">N 新文档</span><span class="vc-loc-page">第 ${newLoc.page||newDiffPage} 页</span><span class="vc-loc-section">${esc(newLoc.raw||'—')}</span></div>`;
     html += `</div>`;
     // LLM 摘要
-    if(vc.summary) html += `<div class="vc-summary-bar">💡 ${esc(vc.summary)}</div>`;
+    html += `<div class="vc-summary-bar">💡 ${esc(changeSummary(vc))}</div>`;
     // 文字差异高亮（双栏 diff）
     html += `<div class="vc-text-diff">`;
     html += `<div style="font-size:11px;font-weight:600;color:var(--text3);margin-bottom:8px;">📝 文字差异对比</div>`;
@@ -941,15 +1459,16 @@ async function showVersionDiff(idx){
     html += `</div>`;
     // 页面切换按钮
     html += `<div style="padding:8px 14px;background:var(--card);border-top:1px solid var(--border);display:flex;align-items:center;gap:8px;">`;
-    html += `<span style="font-size:11px;font-weight:600;color:var(--text3);">📄 页面定位：第 ${diffPage} 页</span>`;
+    html += `<span style="font-size:11px;font-weight:600;color:var(--text3);">📄 页面定位：N 第 ${newLoc.page||newDiffPage} 页 / ${legacyBTag} 第 ${oldLoc.page||oldDiffPage} 页</span>`;
     html += `<div style="margin-left:auto;display:flex;gap:6px;">`;
     html += `<button class="vc-quick-tab active" data-side="new" onclick="switchVcTab('new')" style="padding:4px 14px;border:1px solid var(--border);border-radius:4px;background:var(--primary);color:#fff;cursor:pointer;font-size:11px;">N 新版</button>`;
-    html += `<button class="vc-quick-tab" data-side="old" onclick="switchVcTab('old')" style="padding:4px 14px;border:1px solid var(--border);border-radius:4px;background:transparent;cursor:pointer;font-size:11px;color:var(--text3);">B 旧版</button>`;
+    html += `<button class="vc-quick-tab" data-side="old" onclick="switchVcTab('old')" style="padding:4px 14px;border:1px solid var(--border);border-radius:4px;background:transparent;cursor:pointer;font-size:11px;color:var(--text3);">${legacyBTag} 对比文档</button>`;
     html += `</div></div>`;
     html += `</div>`; // 关闭 vc-sticky-header
 
     // 滚动区域：PDF 页面预览（可上下滚动看完整文档）
     html += `<div class="vc-scroll-area" id="vcPagesContainer" data-diff-page="${diffPage}"><div style="padding:20px;text-align:center;color:var(--text3);">正在加载文档预览...</div></div>`;
+    html += `<div class="vc-bottom-actions"><button class="vc-back-btn" onclick="closeVersionCompare()">⟵ 返回差异列表</button></div>`;
 
     panel.innerHTML = html;
 
@@ -958,40 +1477,63 @@ async function showVersionDiff(idx){
         fetch(`/api/documents/review/info?task_id=${reviewTaskId}`).then(r=>r.json()),
         fetch(`/api/documents/review/old/info?task_id=${reviewTaskId}`).then(r=>r.json()),
     ]);
+    if(panel.dataset.viewToken!==viewToken || !panel.classList.contains('show'))return;
     panel.dataset.newPages = newInfo.page_count||0;
     panel.dataset.oldPages = oldInfo.page_count||0;
-    panel.dataset.diffPage = diffPage;
+    panel.dataset.newDiffPage=newDiffPage;
+    panel.dataset.oldDiffPage=oldDiffPage;
+    panel.dataset.diffPage=newDiffPage;
 
     renderVcPages('new');
 }
 
 // 解析 location 字符串 → {page, section}
 function parseLoc(loc){
-    if(!loc)return {page:1,section:''};
-    const page=(loc.match(/第(\d+)页/)||[])[1];
+    if(!loc)return {page:1,section:'',raw:''};
+    const page=(loc.match(/第\s*(\d+)\s*页/)||[])[1];
     const sec=(loc.match(/§([\d.]+)/)||[])[1];
-    return {page:page?parseInt(page):1,section:sec?`§${sec}`:''};
+    return {page:page?parseInt(page):1,section:sec?`§${sec}`:'',raw:loc};
 }
 
-// 渲染指定侧（old/new）的 PDF 预览，智能展示差异页优先
+// 将差异页滚动到预览容器可视区域。图片懒加载会改变前置页面高度，
+// 因此在首帧、短延迟和目标图片加载后各尝试一次。
+function focusVcPage(container,target){
+    if(!container||!target)return;
+    const focus=()=>{
+        if(!target.isConnected)return;
+        container.scrollTo({top:Math.max(0,target.offsetTop-4),behavior:'auto'});
+    };
+    requestAnimationFrame(()=>{focus();setTimeout(focus,80);setTimeout(focus,350);});
+}
+
+// 渲染指定侧（old/new）的 PDF 预览，默认显示差异页前后各 3 页
 function renderVcPages(side){
     const panel = document.getElementById('versionComparePanel');
     if(!panel)return;
     const container = document.getElementById('vcPagesContainer');
     if(!container)return;
     const pages = parseInt(panel.dataset[side==='new'?'newPages':'oldPages'])||0;
-    const diffPage = parseInt(panel.dataset.diffPage)||1;
+    const sidePageKey=side==='new'?'newDiffPage':'oldDiffPage';
+    const rawDiffPage=parseInt(panel.dataset[sidePageKey]||panel.dataset.diffPage)||1;
+    const diffPage=Math.max(1,Math.min(pages,rawDiffPage));
 
     if(!pages){container.innerHTML='<div style="padding:20px;text-align:center;color:#aaa;">文档不可用</div>';return;}
 
     // 检测是否显示全部页面还是只显示差异页
     const showAll = panel.dataset.showAll === '1';
-    const pagesToShow = showAll ? Array.from({length:pages},(_,i)=>i+1) : [diffPage];
+    const previewRadius = 3;
+    const startPage = Math.max(1,diffPage-previewRadius);
+    const endPage = Math.max(startPage,Math.min(pages,diffPage+previewRadius));
+    const pagesToShow = showAll ? Array.from({length:pages},(_,i)=>i+1) : Array.from({length:Math.max(1,endPage-startPage+1)},(_,i)=>startPage+i);
 
     let html = '';
     // 标题
     html += `<div style="padding:6px 14px;font-size:11px;color:var(--text3);background:#fafafa;border-bottom:1px solid #eee;display:flex;justify-content:space-between;align-items:center;">`;
-    html += `<span>${side==='new'?'🆕 N 新文档':'📜 B 旧版文档'} — 第 ${diffPage} 页${showAll?`（共 ${pages} 页）`:''}</span>`;
+    const group=reviewResult?.compare_groups?.[parseInt(panel.dataset.groupIdx)||0];
+    const sideName=side==='new'
+        ? fmtDocName(newDocFile||reviewResult?.new_filename||'新文档',newDocHash,reviewResult?.new_doc_label||newDocLabel)
+        : compareDocName(group);
+    html += `<span>${side==='new'?'🆕 N 新文档':'📜 '+(docMap[group?.doc_id]||'B—')+' 对比文档'}：${esc(sideName)} — 第 ${diffPage} 页${showAll?`（共 ${pages} 页）`:`（前后各 ${previewRadius} 页）`}</span>`;
     html += `<button onclick="toggleVcShowAll()" style="background:none;border:1px solid var(--border);border-radius:3px;padding:2px 10px;cursor:pointer;font-size:10px;">${showAll?'收起':'查看全部'}</button>`;
     html += `</div>`;
 
@@ -1004,28 +1546,26 @@ function renderVcPages(side){
         let vcs = (groups[parseInt(panel.dataset.groupIdx)||0] && groups[parseInt(panel.dataset.groupIdx)||0].version_changes) || [];
         if(!vcs.length && reviewResult && Array.isArray(reviewResult.version_changes)) vcs = reviewResult.version_changes;
         const vc = vcs[vcIdx] || null;
-        const hlText = vc ? (side==='new' ? (vc.new_text||'') : (vc.old_text||'')) : '';
+        const hlText = vc ? diffQueryText(vc.new_text||'',vc.old_text||'',side==='new'?'a':'b') : '';
         const hl = hlText ? '&highlight=' + encodeURIComponent(hlText.slice(0,50)) : '';
         const imgUrl = side==='new'
             ? `/api/documents/review/page?task_id=${reviewTaskId}&page=${p}${hl}`
             : `/api/documents/review/old/page?task_id=${reviewTaskId}&page=${p}${gq}${hl}`;
         html += `<div class="vc-page-wrap${p===diffPage?' vc-page-active':''}" data-page="${p}">`;
         if(pagesToShow.length>1) html += `<div class="vc-page-num">第 ${p} 页</div>`;
-        html += `<img src="${imgUrl}" loading="lazy" style="width:100%;display:block;" onerror="this.parentElement.innerHTML='<div style=\'padding:20px;text-align:center;color:#aaa;\'>第${p}页加载失败</div>'"></div>`;
+        html += `<img src="${imgUrl}" loading="lazy" style="width:100%;display:block;" onload="if(this.parentElement.classList.contains('vc-page-active'))focusVcPage(document.getElementById('vcPagesContainer'),this.parentElement)" onerror="this.parentElement.innerHTML='<div style=\'padding:20px;text-align:center;color:#aaa;\'>第${p}页加载失败</div>'"></div>`;
     }
     container.innerHTML = html;
 
-    // 滚动到差异所在页
-    requestAnimationFrame(()=>{
-        const target = container.querySelector('.vc-page-wrap.vc-page-active');
-        if(target) target.scrollIntoView({behavior:'instant', block:'start'});
-    });
+    const target = container.querySelector('.vc-page-wrap.vc-page-active');
+    focusVcPage(container,target);
 }
 
 function toggleVcShowAll(){
     const panel = document.getElementById('versionComparePanel');
     if(!panel)return;
     panel.dataset.showAll = panel.dataset.showAll==='1'?'0':'1';
+    if(reviewViewState)reviewViewState.showAll=panel.dataset.showAll==='1';
     const activeSide = panel.querySelector('.vc-quick-tab.active')?.dataset.side||'new';
     renderVcPages(activeSide);
 }
@@ -1041,20 +1581,19 @@ function switchVcTab(side){
         btn.style.color = active?'#fff':'var(--text3)';
     });
     panel.dataset.showAll = '0';
+    if(reviewViewState)reviewViewState={...reviewViewState,side};
     renderVcPages(side);
 }
 
-// 从 location 描述中提取段落号并映射到页码
-function extractPageFromLoc(loc){
+// 从 location 描述中提取页码；支持“第 N 页”、页码范围和段落回退。
+function extractPage(loc){
     if(!loc)return 1;
-    const m2 = loc.match(/第(\d+)页/);
-    if(m2)return parseInt(m2[1]);
-    const m = loc.match(/段落#(\d+)/);
-    if(m)return Math.max(1, Math.ceil(parseInt(m[1]) / 2));
-    return 1;
+    const page=(String(loc).match(/第\s*(\d+)/)||[])[1];
+    if(page)return parseInt(page);
+    const paragraph=(String(loc).match(/段落#(\d+)/)||[])[1];
+    return paragraph?Math.max(1,Math.ceil(parseInt(paragraph)/2)):1;
 }
-
-function extractPage(loc){return extractPageFromLoc(loc);}
+function extractPageFromLoc(loc){return extractPage(loc);}
 
 // 在 B 项列表中查找匹配文件名（支持按 data-filename 精确匹配或按 title 前缀匹配）
 function findDocInList(filename){
@@ -1102,14 +1641,38 @@ function showGroupConflict(gi,ci){
     if(!c)return;
     window.__conflictGroupIdx=gi;
     window.__conflictIdx=ci;
-    document.querySelectorAll('.conflict-item').forEach(el=>el.classList.toggle('selected',Number(el.dataset.gi)===gi&&Number(el.dataset.ci)===ci));
+    window.__suspectIdx=-1;
+    document.querySelectorAll('.conflict-item,.suspect-item').forEach(el=>el.classList.toggle('selected',Number(el.dataset.gi)===gi&&Number(el.dataset.ci)===ci));
     document.getElementById('conflictList').classList.add('collapsed');
     const panel=document.getElementById('comparePanel');
     panel.classList.add('show');
-    const bFile=resolveFileName(c.doc_b?.file||c.doc_b_file||'')||'?';
+    const bRef=c.doc_b_id||c.doc_b?.file||c.doc_b_file||'';
+    const bTag=docMap[bRef]||'B—';
+    const bFile=compareDocName(g)||resolveFileName(bRef)||'?';
     const tabsEl=document.getElementById('cmpTabs');
     tabsEl.innerHTML=`<button id="cmpTabA" class="active" onclick="compareShowTab('a')">N 新文档</button>`;
-    tabsEl.innerHTML+=`<button id="cmpTabB" onclick="compareShowTab('b')">${esc(bFile)} 已有文档</button>`;
+    tabsEl.innerHTML+=`<button id="cmpTabB" onclick="compareShowTab('b')">${esc(bTag)} ${esc(bFile)} 已有文档</button>`;
+    tabsEl.innerHTML+=`<span class="compare-close" onclick="closeCompare()" title="返回列表" style="margin-left:auto;cursor:pointer;color:var(--text3);font-size:12px;display:flex;align-items:center;gap:3px;"><span style="font-size:14px;">⟵</span> 返回列表</span>`;
+    compareShowTab('a');
+}
+
+function showGroupSuspect(gi,si){
+    const g=reviewResult?.compare_groups?.[gi];
+    const c=g?.suspects?.[si];
+    if(!c)return;
+    window.__conflictGroupIdx=gi;
+    window.__conflictIdx=-1;
+    window.__suspectIdx=si;
+    document.querySelectorAll('.conflict-item,.suspect-item').forEach(el=>el.classList.toggle('selected',Number(el.dataset.gi)===gi&&Number(el.dataset.si)===si));
+    document.getElementById('conflictList').classList.add('collapsed');
+    const panel=document.getElementById('comparePanel');
+    panel.classList.add('show');
+    const bRef=c.doc_b_id||c.doc_b?.file||c.doc_b_file||'';
+    const bTag=docMap[bRef]||'B—';
+    const bFile=compareDocName(g)||resolveFileName(bRef)||'?';
+    const tabsEl=document.getElementById('cmpTabs');
+    tabsEl.innerHTML=`<button id="cmpTabA" class="active" onclick="compareShowTab('a')">N 新文档</button>`;
+    tabsEl.innerHTML+=`<button id="cmpTabB" onclick="compareShowTab('b')">${esc(bTag)} ${esc(bFile)} 已有文档</button>`;
     tabsEl.innerHTML+=`<span class="compare-close" onclick="closeCompare()" title="返回列表" style="margin-left:auto;cursor:pointer;color:var(--text3);font-size:12px;display:flex;align-items:center;gap:3px;"><span style="font-size:14px;">⟵</span> 返回列表</span>`;
     compareShowTab('a');
 }
@@ -1117,6 +1680,7 @@ function showGroupConflict(gi,ci){
 function selectConflict(idx){
 window.__conflictGroupIdx=-1;
 window.__conflictIdx=idx;
+window.__suspectIdx=-1;
 document.querySelectorAll('.conflict-item').forEach((el,i)=>el.classList.toggle('selected',i===idx));
 document.getElementById('conflictList').classList.add('collapsed');
 const c=reviewResult.inconsistencies[idx];
@@ -1125,10 +1689,12 @@ panel.classList.add('show');
 
 // 构建 tab 栏（保留关闭按钮）
 // A 侧固定为 N（新文档），B 侧用已有文档的简短名（B1/B2）
-const bFile=resolveFileName(c.doc_b?.file||c.doc_b_file||'') || '?';
+const bRef=c.doc_b_id||c.doc_b?.file||c.doc_b_file||'';
+const bTag=docMap[bRef]||'B—';
+const bFile=resolveFileName(bRef) || '?';
 const tabsEl=document.getElementById('cmpTabs');
 tabsEl.innerHTML=`<button id="cmpTabA" class="active" onclick="compareShowTab('a')">N 新文档</button>`;
-tabsEl.innerHTML+=`<button id="cmpTabB" onclick="compareShowTab('b')">${esc(bFile)} 已有文档</button>`;
+tabsEl.innerHTML+=`<button id="cmpTabB" onclick="compareShowTab('b')">${esc(bTag)} ${esc(bFile)} 已有文档</button>`;
 tabsEl.innerHTML+=`<span class="compare-close" onclick="closeCompare()" title="返回列表" style="margin-left:auto;cursor:pointer;color:var(--text3);font-size:12px;display:flex;align-items:center;gap:3px;"><span style="font-size:14px;">⟵</span> 返回列表</span>`;
 
 // 默认显示 N 侧（新文档）
@@ -1156,11 +1722,25 @@ function diffMark(textA, textB, side){
     return esc(pre)+`<mark class="diff-mark">${esc(mid)}</mark>`+esc(suf);
 }
 
-function compareShowTab(side){
-const items=document.querySelectorAll('.conflict-item');
-const gi=Number(window.__conflictGroupIdx),ci=Number(window.__conflictIdx);
+function diffQueryText(textA,textB,side){
+    if(!textA||!textB)return (side==='a'?textA:textB).slice(0,120);
+    let p=0;const minLen=Math.min(textA.length,textB.length);
+    while(p<minLen&&textA[p]===textB[p])p++;
+    let s=0;
+    while(s<minLen-p&&textA[textA.length-1-s]===textB[textB.length-1-s])s++;
+    const source=side==='a'?textA:textB;
+    const mid=source.slice(p,source.length-s);
+    return (mid||source).slice(0,120);
+}
+
+async function compareShowTab(side){
+const items=document.querySelectorAll('.conflict-item,.suspect-item');
+const gi=Number(window.__conflictGroupIdx),ci=Number(window.__conflictIdx),si=Number(window.__suspectIdx);
 const idx=Array.from(items).findIndex(el=>el.classList.contains('selected'));
-const c=(Number.isInteger(gi)&&gi>=0)?reviewResult?.compare_groups?.[gi]?.inconsistencies?.[ci]:reviewResult.inconsistencies[idx<0?0:idx];
+const group=(Number.isInteger(gi)&&gi>=0)?reviewResult?.compare_groups?.[gi]:null;
+const c=group
+    ? (Number.isInteger(si)&&si>=0 ? group.suspects?.[si] : group.inconsistencies?.[ci])
+    : reviewResult.inconsistencies[idx<0?0:idx];
 if(!c)return;
 
 // 更新 tab 按钮高亮
@@ -1169,67 +1749,127 @@ if(tabs[0])tabs[0].classList.toggle('active', side==='a');
 if(tabs[1])tabs[1].classList.toggle('active', side==='b');
 
 const body=document.getElementById('compareBody');
-const aSays=c.doc_a?.says||c.doc_a_says||'';
-const bSays=c.doc_b?.says||c.doc_b_says||'';
+const bTag=group?(docMap[group.doc_id]||'B—'):'B';
+const aSays=normalizeConflictText(c.doc_a?.says||c.doc_a_says||'',bTag);
+const bSays=normalizeConflictText(c.doc_b?.says||c.doc_b_says||'',bTag);
 const aLoc=c.doc_a?.location||c.doc_a_location||'';
 const bLoc=c.doc_b?.location||c.doc_b_location||'';
 const loc = side==='a'?aLoc:bLoc;
 const page = extractPage(loc)||1;
 
 // 文字差异高亮（sticky 固定在顶部）
-const textDiffHtml = `<div class="diff-compare">`+
-    `<div class="diff-row"><span class="diff-label">N</span><span class="diff-text">${diffMark(aSays,bSays,'a')}</span></div>`+
-    `<div class="diff-row"><span class="diff-label">B</span><span class="diff-text">${diffMark(aSays,bSays,'b')}</span></div>`+
+    const textDiffHtml = `<div class="diff-compare">`+
+    `<div class="diff-row"><span class="diff-label" onclick="compareShowTab('a')">N</span><span class="diff-text">${diffMark(aSays,bSays,'a')}</span></div>`+
+    `<div class="diff-row"><span class="diff-label" onclick="compareShowTab('b')">${esc(bTag)}</span><span class="diff-text">${diffMark(aSays,bSays,'b')}</span></div>`+
     `</div>`;
 
-// 页面导航条
-const navBar = `<div style="padding:6px 10px;background:var(--card);border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px;font-size:11px;color:var(--text3);">
-    <span>📄 第 ${page} 页</span>
-    <div style="margin-left:auto;display:flex;gap:4px;">
-        <button onclick="cmpPrevPage()" style="padding:2px 10px;border:1px solid var(--border);border-radius:3px;background:none;cursor:pointer;font-size:11px;">◀</button>
-        <input type="number" id="cmpPageInput" value="${page}" min="1" style="width:40px;text-align:center;font-size:11px;" onchange="cmpGoToPage()" onkeydown="if(event.key==='Enter')cmpGoToPage()">
-        <button onclick="cmpNextPage()" style="padding:2px 10px;border:1px solid var(--border);border-radius:3px;background:none;cursor:pointer;font-size:11px;">▶</button>
-    </div></div>`;
-
-let imgUrl;
+let imgBase,infoUrl;
+const hlText=diffQueryText(aSays,bSays,side==='a'?'a':'b');
+const hl=hlText?'&highlight='+encodeURIComponent(hlText):'';
 if(side==='a'){
     // N 侧 → 新文档（待审核），使用 review/page API
-    imgUrl = `/api/documents/review/page?task_id=${reviewTaskId}&page=`;
+    imgBase=`/api/documents/review/page?task_id=${encodeURIComponent(reviewTaskId)}`;
+    infoUrl=`/api/documents/review/info?task_id=${encodeURIComponent(reviewTaskId)}`;
 } else {
     // B 侧 → 已有文档（在知识库中），使用 documents/page API
-    const bRef = c.doc_b?.file||c.doc_b_file||'';
-    const bFile = resolveFileName(bRef) || '';
-    if(bFile){
-        const fullName = docRefToId[bRef] || docRefToId[bFile] || Object.keys(docMap).find(k=>docMap[k]===bFile&&k.includes('#')) || bFile;
-        imgUrl = `/api/documents/page?name=${encodeURIComponent(fullName)}&page=`;
-    } else {
+    const bRef=c.doc_b_id||c.doc_b?.file||c.doc_b_file||'';
+    const bFile=resolveFileName(bRef)||'';
+    if(!bFile){
         body.innerHTML=`<div style="color:#aaa;padding:20px;text-align:center;">${textDiffHtml}<br>⚠️ 旧文档信息缺失，无法定位预览</div>`;
         return;
     }
+    const fullName=docRefToId[bRef]||docRefToId[bFile]||Object.keys(docMap).find(k=>docMap[k]===bFile&&k.includes('#'))||bFile;
+    const encodedName=encodeURIComponent(fullName);
+    imgBase=`/api/documents/page?name=${encodedName}`;
+    infoUrl=`/api/documents/info?name=${encodedName}`;
 }
 
-// 构建可滚动的预览区域：sticky 文字差异 + 导航条 + PDF 页面
-body.innerHTML=`<div style="display:flex;flex-direction:column;width:100%;max-width:700px;gap:6px;">${textDiffHtml}${navBar}<div id="cmpPdfArea" style="flex:1;overflow-y:auto;"><img src="${imgUrl}${page}" style="width:100%;border-radius:4px;" onerror="this.outerHTML='<div style=\\'padding:20px;text-align:center;color:#aaa;\\'>页面渲染失败</div>'"></div></div>`;
-// 保存当前页和 URL 前缀供翻页使用
+const compareToken=`${Date.now()}-${side}-${gi}-${ci}`;
+body.dataset.compareToken=compareToken;
+// 构建可滚动的预览区域：文字差异固定，PDF 页面连续排列
+const navBar=`<div style="padding:6px 10px;background:var(--card);border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px;font-size:11px;color:var(--text3);">
+    <span id="cmpPageLabel">📄 当前第 ${page} 页</span>
+    <div style="margin-left:auto;display:flex;gap:4px;align-items:center;">
+        <button onclick="cmpPrevPage()" style="padding:2px 10px;border:1px solid var(--border);border-radius:3px;background:none;cursor:pointer;font-size:11px;">◀</button>
+        <input type="number" id="cmpPageInput" value="${page}" min="1" style="width:40px;text-align:center;font-size:11px;" onchange="cmpGoToPage()" onkeydown="if(event.key==='Enter')cmpGoToPage()">
+        <button onclick="cmpNextPage()" style="padding:2px 10px;border:1px solid var(--border);border-radius:3px;background:none;cursor:pointer;font-size:11px;">▶</button>
+        <button id="cmpShowAllBtn" onclick="toggleCmpShowAll()" style="margin-left:6px;padding:2px 10px;border:1px solid var(--border);border-radius:3px;background:none;cursor:pointer;font-size:11px;">收起连续预览</button>
+    </div></div>`;
+body.innerHTML=`<div style="display:flex;flex-direction:column;width:100%;max-width:700px;gap:6px;">${textDiffHtml}${navBar}<div id="cmpPdfArea" style="flex:1;overflow-y:auto;"><div style="padding:20px;text-align:center;color:#aaa;">正在加载差异页附近预览...</div></div></div>`;
 body.dataset.page=page;
-body.dataset.imgBase=imgUrl;
+body.dataset.pageCount='0';
+body.dataset.imgBase=imgBase;
+body.dataset.highlight=hl;
+body.dataset.showAll='0';
+try{
+    let infoPromise=reviewPageInfoCache.get(infoUrl);
+    if(!infoPromise){
+        infoPromise=fetch(infoUrl).then(res=>{
+            if(!res.ok)throw new Error(`info request failed: ${res.status}`);
+            return res.json();
+        });
+        reviewPageInfoCache.set(infoUrl,infoPromise);
+    }
+    const info=await infoPromise;
+    if(body.dataset.compareToken!==compareToken)return;
+    body.dataset.pageCount=String(info.page_count||1);
+}catch(err){
+    if(body.dataset.compareToken!==compareToken)return;
+    reviewPageInfoCache.delete(infoUrl);
+    body.dataset.pageCount='1';
+}
+renderCmpPages();
+}
+
+function renderCmpPages(){
+    const body=document.getElementById('compareBody');
+    const area=document.getElementById('cmpPdfArea');
+    if(!body||!area)return;
+    const count=Math.max(1,parseInt(body.dataset.pageCount||'1'));
+    const current=Math.min(count,Math.max(1,parseInt(body.dataset.page||'1')));
+    const showAll=body.dataset.showAll==='1';
+    const pages=showAll?Array.from({length:count},(_,i)=>i+1):Array.from({length:Math.min(count,7)},(_,i)=>Math.max(1,Math.min(count,current-3))+i).filter(p=>p<=count);
+    const base=body.dataset.imgBase||'';
+    const separator=base.includes('?')?'&':'?';
+    area.innerHTML=pages.map(p=>{
+        // 只让当前差异页生成带高亮的 PNG；邻近页复用普通页面缓存。
+        const pageHighlight=p===current?(body.dataset.highlight||''):'';
+        return `<div class="cmp-page-wrap${p===current?' cmp-page-active':''}" data-page="${p}"><div class="cmp-page-num">第 ${p} 页</div><img src="${base}${separator}page=${p}${pageHighlight}" loading="lazy" style="width:100%;border-radius:4px;display:block;" onload="if(this.parentElement.classList.contains('cmp-page-active')){const a=document.getElementById('cmpPdfArea');a.scrollTo({top:Math.max(0,this.parentElement.offsetTop-4),behavior:'auto'});}" onerror="this.outerHTML='<div style=\'padding:20px;text-align:center;color:#aaa;\'>第${p}页加载失败</div>'"></div>`;
+    }).join('');
+    const label=document.getElementById('cmpPageLabel');
+    if(label)label.textContent=showAll?`📄 当前第 ${current} 页（共 ${count} 页）`:`📄 第 ${current} 页`;
+    const input=document.getElementById('cmpPageInput');
+    if(input)input.value=current;
+    const toggle=document.getElementById('cmpShowAllBtn');
+    if(toggle)toggle.textContent=showAll?'收起连续预览':'查看全部页面';
+    if(showAll){
+        const active=area.querySelector('.cmp-page-active');
+        if(active)area.scrollTo({top:Math.max(0,active.offsetTop-4),behavior:'auto'});
+        requestAnimationFrame(()=>{
+            const activeNow=area.querySelector('.cmp-page-active');
+            if(activeNow)area.scrollTo({top:Math.max(0,activeNow.offsetTop-4),behavior:'auto'});
+            setTimeout(()=>{const delayed=area.querySelector('.cmp-page-active');if(delayed)area.scrollTo({top:Math.max(0,delayed.offsetTop-4),behavior:'auto'});},300);
+        });
+    }
+}
+
+function toggleCmpShowAll(){
+    const body=document.getElementById('compareBody');
+    if(!body)return;
+    body.dataset.showAll=body.dataset.showAll==='1'?'0':'1';
+    renderCmpPages();
 }
 
 // 内容矛盾预览翻页
 function cmpPrevPage(){const body=document.getElementById('compareBody');if(!body)return;const p=Math.max(1,parseInt(body.dataset.page||'1')-1);cmpSetPage(p);}
-function cmpNextPage(){const body=document.getElementById('compareBody');if(!body)return;const p=parseInt(body.dataset.page||'1')+1;cmpSetPage(p);}
+function cmpNextPage(){const body=document.getElementById('compareBody');if(!body)return;const count=parseInt(body.dataset.pageCount||'0');const p=parseInt(body.dataset.page||'1')+1;cmpSetPage(count?Math.min(count,p):p);}
 function cmpGoToPage(){const inp=document.getElementById('cmpPageInput');if(!inp)return;cmpSetPage(Math.max(1,parseInt(inp.value)||1));}
 function cmpSetPage(p){
     const body=document.getElementById('compareBody');if(!body)return;
-    const base=body.dataset.imgBase||'';if(!base)return;
-    body.dataset.page=p;
-    const inp=document.getElementById('cmpPageInput');if(inp)inp.value=p;
-    const nav=document.querySelector('#compareBody > div > div[style*="padding:6px"] > span');if(nav)nav.textContent=`📄 第 ${p} 页`;
-    const area=document.getElementById('cmpPdfArea');if(!area)return;
-    area.innerHTML=`<img src="${base}${p}" style="width:100%;border-radius:4px;" onerror="this.outerHTML='<div style=\\'padding:20px;text-align:center;color:#aaa;\\'>第${p}页加载失败</div>'">`;
+    const count=parseInt(body.dataset.pageCount||'0');
+    body.dataset.page=count?Math.min(count,Math.max(1,p)):Math.max(1,p);
+    renderCmpPages();
 }
-
-function extractPage(loc){const m=(loc||'').match(/第(\d+)/);return m?parseInt(m[1]):1;}
 
 function closeCompare(){
     document.getElementById('comparePanel').classList.remove('show');
@@ -1238,13 +1878,47 @@ function closeCompare(){
 }
 function closeVersionCompare(){
     const panel=document.getElementById('versionComparePanel');
-    if(panel)panel.classList.remove('show');
+    if(panel){
+        panel.classList.remove('show');
+        panel.replaceChildren();
+        delete panel.dataset.vcIdx;
+        delete panel.dataset.groupIdx;
+        delete panel.dataset.groupDocId;
+        delete panel.dataset.viewToken;
+    }
+    reviewViewState=null;
     document.querySelectorAll('.version-diff-item').forEach(el=>el.classList.remove('selected'));
     switchKbTab('review');
 }
 
+function exportReviewReport(){
+    const phase=reviewResult?.phase||'';
+    if(!reviewTaskId){alert('预审核任务不存在，请重新上传文档');return;}
+    if(phase!=='done'&&phase!=='error'){
+        alert('逐文档比对尚未完成，暂不能导出报告。');
+        return;
+    }
+    const link=document.createElement('a');
+    link.href=`/api/documents/review/${encodeURIComponent(reviewTaskId)}/report.html`;
+    link.download=`review-report-${reviewTaskId}.html`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+}
+
 async function confirmIngest(){
+    if(reviewResult?.phase!=='done'||reviewResult?.incomplete||reviewResult?.cancelled){
+        alert('逐文档比对尚未完成，不能确认入库；请等待审核结束。');
+        return;
+    }
     if(!reviewTaskId){alert('预审核任务不存在，请重新上传');return;}
+    let confirmMode='new_primary';
+    if(reviewResult?.existing_primary_doc_id){
+        const useNew=await customConfirm(
+            '预审核已完成。是否将上传的新版本设为当前版本？\n\n· 是：新版本参与问答，旧版本保留为历史版本\n· 否：保留旧版本参与问答，新版本保存为历史版本'
+        );
+        confirmMode=useNew?'new_primary':'keep_current';
+    }
     // 禁用按钮，显示进度
     const okBtn=document.querySelector('.review-actions .btn-ok');
     const noBtn=document.querySelector('.review-actions .btn-no');
@@ -1255,7 +1929,9 @@ async function confirmIngest(){
     if(info){info.textContent='⏳ 正在入库（解析/向量复用预审核缓存，首次稍慢），请稍候...';}
     console.log('confirmIngest: confirming task',reviewTaskId);
     try{
-        const res=await fetch(`/api/documents/review/${reviewTaskId}/confirm`,{method:'POST'});
+        const confirmForm=new FormData();
+        confirmForm.append('mode',confirmMode);
+        const res=await fetch(`/api/documents/review/${reviewTaskId}/confirm`,{method:'POST',body:confirmForm});
         if(res.ok){
             const data=await res.json();
             console.log('confirmIngest: success',data);
@@ -1278,33 +1954,54 @@ async function confirmIngest(){
     }
 }
 async function rejectIngest(){
+    const phase=reviewResult?.phase||'';
     if(!reviewTaskId)return;
-    await fetch(`/api/documents/review/${reviewTaskId}/reject`,{method:'POST'});
-    hideReviewTab();resetUpload();
+    if(phase!=='done'&&phase!=='error'){
+        alert('逐文档比对尚未完成，暂不能取消入库。');
+        return;
+    }
+    const noBtn=document.getElementById('reviewRejectBtn');
+    if(noBtn)noBtn.disabled=true;
+    try{
+        const res=await fetch(`/api/documents/review/${reviewTaskId}/reject`,{method:'POST'});
+        if(!res.ok){const e=await res.json();throw new Error(e.detail||'取消入库失败');}
+        hideReviewTab();resetUpload();
+    }catch(err){
+        if(noBtn)noBtn.disabled=false;
+        alert(err.message);
+    }
 }
 
 async function forceReReview(){
-    // 强制刷新：删除预审核结果缓存，重新上传同一文件触发完整预审核
+    // 优先复用服务器保留的上传文件；文件丢失时由错误页提供重新上传兜底。
     if(!reviewTaskId||!newDocFile){
-        alert('没有可刷新的预审核任务');
+        alert('没有可重跑的预审核任务，将打开重新上传。');
+        startReupload();
         return;
     }
     if(!confirm('确定强制重新执行预审核？\n\n这将忽略缓存，完整重跑所有步骤（可能需要 1-2 分钟）。'))return;
 
     try {
-        // 调用后端清除缓存并重启预审核
         const res=await fetch(`/api/documents/review/${reviewTaskId}/rerun`,{method:'POST'});
-        if(!res.ok){const e=await res.json();alert(e.detail||'操作失败');return;}
+        if(!res.ok){
+            const e=await res.json().catch(()=>({}));
+            const detail=e.detail||'重跑操作失败';
+            alert(detail+'\n\n你仍可以选择“重新上传文档”从头执行。');
+            if(res.status===400 && /文件|上传|不存在|重新上传/.test(detail))startReupload();
+            return;
+        }
 
         // 清空当前结果，等待新结果
         reviewResult=null;
+        openCompareGroups.clear();
+        updateReviewActionButtons();
         document.getElementById('conflictList').innerHTML='<div style="padding:20px;text-align:center;color:var(--text3);">⏳ 正在重新执行预审核...</div>';
         document.getElementById('comparePanel').classList.remove('show');
 
         // 重新连接 SSE 等待新结果
         connectSSE(reviewTaskId);
     } catch(e) {
-        alert('操作失败: '+e.message);
+        alert('重跑请求失败：'+e.message+'\n\n你仍可以选择“重新上传文档”从头执行。');
     }
 }
 
@@ -1345,6 +2042,19 @@ async function refreshQaSessionList(){
             </div>`;
         }).join('');
     }catch(e){console.error('加载会话列表失败:',e);}
+}
+
+async function clearQaHistory(){
+    if(!confirm('确定清空全部问答历史？此操作不可恢复。'))return;
+    try{
+        const res=await fetch('/api/qa/sessions',{method:'DELETE'});
+        const data=await res.json().catch(()=>({}));
+        if(!res.ok)throw new Error(data.detail||'清空历史失败');
+        newQaSession();
+        await refreshQaSessionList();
+    }catch(e){
+        alert(e.message||'清空历史失败');
+    }
 }
 
 async function loadQaSession(sessionId){
@@ -1397,7 +2107,7 @@ async function loadQaSession(sessionId){
                             s.location===this.dataset.loc
                         );
                         const hlText=srcData?srcData.text:'';
-                        openQaPreview(this.dataset.file,this.dataset.loc,hlText);
+                        openQaPreview(this.dataset.file,this.dataset.loc,hlText,this.dataset.title);
                     });
                 });
             }
@@ -1495,13 +2205,15 @@ async function sendQuestion(){
                 const mf=displayFile.match(/^([0-9a-fA-F]{64})\.pdf$/);
                 if(mf&&fileHashToName[mf[1].toLowerCase()])displayFile=fileHashToName[mf[1].toLowerCase()];
                 const hash8=parts[1]||(mf?mf[1].slice(-8).toUpperCase():'');
+                const firstSrc=docSources[0];
+                if(firstSrc&&firstSrc.filename)displayFile=firstSrc.filename;
                 srcHtml+=`<div class="src-doc-block"><div class="src-doc-title"><span class="src-id">${bn}</span><span class="src-file">${esc(displayFile)}</span>`;
                 if(hash8)srcHtml+=` <span class="src-file-hash">#${esc(hash8)}</span>`;
-                const firstSrc=docSources[0];
                 if(firstSrc&&firstSrc.label)srcHtml+=` <span class="doc-label-tag">${esc(firstSrc.label)}</span>`;
+                if(firstSrc&&firstSrc.is_primary)srcHtml+=` <span class="doc-status-tag primary">当前版本</span>`;
                 srcHtml+=`</div>`;
                 for(const s of docSources){
-                    srcHtml+=`<div class="src-item" id="ref-${s.idx}" data-file="${escA(s.source_file||'')}" data-loc="${escA(s.location||'')}">`;
+                    srcHtml+=`<div class="src-item" id="ref-${s.idx}" data-file="${escA(s.source_file||'')}" data-loc="${escA(s.location||'')}" data-title="${escA(s.filename||did)}">`;
                     srcHtml+=`<div><span class="src-ref">[${s.idx}]</span><span class="src-loc">${esc(s.location||'')}</span></div>`;
                     srcHtml+=`<div class="src-text">${esc((s.text||'').slice(0,120))}${(s.text||'').length>120?'…':''}</div>`;
                     srcHtml+=`</div>`;
@@ -1521,10 +2233,11 @@ async function sendQuestion(){
                         s.location===this.dataset.loc
                     );
                     const hlText=srcData?srcData.text:'';
-                    openQaPreview(this.dataset.file,this.dataset.loc,hlText);
+                    openQaPreview(this.dataset.file,this.dataset.loc,hlText,this.dataset.title);
                 });
             });
         }
+        await refreshQaSessionList();
     }catch(e){console.error('QA render error:', e);const last=document.querySelector('.qa-messages .msg.bot:last-child');if(last)last.innerHTML='<span style="color:var(--danger);">请求失败</span>';}
 }
 function appendMsg(role,html){
@@ -1535,10 +2248,10 @@ function appendMsg(role,html){
 // QA 预览面板 — 服务端高亮渲染
 let qaCurrentFile='', qaCurrentPage=1, qaTotalPages=1, qaHighlightText='';
 
-async function openQaPreview(file, location, highlightText){
+async function openQaPreview(file, location, highlightText, displayTitle=''){
     const panel=document.getElementById('qaPreview');
     panel.classList.add('show');
-    document.getElementById('qaPreviewTitle').textContent=file;
+    document.getElementById('qaPreviewTitle').textContent=displayTitle||file.split('#')[0];
     const container=document.getElementById('qaPdfContainer');
     const page=extractPage(location)||1;
 
@@ -1647,28 +2360,24 @@ refreshQaSessionList();
         const res=await fetch('/api/documents/review/active');
         const d=await res.json();
         if(!d.task_id)return;
-        newDocFile=d.filename;activeFileName=d.filename;reviewTaskId=d.task_id;newDocHash=d.file_hash||'';
+        newDocFile=d.filename;activeFileName=d.filename;reviewTaskId=d.task_id;newDocHash=d.file_hash||'';newDocLabel=d.label||d.result?.new_doc_label||'';
         refreshDocList();
-        if(d.status==='done'&&d.result){
-            reviewResult=d.result;
-            if(d.old_version_filepath) reviewResult.old_version_filepath = d.old_version_filepath;
-            if(d.old_doc_filename) reviewResult.old_doc_filename = d.old_doc_filename;
-            const groups=d.result.compare_groups||[];
-            let n=0, vc=0;
-            groups.forEach(g=>{ if(g.compare_type==='version_diff') vc+=(g.version_changes||[]).length; else n+=(g.inconsistencies||[]).length; });
-            let btnText='';
-            if(n>0) btnText+=`⚠️ ${n} 处内容矛盾`;
-            if(vc>0) btnText+=(`${n>0?'，':''}📝 ${vc} 处版本变更`);
-            if(!btnText) btnText='✅ 未发现异常';
-            btnText+=' → 查看详情';
-            document.getElementById('reviewBtn').textContent=btnText;
-            document.getElementById('reviewBtn').classList.add('show');
-            buildReviewPanel();
-            showReviewTab();  // 自动切到预审核 tab 展示结果
-        } else if(d.status==='pending'||d.status==='running'){
+        if((d.status==='done'||d.status==='error')&&d.result){
+            showTerminalReviewResult(d);
+        } else if(d.status==='pending'||d.status==='running'||d.status==='paused'){
             uploadZone.classList.add('disabled');
             document.getElementById('stepArea').classList.add('show');
-            document.getElementById('stepTitle').textContent='预审核: '+fmtDocName(d.filename||'',newDocHash);
+            document.getElementById('stepTitle').textContent='预审核: '+fmtDocName(d.filename||'',newDocHash,newDocLabel);
+            if(d.result&&typeof d.result==='object'){
+                reviewResult={...d.result,status:d.status};
+                if(d.old_version_filepath) reviewResult.old_version_filepath=d.old_version_filepath;
+                if(d.old_doc_filename) reviewResult.old_doc_filename=d.old_doc_filename;
+                const compareStarted=d.result.phase==='comparing' || (d.result.compare_groups||[]).length>0;
+                if(compareStarted){
+                    updatePartialReviewButton();
+                    buildReviewPanel();
+                }
+            }
             renderSteps(d);
             connectSSE(d.task_id);
         }
@@ -1778,7 +2487,9 @@ function renderSettingsForm(){
   document.getElementById('prompt-system').value=p.system||'';
   document.getElementById('prompt-context').value=p.context_template||'';
   document.getElementById('prompt-conflict').value=p.conflict_warning||'';
-  document.getElementById('judge-prompt_file').value=(_settingsConfig.judge||{}).prompt_file||'';
+  const judge=_settingsConfig.judge||{};
+  document.getElementById('judge-prompt_template').value=judge.prompt_template||'';
+  document.getElementById('judge-prompt_file').value=judge.prompt_file||'';
   // Chat
   document.getElementById('chat-max_history').value=(_settingsConfig.chat||{}).max_history||20;
 }
@@ -1968,7 +2679,10 @@ async function saveSettings(){
       context_template:document.getElementById('prompt-context').value,
       conflict_warning:document.getElementById('prompt-conflict').value,
     },
-    judge:{prompt_file:document.getElementById('judge-prompt_file').value.trim()},
+    judge:{
+      prompt_template:document.getElementById('judge-prompt_template').value,
+      prompt_file:document.getElementById('judge-prompt_file').value.trim(),
+    },
     chat:{max_history:parseInt(document.getElementById('chat-max_history').value)||20},
     llm_profiles:_settingsProfiles,
     llm_routing:{

@@ -16,8 +16,58 @@ def _display_cell(text: str) -> str:
     return re.sub(r"\s+", " ", str(text).strip())
 
 
+def _table_header_and_rows(table) -> tuple[list, list]:
+    """统一处理 rows[0] 表头和独立 headers 两种表格表示。"""
+    if getattr(table, "headers", None):
+        return list(table.headers), list(table.rows or [])
+    rows = list(table.rows or [])
+    return (rows[0], rows[1:]) if rows else ([], [])
+
+
 def _header_text(table) -> str:
-    return " ".join(_normalize_cell(cell) for cell in table.rows[0]) if table.rows else ""
+    header, _ = _table_header_and_rows(table)
+    return " ".join(_normalize_cell(cell) for cell in header)
+
+
+def _display_row_cells(row, headers) -> list[dict]:
+    """把一行转换成可供 API/UI 展示的列名和值。"""
+    cells = []
+    for index, value in enumerate(row):
+        column = headers[index] if index < len(headers) else ""
+        cells.append(
+            {
+                "column": _display_cell(column) or f"第{index + 1}列",
+                "old_value": "",
+                "new_value": _display_cell(value),
+            }
+        )
+    return cells
+
+
+def _row_number(rows, target) -> int:
+    """返回数据行在表体中的 1-based 序号（不含表头）。"""
+    for index, row in enumerate(rows, start=1):
+        if row is target:
+            return index
+    return 0
+
+
+def _changed_cells(old_row, new_row, old_header, column_map) -> list[dict]:
+    changes = []
+    for old_index, new_index in sorted(column_map.items()):
+        old_value = old_row[old_index] if old_index < len(old_row) else ""
+        new_value = new_row[new_index] if new_index < len(new_row) else ""
+        if _normalize_cell(old_value) == _normalize_cell(new_value):
+            continue
+        column = old_header[old_index] if old_index < len(old_header) else ""
+        changes.append(
+            {
+                "column": _display_cell(column) or f"第{old_index + 1}列",
+                "old_value": _display_cell(old_value),
+                "new_value": _display_cell(new_value),
+            }
+        )
+    return changes
 
 
 def _row_key(row, column: int) -> str:
@@ -36,9 +86,19 @@ def compare_table_pair(old_table, new_table) -> list[VersionChange]:
     if not old_table.rows or not new_table.rows:
         return []
     changes: list[VersionChange] = []
-    section = old_table.chapter_title or old_table.location
-    old_header = [str(cell).strip() for cell in old_table.rows[0]]
-    new_header = [str(cell).strip() for cell in new_table.rows[0]]
+    table_name = (
+        old_table.location
+        or new_table.location
+        or old_table.chapter_title
+        or new_table.chapter_title
+        or "未命名表格"
+    )
+    old_location = old_table.location
+    new_location = new_table.location
+    old_header, old_data_rows = _table_header_and_rows(old_table)
+    new_header, new_data_rows = _table_header_and_rows(new_table)
+    old_header = [str(cell).strip() for cell in old_header]
+    new_header = [str(cell).strip() for cell in new_header]
     column_map, used_new_columns = {}, set()
     new_header_valid = sum(bool(_normalize_cell(cell)) for cell in new_header) >= len(new_header) * 0.5
     if new_header_valid and old_header:
@@ -64,25 +124,28 @@ def compare_table_pair(old_table, new_table) -> list[VersionChange]:
         changes.append(
             VersionChange(
                 change_type="added",
-                section=f"表格: {section}",
-                location="表格结构",
+                section=f"表格: {table_name}",
+                location=new_location,
                 new_text=f"新增列: {', '.join(added_columns)}",
-                summary=f"表格新增 {len(added_columns)} 列",
+                summary=f"[表格新增列] {table_name}：{', '.join(added_columns)}",
+                table_name=table_name,
             )
         )
     if removed_columns:
         changes.append(
             VersionChange(
                 change_type="removed",
-                section=f"表格: {section}",
-                location="表格结构",
+                section=f"表格: {table_name}",
+                location="",
+                old_location=old_location,
                 old_text=f"删除列: {', '.join(removed_columns)}",
-                summary=f"表格删除 {len(removed_columns)} 列",
+                summary=f"[表格删除列] {table_name}：{', '.join(removed_columns)}",
+                table_name=table_name,
             )
         )
 
-    old_rows = {_row_key(row, 0): row for row in old_table.rows[1:]}
-    new_rows = {_row_key(row, column_map.get(0, 0)): row for row in new_table.rows[1:]}
+    old_rows = {_row_key(row, 0): row for row in old_data_rows}
+    new_rows = {_row_key(row, column_map.get(0, 0)): row for row in new_data_rows}
     for key in dict.fromkeys([*old_rows, *new_rows]):
         if not key:
             continue
@@ -93,32 +156,60 @@ def compare_table_pair(old_table, new_table) -> list[VersionChange]:
                 _aligned_row_text(new_row, column_map, False),
             )
             if old_text != new_text:
+                old_display = " | ".join(map(_display_cell, old_row))
+                new_display = " | ".join(map(_display_cell, new_row))
                 changes.append(
                     VersionChange(
                         change_type="modified",
-                        section=f"表格: {section}",
-                        location=f"行: {key}",
-                        old_text=" | ".join(map(_display_cell, old_row)),
-                        new_text=" | ".join(map(_display_cell, new_row)),
+                        section=f"表格: {table_name}",
+                        location=new_location,
+                        old_location=old_location,
+                        old_text=old_display,
+                        new_text=new_display,
+                        summary=f"[表格修改] {table_name} / 行标识：{key}",
                         similarity=SequenceMatcher(None, old_text, new_text).ratio(),
+                        table_name=table_name,
+                        row_key=key,
+                        row_index=_row_number(new_data_rows, new_row),
+                        cell_changes=_changed_cells(old_row, new_row, old_header, column_map),
                     )
                 )
         elif old_row:
+            old_display = " | ".join(map(_display_cell, old_row))
             changes.append(
                 VersionChange(
                     change_type="removed",
-                    section=f"表格: {section}",
-                    location=f"行: {key}",
-                    old_text=" | ".join(map(_display_cell, old_row)),
+                    section=f"表格: {table_name}",
+                    location="",
+                    old_location=old_location,
+                    old_text=old_display,
+                    summary=f"[表格删除行] {table_name} / 行标识：{key}",
+                    table_name=table_name,
+                    row_key=key,
+                    row_index=_row_number(old_data_rows, old_row),
+                    cell_changes=[
+                        {
+                            "column": _display_cell(old_header[index]) or f"第{index + 1}列",
+                            "old_value": _display_cell(value),
+                            "new_value": "",
+                        }
+                        for index, value in enumerate(old_row)
+                    ],
                 )
             )
         elif new_row:
+            new_display = " | ".join(map(_display_cell, new_row))
             changes.append(
                 VersionChange(
                     change_type="added",
-                    section=f"表格: {section}",
-                    location=f"行: {key}",
-                    new_text=" | ".join(map(_display_cell, new_row)),
+                    section=f"表格: {table_name}",
+                    location=new_location,
+                    new_text=new_display,
+                    summary=f"[表格新增行] {table_name} / 行标识：{key}",
+                    table_name=table_name,
+                    row_key=key,
+                    row_index=_row_number(new_data_rows, new_row),
+                    cell_changes=_display_row_cells(new_row, new_header),
                 )
             )
     return changes
@@ -140,14 +231,18 @@ def compare_tables(old_tables: list, new_tables: list) -> list[VersionChange]:
             paired_old.add(old_index)
             paired_new.add(best_index)
     for old_index, old_table in enumerate(old_tables):
-        if old_index in paired_old or len(old_table.rows or []) < 5:
+        _, old_data_rows = _table_header_and_rows(old_table)
+        if old_index in paired_old or len(old_data_rows) < 5:
             continue
         for new_index, new_table in enumerate(new_tables):
-            if new_index in paired_new or len(new_table.rows or []) < 5:
+            _, new_data_rows = _table_header_and_rows(new_table)
+            if new_index in paired_new or len(new_data_rows) < 5:
                 continue
+            old_header, _ = _table_header_and_rows(old_table)
+            new_header, _ = _table_header_and_rows(new_table)
             if (
-                len(old_table.rows[0]) == len(new_table.rows[0])
-                and min(len(old_table.rows), len(new_table.rows)) / max(len(old_table.rows), len(new_table.rows)) >= 0.7
+                len(old_header) == len(new_header)
+                and min(len(old_data_rows), len(new_data_rows)) / max(len(old_data_rows), len(new_data_rows)) >= 0.7
             ):
                 pairs.append((old_index, new_index))
                 paired_old.add(old_index)
