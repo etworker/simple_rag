@@ -74,7 +74,7 @@ PDF 文本层按视觉行/词拆分，跨页时：
 | 内容 | rows 二维数组（list[list[str]]）+ headers（表头行，可选）+ context_before（表格前上下文） |
 | 跨页 | 跨页表格自动合并为单个 Table（同文件+页码连续+列数接近），跳过重复表头 |
 | 存储 | 解析结果保留 Table，供 Web 预览与版本对比 |
-| **向量检索** | **08-16 新增：表格转成 markdown 结构化文本（`_tables_to_paragraphs`）加入向量索引**，location 标"表格: 章节"。问"修订记录表里 5.1-1~5 是什么"也能命中 |
+| **向量检索** | **表格转成一段 Markdown 文本（`Table.to_markdown()`）后作为单个 Paragraph/chunk**，与普通段落一起加入确认后的全局 FAISS 索引；表格不会按行滑窗切分 |
 | 版本对比 | 表格按表头相似度配对，逐行 diff（行增删/单元格修改/列增删） |
 
 **表格转文本格式**（加入索引的 chunk 内容）：
@@ -107,11 +107,13 @@ PDF 文本层按视觉行/词拆分，跨页时：
 ### 5.1 检索流程（DocStore.search）
 
 ```
-1. 用户问题 → embedding（同一模型 bge-small-zh-v1.5，GPU auto）
-2. FAISS 内积检索（向量已归一化，等价余弦相似度）
-3. 取 top_k（默认 5），过滤 similarity_threshold（默认 0.5）以下
+1. 用户问题 → embedding（默认 BAAI/bge-small-zh-v1.5，fastembed/ONNX，device=auto）
+2. FAISS IndexFlatIP 内积检索（归一化向量时近似余弦相似度；当前运行时为 CPU FAISS）
+3. 先在全量向量中搜索，再按文档 active 状态过滤 inactive，最后应用相似度阈值并保留 top_k
 4. 返回 RetrievedChunk（text/source_file/location/score/paragraph_index）
 ```
+
+> 配置文件/示例通常为 `retrieval.top_k=15`、`similarity_threshold=0.5`、`context_radius=2`；没有配置文件时 `ConfigStore` 代码 fallback 的 `top_k=5`，不要将 fallback 写成所有部署的默认。
 
 ### 5.2 上下文扩展（08-16 新增）
 
@@ -167,7 +169,7 @@ PDF 文本层按视觉行/词拆分，跨页时：
 - 规则预筛：段首匹配"手册名/公司名"等疑似页眉前缀 → 候选
 - LLM 确认：把候选段首打包给 LLM（一次调用），逐条判断"页眉残留应剥离 / 正文应保留"
 - 确认后剥离段首页眉前缀
-- 启用：`parse_cleanup.enabled = true`（默认 false；开启后解析结果变化，需重置知识库）
+- 启用：`parse_cleanup.enabled = true`（默认 false）。它只在预审核阶段清洗内存中的新文档对象，不写回 `parse_cache`；当前确认入库会重新解析，未复用该清洗对象，因此不会自动改变正式入库内容或向量。若希望清洗结果进入正式知识库，需要另行完成代码适配，不能仅靠重置向量。
 
 ---
 
@@ -185,8 +187,8 @@ PDF 文本层按视觉行/词拆分，跨页时：
 | extract.repeat_line_threshold_pct | 30 | 重复行判页眉页脚阈值 |
 | extract.docling_merge_split_paras | True | docling 碎尾合并开关 |
 | extract.docling_strip_header_prefix | True | docling 页眉前缀剥离开关 |
-| pre_review.parse_backend | pdfplumber | PDF 解析后端 |
-| retrieval.top_k | 5 | 检索返回段落数 |
+| pre_review.parse_backend | auto | 按扫描件/无框线表格/数字文本特征选择后端；不可用时降级 pdfplumber |
+| retrieval.top_k | 15（示例/部署配置）；无配置 fallback=5 | 检索返回段落数，不应把示例值当代码全局默认 |
 | retrieval.similarity_threshold | 0.5 | 检索相似度下限 |
 | **retrieval.context_radius** | **2** | **命中段落前后扩展段数（0=关闭）** |
 | **parse_cleanup.enabled** | **false** | **LLM 页眉清洗开关** |
@@ -196,7 +198,8 @@ PDF 文本层按视觉行/词拆分，跨页时：
 
 ## 9. 与 Embedding 的关系
 
-- embedding 模型：bge-small-zh-v1.5（512 维，默认）/ jina-v2-base-zh（768 维，备选），GPU auto。
-- 段落（含表格转文本）逐条 embedding → 归一化 → FAISS。
-- 向量缓存（VectorStore）：按"内容哈希 + 段落数 + 配置哈希"缓存，配置/模型变化自动失效。
+- embedding 默认模型：`BAAI/bge-small-zh-v1.5`，通过 **fastembed/ONNX** 加载，`device=auto`；GPU embedding 与当前 CPU 运行的 FAISS 索引是两个不同环节。
+- 普通段落的向量输入会带章节上下文前缀，形如 `章节：...\n正文：...`；表格使用 `Table.to_markdown()`（必要时带章节信息）作为单块输入，而不是只对裸正文或每一行编码。
+- 段落/表格逐条 embedding → 归一化 → `faiss.IndexFlatIP`；当前不做滑窗 overlap。
+- 向量缓存按内容哈希、段落数和配置哈希缓存，配置/模型变化自动失效；更换模型后需重建/重置知识库索引。
 - 详见 docs/Embedding模型选型.md。

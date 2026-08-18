@@ -3,7 +3,7 @@
 > 目的：为 doc_parser 多后端插件架构挑选"又准确又快"的 PDF 解析候选。
 > 依据：项目需求（docs/需求文档.md FR-1）、doc_parser 设计文档（doc_parser/docs/设计文档.md）、
 > 公开基准 opendataloader-bench（200 份真实 PDF）与 pdfmux 200-PDF benchmark。
-> 更新日期：2026-08-17
+> **选型快照与边界**：公开 benchmark 仅作为外部资料参考，不等于本项目样本上的验收；本报告的本地数字 PDF 实测是有限样本实验，不构成 SLA。当前路由为 `pre_review.parse_backend=auto`，不是把某个库永久写成 Web 默认；OpenSearch/云服务或新解析库均未接入当前代码。
 
 ---
 
@@ -71,7 +71,7 @@ doc_parser 现有架构（doc_parser/docs/设计文档.md §2）：后端插件�
 | 库 | 优点 | 缺点 | 结论 |
 |----|------|------|------|
 | **PyMuPDF (fitz / pymupdf4llm)** | 极快（0.09s/页，C 实现）；文本层提取质量高；阅读顺序 0.885；自带 `find_tables()` 框线表格检测与 `get_text("dict")` 带坐标行提取 | 无版面深度学习模型：无框线表格弱（TEDS 0.401）、标题层级弱（MHS 0.412）；AGPL-3.0 许可 | ✅ **快路径候选**（数字文本 PDF 首选） |
-| **pdfplumber（已内置）** | 轻量、MIT；规则表格（有框线）可用；doc_parser 已深度定制（margin 编号列/页眉页脚/跨页合并） | 无版面模型；复杂文档准确度低于 PyMuPDF；纯 Python 较慢 | ✅ 保留（默认/兜底） |
+| **pdfplumber（已内置）** | 轻量、MIT；规则表格可用；doc_parser 已深度定制（margin 编号列/页眉页脚/跨页合并） | 无版面模型；复杂文档需要人工/QA 复核 | ✅ 保留（auto 不可用时兜底，也可显式固定） |
 | camelot | 表格规则法（lattice 有框线 / stream 无框线） | 仅表格、无版面；慢；依赖重 | ❌ 单点能力不足 |
 | tabula-py | 表格提取 | 依赖 Java；许可 AGPL；维护停滞 | ❌ 不选 |
 | pdfminer.six / pypdf | 底层文本 | 无表格/版面 | ❌ 不选 |
@@ -123,7 +123,7 @@ PaddleOCR（中文专项）。
 
    > 结论：pymupdf 比 pdfplumber 快约 2 倍且表格/跨页表一致；docling GPU 0.56s/页，表格识别 29 vs 17
    > （多识别 12 张无框线/复杂表格）——验证深度学习后端对无框线表格的价值。
-5. **测试与文档**：doc_parser 77 passed（含新增 pymupdf/路由测试）、rag_server 58+5skipped、llm_chat 39 passed；
+5. **历史实验记录**：当时曾在特定样本/依赖环境记录各模块测试输出；这些数字仅用于追溯，不是当前固定通过数或 SLA。当前验证命令见 [开发指南](开发指南.md)，实际结果以运行时输出为准；
    已同步 README / doc_parser 设计文档 / API 参考 / 使用手册；T4 多包验证计划见 temp/pdf_parsers_verification.md。
 
 
@@ -252,3 +252,11 @@ Marker、unstructured 和 pymupdf-layout 继续作为对照或实验路径，不
 ### 10.3 最终边界
 
 当前结论可以表述为：**Win11 CPU 已充分覆盖本项目当前两类数字型 PDF 的候选库比较，但尚未充分覆盖扫描件/OCR/VLM 的泛化能力。** 因此生产默认仍是 `auto → PyMuPDF → pdfplumber/Docling/MinerU` 的按特征升级链路，而不是把某个专项库或 CPU 深度学习库提升为全量默认后端。
+
+
+## 11. 当前验证入口与未接入项
+
+- 当前 Web 入口：`pre_review.parse_backend=auto`；固定后端仅用于复现实验或针对特定文档排查。推荐命令：`cd rag_server && uv run pytest`；库级实验可在 `doc_parser` 下运行 `uv run pytest`，不要把历史通过数当固定结果。
+- 本报告中的 `opendataloader-bench`、pdfmux 等属于公开外部 benchmark，指标和机器/数据集口径由原资料定义；项目本地样本结果不能替代这些资料，反之亦然。
+- openparse、Marker、pdf-oxide、pymupdf-layout、Camelot、tabula-py 等实验路径未接入当前 `Document` 主流程；任何“候选”结论都不表示已经可通过 Web 配置启用。
+- 当前已接入的主路径仍是 doc_parser 的 `auto`、PyMuPDF、pdfplumber、Docling、MinerU；云端向量库或托管组件不在本报告当前实现范围。

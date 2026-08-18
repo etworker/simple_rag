@@ -2,7 +2,7 @@
 
 > 面向非技术读者的公开技术科普文章
 >
-> 本文不要求读者了解 Python、向量数据库、Embedding 或大语言模型。阅读本文后，读者应能够理解：PDF 为什么难以解析，一份文档如何进入知识库，系统如何切分段落和表格，如何判断新旧文档是否相似、如何发现内容变化或矛盾，以及问答时系统如何找到依据。
+> **当前基线说明**：本文以当前工作区代码、`rag_server/config.example.json` 和 doc_parser 默认配置为准；开头的提交号只是历史定位信息，不是部署版本承诺。若历史段落与当前路由/服务行为冲突，以代码为准。
 >
 > **重要说明**：本文描述的是当前系统的实际处理方式，基线为 `main@b653abf`（包含文档版本管理、审核/矛盾检测改进和 embedding 批次进度）。文中使用的文件名、制度名称、数值和内容均为虚构示例，不代表任何真实文档。对于“建议配置”“后续可以增加”等内容，文章会明确标注其当前实现状态。
 
@@ -290,12 +290,12 @@ LLM 根据这些内容组织答案
 
 #### 情况 B：同名但内容不同
 
-系统会询问用户选择：
+上传接口会先返回选择：
 
-- **保留旧版本并进行版本审核**（`keep_current`）：新文档审核通过后以 `inactive` 历史版本保存，旧版本继续作为当前主版本；
-- **审核后使用新版本**（`new_primary`）：新文档先以 `inactive` 保存，确认入库成功后切换为该文档族唯一的 `active`、`primary` 版本。
+- **保留旧版本并进行版本审核**（`coexist`）：继续审核新文档，确认时使用 `keep_current` 保留旧主版本，或使用 `new_primary` 切换新版本；
+- **审核后使用新版本**（`new_primary`）：继续审核并默认倾向在确认时切换新版本。
 
-旧版本不会因为上传或确认新版本而被删除，仍可在文档管理中查看；只有显式删除文档时才会移除。旧客户端传入的 `overwrite` 仍可兼容，但现在只表示倾向 `new_primary`，不再代表删除旧文件。
+新文档在上传/审核阶段尚未写入正式文档元数据。确认入库时，有旧主版本的新文档先以 `inactive` 历史版本保存；若确认模式为 `new_primary`，再切换为该文档族唯一的 `active`、`primary` 版本，若为 `keep_current` 则旧版本继续作为当前主版本。旧版本不会因为上传或确认新版本而被删除，仍可在文档管理中查看；只有显式删除文档时才会移除。旧客户端传入的 `overwrite` 仍可兼容，但现在只表示倾向 `new_primary`，不再代表删除旧文件。
 
 #### 情况 C：文件名不同但内容相同
 
@@ -961,18 +961,20 @@ LLM 可以根据上下文辅助判断两者是否表达同一要求，以及变�
 
 ### 11.3 同文档版本如何确认
 
-同名新文档不会在上传时直接替换旧文档。确认时有两种模式：
+同名新文档不会在上传时直接替换旧文档。确认入库时有两种模式：
 
 ```text
 保留当前版本（keep_current）
-  → 新文档以 inactive 历史版本保存
+  → 确认时将新文档以 inactive 历史版本保存
   → 旧文档继续是该文档族唯一 active/primary 版本
 
 使用新版本（new_primary）
-  → 新文档先以 inactive 保存，确保旧版本可回滚
+  → 确认时先将新文档以 inactive 保存，确保旧版本可回滚
   → 入库成功后切换新文档为唯一 active/primary 版本
   → 同族其他版本转为 inactive
 ```
+
+上传和预审核阶段的新文档尚未写入正式文档元数据。
 
 旧版本不会因版本切换自动删除，仍可在文档列表中查看，也可以通过 `POST /api/documents/primary` 将某个历史版本重新设为当前版本。只有显式删除文档时才会移除文件和索引内容。如果审核失败、用户拒绝或入库失败，原有主版本不会被破坏。
 
@@ -1001,10 +1003,10 @@ LLM 可以根据上下文辅助判断两者是否表达同一要求，以及变�
 | 预览 | `GET /api/documents/review/pdf`、`page`、`old/info`、`old/page` |
 | 审核报告 | `GET /api/documents/review/{task_id}/report.html` |
 | 文档管理 | `GET /api/documents/list`、`POST /api/documents/primary`、`POST /api/documents/label`、删除和清空接口 |
-| 普通问答 | `POST /api/qa/ask`、`POST /api/qa/reset`、会话管理、`source` / `context` |
+| 普通问答 | `POST /api/qa/ask`、`POST /api/qa/reset`、`GET /api/qa/sessions`、`GET /api/qa/sessions/{session_id}`、`DELETE /api/qa/sessions`、`DELETE /api/qa/sessions/{session_id}`、`source` / `context` |
 | 配置和日志 | `GET/POST /api/config`、`GET /api/config/schema`、日志 tail 和 WebSocket 日志接口 |
 
-审核完成后可以导出一个**单文件 HTML 报告**。它不依赖服务器、脚本、图片或外部网络，包含任务状态、结论、比较组、版本差异、细微变化、跨文档矛盾、表格变化和新旧定位信息。目前没有已实现的 PDF、JSON 或 CSV 审核报告导出接口。页面预览接口和离线 HTML 报告是两项不同能力。
+审核完成后可以导出一个**单文件 HTML 报告**。它不依赖服务器、脚本、图片或外部网络，包含任务状态、结论、比较组、版本差异、细微变化、跨文档矛盾、表格变化和新旧定位信息；当前报告实现**不渲染 `suspects`**，疑似项应以审核结果 API/UI 为准。目前没有已实现的 PDF、JSON 或 CSV 审核报告导出接口。页面预览接口和离线 HTML 报告是两项不同能力。
 
 ---
 
@@ -1371,7 +1373,7 @@ Embedding 负责找到可能对应的段落；文字 diff 和 LLM 才负责进�
 
 ### Q29：清空知识库会删除什么？
 
-清空操作会删除当前知识库中的文档、段落、向量索引以及相关审核缓存。它是高影响操作，正式环境中应增加权限控制、二次确认和备份策略。
+清空操作会删除当前知识库中的文档、段落、向量索引以及相关解析/向量/页面/预审核缓存；不会自动删除 `chat_history`、日志或上传目录原始文件。它是高影响操作，正式环境中应增加权限控制、二次确认和备份策略。
 
 ### Q30：系统为什么还要保留来源和页码？
 
@@ -1726,6 +1728,8 @@ document_id       来源文档
 这些阈值是启动压测的参考线，不是 FAISS 的硬性限制。可以先通过减少无效 chunk、过滤空表、缓存 Embedding、增加元数据预过滤和采用批量查询延缓升级；之后再评估 HNSW、IVF/PQ 等近似索引或托管向量服务。近似索引通常以少量召回率换取更低延迟或更低存储成本，因此升级后仍需用本项目的真实问题集验证 Recall@k 和答案质量。
 
 ### 21.4 在 AWS 中如何扩展？
+
+> 本节是目标方案/后续设计，不是当前部署状态。当前代码没有接入 OpenSearch、DynamoDB、Aurora、Keycloak、S3、Secrets Manager 或托管任务队列；当前仍是本地文件系统、进程内 FAISS 和配置文件。任何云方案都需要单独完成适配、权限、迁移、恢复和区域验收。
 
 如果希望尽量保留当前自定义的 PDF 解析、版本比较、噪声过滤和人工确认流程，比较自然的演进路径是：原文件放在 Amazon S3，解析和审核服务运行在 ECS/EC2 等计算环境，Embedding 和 LLM 可继续使用本地服务或 Amazon Bedrock，向量和可过滤元数据迁移到 **Amazon OpenSearch Serverless 的向量集合**。AWS 文档也提供了由 Bedrock Knowledge Bases 使用或自动创建 OpenSearch Serverless 向量存储的路径，参见 [创建 Amazon OpenSearch Serverless 向量存储](https://docs.aws.amazon.com/bedrock/latest/userguide/knowledge-base-setup-oss.html)。这种方案的优点是可以保留 `document_id`、版本、页码、章节、生效状态等过滤字段，并将当前 Retriever 替换为远程检索实现；缺点是需要自行维护索引写入、字段映射、权限和数据同步。
 

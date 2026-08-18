@@ -16,13 +16,14 @@
 |------|------|------|
 | GET | `/api/documents/list` | 列出已入库文档（filename, doc_id, file_hash, paragraph_count, table_count, page_count, char_count, added_at, status）+ total |
 | GET | `/api/documents/paragraphs?name=` | 已入库文档的段落列表（text, page, chapter, chapter_title, location） |
-| GET | `/api/documents/review/paragraphs?file=` | 预审核中新文档的段落（尚未入库） |
-| GET | `/api/documents/pdf?name=` | 返回原始 PDF 文件（`application/pdf`） |
-| GET | `/api/documents/page?name=&page=1&highlight=` | 返回指定页 PNG（`image/png`） |
-| GET | `/api/documents/info?name=` | 文档基本信息（page_count） |
+| GET | `/api/documents/review/paragraphs?file=&task_id=` | 预审核中新文档的段落（尚未入库；可按任务 ID 精确获取） |
+| GET | `/api/documents/pdf?doc_id=&name=` | 返回原始 PDF 文件（`application/pdf`）；`doc_id` 可精确预览历史版本 |
+| GET | `/api/documents/page?doc_id=&name=&page=1&highlight=` | 返回指定页 PNG（`image/png`） |
+| GET | `/api/documents/info?doc_id=&name=` | 文档基本信息（page_count），支持 active/inactive |
+| POST | `/api/documents/primary`（`doc_id=`） | 将历史版本设为同族唯一当前 active/primary，其他版本转 inactive |
 | DELETE | `/api/documents/remove/{filename}` | 删除已入库文档 |
 | POST | `/api/documents/label`（`doc_id=`, `label=`） | 更新文档补充描述/版本标签 |
-| POST | `/api/documents/clear` | 清空知识库（删除所有文档+缓存，不可恢复） |
+| POST | `/api/documents/clear` | 清空知识库中的文档、段落、向量索引及相关解析/向量/页面/预审核缓存；不删除 chat history、logs 或上传目录 |
 
 ### 2. 问答（`routes/qa.py`）
 
@@ -42,8 +43,9 @@
 |------|------|------|
 | POST | `/api/qa/reset?session_id=default` | 重置对话历史 |
 | GET | `/api/qa/sessions?limit=50` | 列出问答会话 |
+| DELETE | `/api/qa/sessions` | 清空全部问答会话历史与当前进程中的会话上下文 |
+| DELETE | `/api/qa/sessions/{session_id}` | 删除指定问答会话 |
 | GET | `/api/qa/sessions/{session_id}` | 会话完整历史 |
-| DELETE | `/api/qa/sessions/{session_id}` | 删除会话 |
 | GET | `/api/qa/source?file=&location=` | 指定位置段落原文 |
 | GET | `/api/qa/context?file=&index=0&radius=3` | 某段落前后上下文 |
 
@@ -51,13 +53,14 @@
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| POST | `/api/documents/upload`（`file=`, `choice=`, `label=`） | 上传文档并启动预审核；同名不同内容先返回 `needs_choice`（overwrite/coexist） |
+| POST | `/api/documents/upload`（`file=`, `choice=`, `label=`） | 上传文档并启动预审核；同名不同内容未给 choice 时返回 `needs_choice`，响应选项为 `coexist` / `new_primary`；确认阶段的 `mode` 为 `keep_current` / `new_primary`，`overwrite` 为兼容输入 |
 | GET | `/api/documents/review/active` | 当前活跃预审核任务（状态/进度/结果/旧版信息） |
 | POST | `/api/documents/review/{task_id}/pause` | 暂停逐文档比较 |
 | POST | `/api/documents/review/{task_id}/resume` | 继续暂停的比较 |
 | POST | `/api/documents/review/{task_id}/cancel` | 取消进行中的预审核 |
+| POST | `/api/documents/review/{task_id}/label`（`label=`） | 更新待审核文档标签 |
 | GET | `/api/documents/review/{task_id}/progress` | **SSE** 实时进度流（`text/event-stream`） |
-| POST | `/api/documents/review/{task_id}/confirm` | 人工确认入库 |
+| POST | `/api/documents/review/{task_id}/confirm`（`mode=keep_current|new_primary`） | 人工确认入库；同名版本需选择保留旧主版本或切换新版本 |
 | POST | `/api/documents/review/{task_id}/reject` | 人工拒绝入库 |
 | POST | `/api/documents/review/{task_id}/rerun` | 强制重跑（忽略缓存） |
 | GET | `/api/documents/review/pdf?task_id=` | 预审核文件原始 PDF |
@@ -74,8 +77,12 @@
 ```json
 { "needs_choice": true, "filename": "规范.pdf", "file_hash": "...",
   "existing": { "filename": "...", "doc_id": "...", "file_hash": "..." },
-  "options": [ {"id": "overwrite", "label": "覆盖已有文档"}, {"id": "coexist", "label": "作为新版本并存"} ] }
+  "options": [
+    { "id": "coexist", "label": "保留当前版本并保存新版本" },
+    { "id": "new_primary", "label": "确认后使用新版本" }
+  ] }
 ```
+> 上传接口返回的 `coexist` 表示保留当前主版本并继续审核新版本，`new_primary` 表示确认时倾向切换新版本；确认接口再用 `mode=keep_current` 或 `mode=new_primary` 作最终选择。新文档在上传/审核阶段尚未写入正式文档元数据；确认入库时，有旧主版本的文档先以 `inactive` 写入，`new_primary` 再切换同族唯一 `active`/`primary`，`keep_current` 则保留旧主版本。`overwrite` 仍可由旧客户端传入，但不表示删除旧文件；完整相同 SHA-256 内容会被拒绝重复入库。
 
 ### 4. 系统与运维（`main.py` 直接定义）
 
@@ -105,14 +112,11 @@ doc: Document = parse(filepath: str, config: dict = None) -> Document
 # doc.tables:     list[Table]
 
 # PDF 后端（config["extract"]["backend"]；Web 配置在 pre_review.parse_backend）：
-#   "pdfplumber" 默认：文本型制度文档段落切分最稳（margin 编号列等定制逻辑）
-#   "auto"      智能路由：扫描件→mineru，无框线表格→docling，数字文本→pymupdf
-#   "pymupdf"    快路径：PyMuPDF 数字文本解析（0.01-0.1s/页，表格用 find_tables 规则提取）
-#   "docling"    准路径：Docling TableFormer 深度学习表格/版面（docling_device: auto/cuda/cpu；
-#                docling_batch_size: 0=默认4，16-32 提升 GPU 利用率；碎尾合并/页眉剥离默认开启）
-#   "mineru"     扫描件/图片 PDF：MinerU VLM/OCR（mineru_backend: vlm/pipeline/auto；mineru_batch_size）
-# 后端不可用时 auto 自动降级 pdfplumber；详见 doc_parser/docs/设计文档.md、docs/PDF解析库对比与选型报告.md、
-# docs/文档解析与chunk切分说明.md
+#   "auto"      默认智能路由：扫描件→mineru，无框线表格→docling，数字文本→pymupdf；不可用时降级 pdfplumber
+#   "pdfplumber" 规则后端：可显式固定，适合需要稳定文本段落/定制规则的场景
+#   "pymupdf"    快路径：PyMuPDF 数字文本解析
+#   "docling"    深度学习版面与表格（docling_device: auto/cuda/cpu）
+#   "mineru"     扫描件/图片 PDF 的 OCR/VLM 或 pipeline 路径
 
 # Paragraph / Table 均提供 to_dict() / from_dict() 与只读 location 属性
 p = Paragraph(text="...", page=3, chapter="2.2", chapter_title="备份策略", source_file="a.pdf")

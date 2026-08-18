@@ -1,8 +1,9 @@
 # PDF 解析库实测报告（T4 GPU / CPU 均已完成）
 
 > 目的：用项目目标文档（中文制度手册/通报）实测各 PDF 解析库，判定"能完整精确解析目标 PDF"的候选后端列表。
-> 环境：AWS 宁夏 EC2（g5 系，Tesla T4 15.6GB / CUDA 13.2 驱动 / torch 2.13.0+cu130，8 核 CPU / 30GB 内存）。
-> 状态：**GPU 结论与 CPU 结论均已完成**；本地 Windows 隔离环境的最新版样本复测更新至 2026-08-17（CPU 通过 CUDA_VISIBLE_DEVICES="" 强制 CPU 实测）。
+> 历史 GPU 环境：AWS 宁夏 EC2 上的 **T4 解析/Embedding 实验环境**（Tesla T4 15.6GB / CUDA 13.2 驱动 / torch 2.13.0+cu130，8 核 CPU / 30GB 内存）。本文的 T4/GPU 数据只用于 PDF 解析、MinerU/Docling 和 Embedding 加速，不代表 A10G 或自建 LLM 推理环境。
+> **部署边界**：快速原型可在单 CPU 机器运行；T4 是可选的解析/Embedding 加速卡；A10G 属于另一条部署路径，仅在 AWS 中国区无法使用 Bedrock、需要自建 `GLM-4.7-Flash` 时用于 vLLM LLM 推理。
+> **归档与边界（实验报告）**：本文保留历史批次和当前补充批次，用于追溯，不构成 SLA、准确率保证或生产性能承诺。样本数量有限，耗时受日期、机器、缓存、依赖和参数影响；GPU、CPU、MinerU pipeline、MinerU VLM、Docling 运行结果不可混为同一批次。当前 Web 路由以 `pre_review.parse_backend=auto` 为准：数字文本优先 PyMuPDF，无框线/复杂表格风险可升级 Docling，扫描件尝试 MinerU，后端不可用时回退 pdfplumber。
 
 ---
 
@@ -95,7 +96,7 @@
 - **markitdown 306 表**：把"0.1 声明 0.1-1"目录行、"发电单位…签发盖章"公文头当表格——markdown 输出的表格判定无结构约束。
 - **marker 70 表碎片化**：surya 表格检测把跨页表拆成多个块（如有效页清单 25 行块 + 3-5 行碎片），70 块 vs ground truth 29——过度拆分不可用。
 - **mineru T4 特性与加速**：VLM 模式默认 batch=4 会 OOM；**最优配置 batch=2（mineru_batch_size=2）约 13-16s/页（9.2GB 显存），比 batch=1 的 34s/页快约 2.5 倍**；样本 B 1 表识别正确。
-  - **并行结论**：T4 单卡 16GB 无法双 VLM 实例并行（每实例 >7.5GB，2 实例超显存 OOM）；页级切分多进程脚本见 temp/mineru_parallel.py，适用于多卡/更大显存（g5.12xlarge 4 卡可 4 进程并行）。
+  - **并行结论**：T4 单卡 16GB 无法双 VLM 实例并行（每实例 >7.5GB，2 实例超显存 OOM）；页级切分多进程脚本见 temp/mineru_parallel.py，适用于多卡/更大显存（历史 `g5.12xlarge` 为 4×A10G；此处用于并行解析，不应理解为 T4 环境）。
   - **更优加速**：mineru 支持 vllm 推理引擎（PagedAttention + continuous batching，预计 3-5 倍），需另装 vllm（匹配 torch/CUDA 版本）。
   - 注意：mineru do_parse 内部 spawn 子进程，脚本调用需 `if __name__ == "__main__":` main guard（否则末尾报 bootstrapping 错误）。
 - **transformers 版本坑**：marker 2.x 安装把 transformers 升到 5.15 会破坏 mineru（Qwen2VLConfig 缺 max_position_embeddings），需降回 4.57.6；marker 2.x 还需 docker 拉 vllm 镜像（国内网络不可达）——**多库共存环境要锁 transformers<5，marker 用 1.x 本地模式**。
@@ -151,7 +152,7 @@
 
 当前可以确认的是：PyMuPDF 已有页眉/页脚过滤、重复行过滤、段落分段和跨页表合并代码；确定性 QA 能发现跨页、短碎片、相邻重复、表格列数异常等候选。但真实样本的逐段语义完整性、页眉页脚残留率和每张表的错列/漏行情况仍未完成 LLM 或人工逐项验收。
 
-生产建议不变：数字文本 PDF 默认 PyMuPDF；发现无框线表格、表格列异常或 QA 高风险页时，局部调用 Docling；扫描件走 MinerU。pdf-oxide 可作为高速文本层预扫描，pymupdf-layout 可作 Markdown 实验，Marker 2.0 暂不作为默认制度文档解析器。
+当前实现建议以 `auto` 为入口：数字文本 PDF → PyMuPDF；无框线表格/复杂版面或 QA 高风险页 → 局部 Docling；扫描件 → MinerU（pipeline/VLM 依设备与依赖）；不可用时 → pdfplumber。pdf-oxide、pymupdf-layout、Marker 2.0 仅为实验/预扫描对照，不构成默认路径。
 
 
 ## 9. 最新样本复测记录（2026-08-17，独立批次）
@@ -190,7 +191,9 @@ Marker 的“内部处理时间”来自其日志 `Total time`；“外部墙钟
 本批次仍未将三个新库适配到项目 `Document` 并运行 `inspect_document()`，也未使用真实 LLM 对这些输出做逐项语义审查；本节结论仅代表本次原生输出复测。
 
 
-## 10. 最新统一复测补充：表格专项库与全量汇总（2026-08-17）
+## 10. 最新统一复测补充：表格专项库与全量汇总（2026-08-17，当前优先批次）
+
+> 本节是当前工作区 Windows/CPU 隔离环境的较新批次，优先用于描述当前候选路径；第 3～7 节中的 GPU、T4、MinerU VLM 和早期 CPU 数据仍是历史实验记录，不能直接横向混用。
 
 本节补充本轮在同一批最新版样本、Windows PowerShell 和 `uv run --isolated --no-project` 环境下完成的结果。**本节数值优先于第 3/4/7 节中同名库的历史或 GPU 批次数据**；历史数据保留用于追溯。完整机器可读汇总为 `temp/pdf_eval_latest_2026-08-17/all_backends_summary.json`。
 
@@ -234,7 +237,7 @@ Marker 的“内部处理时间”来自其日志 `Total time`；“外部墙钟
 4. anydoc/firecrawl 未执行，因为依赖云端/API，不符合本轮离线同环境、避免项目数据外传的约束。
 5. 本批次没有对这些原生专项输出接入 `Document`、`inspect_document()` 或真实 LLM 逐项审查；PyMuPDF 真实样本仍只能报告确定性 QA 的候选风险，不能声称“已通过 LLM 审查”或“没有断裂”。
 
-生产建议仍为：数字文本 PDF 默认项目 PyMuPDF；QA 高风险页或无框线/复杂表格局部走 Docling；扫描件走 MinerU；pdf-oxide 作为高速预扫描；openparse/Camelot/tabula-py 仅作为专项实验工具。
+当前实现建议以 `auto` 为入口：数字文本 PDF → PyMuPDF；无框线表格/复杂版面或 QA 高风险页 → 局部 Docling；扫描件 → MinerU（pipeline/VLM 依设备与依赖）；不可用时 → pdfplumber。pdf-oxide、pymupdf-layout、Marker 2.0 仅为实验/预扫描对照，不构成默认路径。
 
 
 ## 11. Win11 CPU 覆盖范围与默认优先级复核（2026-08-17）

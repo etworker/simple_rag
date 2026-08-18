@@ -2,6 +2,8 @@
 
 > 面向本项目（simple_rag）中文制度文档 RAG 的文本向量模型选型。
 > 更新日期：2026-08-16 ｜ 状态：本机（T4 GPU）实测 bge-small-zh-v1.5 与 jina-v2-base-zh 版本对比结果完全一致，默认定为 **bge-small-zh-v1.5**（GPU 自动加速）；其余候选按推测标注。
+>
+> **部署边界**：Embedding 在单 CPU 机器上即可运行，T4 只是可选加速资源；A10G 不因 Embedding 而必需，主要服务于 AWS 中国区无法使用 Bedrock 时的自建 `GLM-4.7-Flash` LLM 推理。
 
 ---
 
@@ -11,10 +13,11 @@
 |------|------|
 | 推理后端 | **fastembed（ONNX Runtime）**——零 torch 依赖，`version_diff/device_utils.py::EmbeddingModel` 统一封装 |
 | 可选模型 | 仅限 fastembed `TextEmbedding.list_supported_models()` 中的模型 |
-| 硬件 | T4 GPU（16GB，与 docling/mineru 共享显存）或纯 CPU |
+| 硬件 | 单 CPU 机器即可运行；T4 GPU 可选，用于加速 Embedding（也可与 Docling/MinerU 共享但需关注显存）；A10G 主要保留给 AWS 中国区自建 `GLM-4.7-Flash` LLM 推理，Embedding 不要求 A10G |
 | 语种 | 中文制度文档（手册/规范/通报），段落级检索 |
 | 离线 | 模型本地缓存（HF 镜像下载后离线可用） |
-| 切换代价 | 模型/维度变化 → 已入库向量全部失效，需重置知识库重新上传 |
+| 配置保存 | `POST /api/config` 保存后需要重启（返回 `restart_required=true`）；Web 应用的模型名从配置文件读取，当前 fastembed/ONNX 路径不应用 `dtype` 改变运行精度；`SIMPLE_RAG_EMBEDDING_DEVICE` 可优先覆盖设备 |
+| 索引切换 | 更换模型或维度后不能混用旧向量；需清空/重建知识库并重新确认入库，不能只重启服务 |
 
 ---
 
@@ -53,7 +56,7 @@
 
 ---
 
-## 4. 本项目实测结果（2026-08-16）
+> 说明：本节及 §4.1 是 **2026-08-16 的历史实验快照**，样本、硬件、缓存状态和后端配置有限，不是 SLA，也不代表每次部署耗时或结果固定。当前 Web 默认仍以 `rag_server/config.json`/示例配置为准：`BAAI/bge-small-zh-v1.5`、fastembed/ONNX、`device=auto`。
 
 | 模型 | 维度 | 加载+编码（GPU） | 同文本相似度 | 结论 |
 |------|------|----------------|-------------|------|
@@ -114,5 +117,4 @@
 }
 ```
 
-> ⚠️ 切换 `embedding.model`（维度变化）会使已入库文档向量全部失效：
-> 保存配置后需 `POST /api/documents/clear` 重置知识库并重新上传文档。
+> 保存配置后先重启服务再验证；如果模型、维度或相关 embedding 配置变化，按 API 返回的提示执行知识库 reset/rebuild。模型缓存目录只缓存模型权重；向量缓存目录按文档内容和有效配置保存向量/FAISS 索引，不会把不同模型的向量自动转换或合并。
