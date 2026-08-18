@@ -9,13 +9,7 @@ dependencies = [
     "llm-chat",
     "fastapi>=0.100.0",
     "uvicorn>=0.23.0",
-    "fastembed>=0.6.0",
     "websockets>=12.0",
-    "faiss-gpu>=1.7.4",
-    # GPU 环境 embedding 加速：onnxruntime-gpu 提供 CUDAExecutionProvider，
-    # 与 fastembed 的 onnxruntime(CPU) 依赖共存（后者被前者同名模块覆盖）。
-    # Windows/无 GPU 环境请删除此行。
-    "onnxruntime-gpu>=1.17.0",
     "numpy>=1.24.0",
     "python-multipart>=0.0.32",
     "pymupdf>=1.24.0",
@@ -26,9 +20,54 @@ dependencies = [
 doc-parser = { workspace = true }
 version-diff = { workspace = true }
 llm-chat = { workspace = true }
+torch = [
+    { index = "pytorch-cpu", extra = "cpu" },
+    { index = "pytorch-cu126", extra = "gpu" },
+]
+torchvision = [
+    { index = "pytorch-cpu", extra = "cpu" },
+    { index = "pytorch-cu126", extra = "gpu" },
+]
+torchaudio = [
+    { index = "pytorch-cpu", extra = "cpu" },
+    { index = "pytorch-cu126", extra = "gpu" },
+]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cu126"
+url = "https://download.pytorch.org/whl/cu126"
+explicit = true
 
 [project.optional-dependencies]
 dev = ["pytest>=7.0", "httpx>=0.24.0", "pytest-asyncio>=0.23.0"]
+cpu = [
+    "fastembed==0.8.0",
+    "faiss-cpu==1.15.0",
+    "torch==2.7.0",
+    "torchvision==0.22.0",
+    "torchaudio==2.7.0",
+]
+gpu = [
+    "fastembed-gpu==0.8.0",
+    "faiss-gpu==1.15.0; sys_platform == 'linux'",
+    "faiss-cpu==1.15.0; sys_platform != 'linux'",
+    "torch==2.7.0",
+    "torchvision==0.22.0",
+    "torchaudio==2.7.0",
+]
+
+[tool.uv]
+conflicts = [
+    [
+        { extra = "cpu" },
+        { extra = "gpu" },
+    ],
+]
 
 [build-system]
 requires = ["hatchling"]
