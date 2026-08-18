@@ -7,7 +7,7 @@
 
 ## 第一部分：HTTP API（FastAPI）
 
-所有响应为 JSON；错误返回标准 `4xx/5xx` + `detail`。
+常规业务响应为 JSON，文件预览返回 PDF/PNG，预审核进度使用 SSE，日志流使用 WebSocket；错误返回标准 `4xx/5xx` + `detail`。
 > 所有端点统一以 `/api` 为前缀。文档管理、预审核路由挂在 `/api/documents` 下，问答挂在 `/api/qa` 下。
 
 ### 1. 文档管理（`routes/documents.py`）
@@ -21,6 +21,7 @@
 | GET | `/api/documents/page?name=&page=1&highlight=` | 返回指定页 PNG（`image/png`） |
 | GET | `/api/documents/info?name=` | 文档基本信息（page_count） |
 | DELETE | `/api/documents/remove/{filename}` | 删除已入库文档 |
+| POST | `/api/documents/label`（`doc_id=`, `label=`） | 更新文档补充描述/版本标签 |
 | POST | `/api/documents/clear` | 清空知识库（删除所有文档+缓存，不可恢复） |
 
 ### 2. 问答（`routes/qa.py`）
@@ -50,8 +51,10 @@
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| POST | `/api/documents/review/upload`（`file=`, `choice=`） | 上传文档并启动预审核；同名不同内容先返回 `needs_choice`（overwrite/coexist） |
+| POST | `/api/documents/upload`（`file=`, `choice=`, `label=`） | 上传文档并启动预审核；同名不同内容先返回 `needs_choice`（overwrite/coexist） |
 | GET | `/api/documents/review/active` | 当前活跃预审核任务（状态/进度/结果/旧版信息） |
+| POST | `/api/documents/review/{task_id}/pause` | 暂停逐文档比较 |
+| POST | `/api/documents/review/{task_id}/resume` | 继续暂停的比较 |
 | POST | `/api/documents/review/{task_id}/cancel` | 取消进行中的预审核 |
 | GET | `/api/documents/review/{task_id}/progress` | **SSE** 实时进度流（`text/event-stream`） |
 | POST | `/api/documents/review/{task_id}/confirm` | 人工确认入库 |
@@ -59,6 +62,9 @@
 | POST | `/api/documents/review/{task_id}/rerun` | 强制重跑（忽略缓存） |
 | GET | `/api/documents/review/pdf?task_id=` | 预审核文件原始 PDF |
 | GET | `/api/documents/review/page?task_id=&page=1&highlight=` | 预审核文件指定页 PNG |
+| GET | `/api/documents/review/info?task_id=` | 预审核文件页数信息 |
+| GET | `/api/documents/review/old/info?task_id=&doc_id=` | 对比文档页数信息 |
+| GET | `/api/documents/review/old/page?task_id=&page=1&doc_id=` | 对比文档指定页 PNG |
 
 **上传返回（新建）**
 ```json
@@ -76,7 +82,8 @@
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | GET | `/api/config` | 获取当前配置（`config_store.to_dict()`） |
-| POST | `/api/config` | 更新并保存配置 |
+| GET | `/api/config/schema` | 获取配置项中文描述 |
+| POST | `/api/config` | 保存配置；返回 `restart_required=true`，embedding 变化还会返回 `reset_knowledge_base_required=true` |
 | GET | `/api/logs/tail?lines=100` | 读取日志文件末尾 N 行 |
 | WS | `/ws/logs` | WebSocket 实时日志流（新连接先回放最近 200 条） |
 | GET | `/` | 首页（返回 `app/static/index.html`，禁用缓存） |
@@ -127,8 +134,8 @@ resp: str = ask_once(
 
 # 从配置字典一次性调用（provider→后端，其余透传），消除调用方手写逐字段透传
 resp: str = ask_once_with_config(
-    prompt: str,
     llm_config: dict,           # {"provider","model","region","api_key_env","max_tokens",...}
+    prompt: str,
     system_prompt: str = "",
 ) -> str
 
