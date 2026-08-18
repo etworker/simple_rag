@@ -14,6 +14,7 @@ __pycache__/
 *.egg-info/
 dist/
 build/
+.ruff_cache/
 
 # ===== 虚拟环境 =====
 .venv/
@@ -34,8 +35,9 @@ env/
 # 保留模块目录下的旧数据目录（如果有残留）
 data/
 uploads/
+logs/
 
-# ===== rag_demo 运行时 =====
+# ===== rag_server 运行时 =====
 data/page_cache/
 data/parse_cache/
 data/app.log
@@ -74,7 +76,10 @@ Thumbs.db
 
 blog/
 
+ab/
 bench/
 backend_compare/
 
 *.log
+
+semantic-review/
