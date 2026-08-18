@@ -20,15 +20,44 @@ from app.services.utils import compute_sha256
 _REVIEW_CACHE_VERSION = 2
 
 
-def load_existing_docs(engine):
-    """同步加载已有文档到引擎（在线程中执行）"""
+def load_existing_docs(engine, on_progress=None):
+    """同步加载已有文档到引擎（在线程中执行），并报告嵌入批次进度。"""
     # ★ Fix: 文件缺失或损坏时跳过，不中断整个预审核流程
-    for doc_meta in _state.app.doc_store.list_documents():
+    documents = list(_state.app.doc_store.list_documents())
+    total_documents = len(documents)
+    for doc_index, doc_meta in enumerate(documents):
         if not doc_meta.filepath or not os.path.exists(doc_meta.filepath):
             log.warning(f"跳过加载已有文档（文件不存在）: {doc_meta.filename} -> {doc_meta.filepath}")
             continue
+
+        def _on_embedding_progress(details, *, _doc_index=doc_index, _doc_meta=doc_meta):
+            if not on_progress:
+                return
+            total = int(details.get("total", 0))
+            completed = int(details.get("completed", 0))
+            doc_fraction = 1.0 if total <= 0 else completed / max(1, total)
+            overall_fraction = (_doc_index + min(1.0, doc_fraction)) / max(1, total_documents)
+            event = {
+                **details,
+                "document_index": _doc_index + 1,
+                "document_total": total_documents,
+                "document_name": _doc_meta.filename,
+                "stage_pct": round(overall_fraction * 100),
+            }
+            if details.get("status") == "cached":
+                message = f"读取已有文档向量缓存：{_doc_meta.filename}（{completed}/{total} 段）"
+            elif details.get("status") == "empty":
+                message = f"已有文档无段落，跳过向量计算：{_doc_meta.filename}"
+            else:
+                message = (
+                    f"计算已有文档嵌入：{_doc_meta.filename}"
+                    f"（{completed}/{total} 段，第 {details.get('batch_index', 0)}/"
+                    f"{details.get('batch_total', 0)} 批）"
+                )
+            on_progress("loading", 0.1 + 0.05 * overall_fraction, message, event)
+
         try:
-            engine.add(doc_meta.filepath)
+            engine.add(doc_meta.filepath, on_progress=_on_embedding_progress)
             # ★ 将 source_file 从 SHA256 哈希名替换为可读的原始文件名
             hash_key = os.path.basename(doc_meta.filepath)
             doc = engine._documents.get(hash_key)
@@ -107,6 +136,7 @@ def _build_engine_config() -> dict:
         "cache": {
             "vector_cache_dir": os.path.join(_state.app.cache_dir, "vector_cache"),
             "parse_cache_dir": os.path.join(_state.app.cache_dir, "parse_cache"),
+            "judge_cache_dir": os.path.join(_state.app.cache_dir, "judge_cache"),
         },
     }
 
@@ -138,6 +168,18 @@ def _run_version_compare(engine, old_version_filepath: str, new_filepath: str, o
     log.info(f"检测到旧版本文档，启动版本对比: {old_version_filepath}")
 
     def _serialize(change) -> dict:
+        old_text = (change.old_text or "").replace("\n", " ").strip()
+        new_text = (change.new_text or "").replace("\n", " ").strip()
+        summary = (change.summary or "").strip()
+        if not summary:
+            if change.change_type == "added":
+                summary = f"[新增] {new_text[:160]}"
+            elif change.change_type == "removed":
+                summary = f"[删除] {old_text[:160]}"
+            elif old_text and new_text:
+                summary = f"[修改] {old_text[:80]} → {new_text[:80]}"
+            else:
+                summary = "[修改] 内容发生变化"
         return {
             "type": change.change_type,
             "category": change.category,
@@ -147,8 +189,12 @@ def _run_version_compare(engine, old_version_filepath: str, new_filepath: str, o
             "old_location": change.old_location,
             "old_text": change.old_text,
             "new_text": change.new_text,
-            "summary": change.summary,
+            "summary": summary,
             "similarity": change.similarity,
+            "table_name": getattr(change, "table_name", ""),
+            "row_key": getattr(change, "row_key", ""),
+            "row_index": getattr(change, "row_index", 0),
+            "cell_changes": getattr(change, "cell_changes", []),
         }
 
     version_result = engine.version_compare(old_version_filepath, new_filepath, on_progress=on_progress)
@@ -163,13 +209,15 @@ def _run_version_compare(engine, old_version_filepath: str, new_filepath: str, o
     return {"changes": version_changes, "minor_changes": minor_changes}
 
 
-def _serialize_inconsistency(inc) -> dict:
-    """把 Inconsistency 转 dict（供前端展示）"""
+def _serialize_inconsistency(inc, doc_a_id: str = "", doc_b_id: str = "") -> dict:
+    """把 Inconsistency 转成带唯一文档 ID 的字典（供前端展示）。"""
     return {
         "point": getattr(inc, "point", ""),
+        "doc_a_id": doc_a_id,
         "doc_a_file": getattr(inc, "doc_a_file", ""),
         "doc_a_location": getattr(inc, "doc_a_location", ""),
         "doc_a_says": getattr(inc, "doc_a_says", ""),
+        "doc_b_id": doc_b_id,
         "doc_b_file": getattr(inc, "doc_b_file", ""),
         "doc_b_location": getattr(inc, "doc_b_location", ""),
         "doc_b_says": getattr(inc, "doc_b_says", ""),
@@ -227,23 +275,33 @@ def _run_multi_compare(
             break
         try:
             sim = engine.document_similarity(new_filepath, doc_meta.filepath)
+        except FileNotFoundError:
+            missing_path = doc_meta.filepath or "（未记录路径）"
+            scoring_errors[doc_meta.doc_id] = f"库中文档文件已不存在，无法比较：{missing_path}"
+            log.error(f"库中文件不存在，跳过相似度评估 {doc_meta.filename}: {missing_path}")
+            sim = 0.0
         except Exception as e:
             log.error(f"相似度评估失败 {doc_meta.filename}: {e}", exc_info=True)
-            scoring_errors[doc_meta.doc_id] = str(e)[:200]
+            scoring_errors[doc_meta.doc_id] = f"文档相似度评估失败：{str(e)[:200]}"
             sim = 0.0
         scored.append((sim, doc_meta))
         if on_progress:
             on_progress("scoring", 0.1 + 0.1 * (idx + 1) / max(1, total), f"评估与 {doc_meta.filename} 的相似度...")
     scored.sort(key=lambda x: x[0], reverse=True)  # 相似度从高到低
 
-    # 2. 逐个比较
+    # 2. 逐个比较。序号只表示当前候选文档，不再伪装成流水线步骤。
+    candidate_total = len(scored)
     for i, (sim, doc_meta) in enumerate(scored):
         if not _wait_if_paused(task):
             break
         if task["status"] == "cancelled":
             break
 
-        is_version = sim >= version_threshold
+        # 上传层已将同名不同内容文档识别为版本候选（choice=coexist/overwrite）。
+        # 比较层不能只依赖相似度阈值：版本改动较大时相似度可能低于阈值，
+        # 若仍按跨文档矛盾检测，会产生大量无意义的 LLM 批次并误报矛盾。
+        same_filename = bool(new_filename and doc_meta.filename == new_filename)
+        is_version = sim >= version_threshold or same_filename
         kind = "version_diff" if is_version else "conflict"
         group = {
             "doc_id": doc_meta.doc_id,
@@ -255,33 +313,85 @@ def _run_multi_compare(
             "version_changes": [],
             "minor_changes": [],
             "inconsistencies": [],
+            "suspects": [],
             "status": "running",
         }
         groups.append(group)
+        if isinstance(task.get("result"), dict):
+            # 将当前组挂到增量结果中；SSE 可在全部文档完成前展示已完成/进行中的组。
+            task["result"]["compare_groups"] = groups
+            task["result"]["compare_total"] = total
+        group_start = 0.2 + 0.7 * i / max(1, total)
+        group_end = 0.2 + 0.7 * (i + 1) / max(1, total)
+        group_display = doc_meta.filename
+        if doc_meta.label:
+            group_display += f" [{doc_meta.label}]"
+        if doc_meta.file_hash:
+            group_display += f" [{doc_meta.file_hash[-8:].upper()}]"
+        current_group = {
+            "index": i + 1,
+            "total": candidate_total,
+            "doc_id": doc_meta.doc_id,
+            "doc_filename": doc_meta.filename,
+            "label": doc_meta.label,
+            "file_hash": doc_meta.file_hash,
+            "compare_type": kind,
+            "phase": "starting",
+            "batch_done": 0,
+            "batch_total": None,
+            "message": f"准备比较：{group_display}",
+        }
+        if isinstance(task.get("result"), dict):
+            task["result"]["current_group"] = current_group
 
         if doc_meta.doc_id in scoring_errors:
             group["status"] = "error"
-            group["error"] = f"文档相似度评估失败: {scoring_errors[doc_meta.doc_id]}"
+            group["error"] = scoring_errors[doc_meta.doc_id]
+            current_group["phase"] = "error"
+            current_group["message"] = f"跳过 {group_display}：无法比较"
             if on_progress:
-                on_progress(
-                    "group_done",
-                    0.2 + 0.7 * (i + 1) / max(1, total),
-                    f"跳过 {doc_meta.filename}：相似度评估失败",
-                )
+                on_progress("group_done", group_end, current_group["message"])
             continue
 
-        step_label = "版本差异对比" if is_version else "内容一致性检查"
+        step_label = "版本差异对比" if is_version else "跨文档矛盾检测"
         if on_progress:
             on_progress(
                 "comparing",
-                0.2 + 0.7 * (i + 1) / max(1, total),
-                f"[{i + 1}/{total}] {step_label} vs {doc_meta.filename}...",
+                group_start,
+                f"正在与知识库文档进行比对（{i + 1}/{candidate_total}）{step_label}：{group_display}",
             )
-        log.info(f"[{i + 1}/{total}] 比较 {new_filename} vs {doc_meta.filename}（sim={sim:.3f}, {kind}）")
+        log.info(
+            f"第 {i + 1}/{candidate_total} 个候选：新文档「{new_filename}」与库中文档「{doc_meta.filename}」"
+            f"（sim={sim:.3f}, {kind}）"
+        )
+
+        def _on_current_group_progress(step, percent, message, details=None):
+            if not on_progress:
+                return
+            local_percent = max(0.0, min(1.0, float(percent or 0.0)))
+            on_progress(
+                step,
+                group_start + (group_end - group_start) * local_percent,
+                message,
+                details,
+            )
+
+        def _on_judge_batch(batch_idx, total_batches, _new_items):
+            current_group["phase"] = "judging"
+            current_group["batch_done"] = batch_idx + 1
+            current_group["batch_total"] = total_batches
+            current_group["message"] = f"当前组 LLM batch {batch_idx + 1}/{total_batches}"
+            if on_progress:
+                batch_percent = (batch_idx + 1) / max(1, total_batches)
+                on_progress(
+                    "batch",
+                    group_start + (group_end - group_start) * batch_percent,
+                    f"{current_group['message']}：{group_display}",
+                )
 
         try:
             if is_version:
-                vr = _run_version_compare(engine, doc_meta.filepath, new_filepath, on_progress=on_progress)
+                vr = _run_version_compare(engine, doc_meta.filepath, new_filepath, on_progress=_on_current_group_progress)
                 group["version_changes"] = vr["changes"]
                 group["minor_changes"] = vr["minor_changes"]
             else:
@@ -290,21 +400,40 @@ def _run_multi_compare(
 
                 sub_engine = DiffEngine(config=_build_engine_config())
                 sub_engine.add(doc_meta.filepath)
-                result = sub_engine.pre_review(new_filepath, doc_filename=new_filename)
-                group["inconsistencies"] = [_serialize_inconsistency(inc) for inc in result.inconsistencies]
+                result = sub_engine.pre_review(
+                    new_filepath,
+                    on_progress=_on_current_group_progress,
+                    doc_filename=new_filename,
+                    on_judge_batch=_on_judge_batch,
+                )
+                new_doc_id = f"{new_filename}#{task.get('file_hash', '')[-8:].upper()}"
+                group["inconsistencies"] = [
+                    _serialize_inconsistency(inc, doc_a_id=new_doc_id, doc_b_id=doc_meta.doc_id)
+                    for inc in result.inconsistencies
+                ]
+                group["suspects"] = [
+                    _serialize_inconsistency(inc, doc_a_id=new_doc_id, doc_b_id=doc_meta.doc_id)
+                    for inc in result.suspects
+                ]
             group["status"] = "done"
         except Exception as e:
             log.error(f"比较失败 {doc_meta.filename}: {e}", exc_info=True)
             group["status"] = "error"
             group["error"] = str(e)[:200]
 
+        current_group["phase"] = "done" if group["status"] == "done" else "error"
+        current_group["message"] = (
+            f"完成 {group_display}（{len(group['version_changes'])} 变更 / "
+            f"{len(group['inconsistencies'])} 矛盾"
+            + (f" / {len(group['suspects'])} 疑似" if group.get("suspects") else "")
+            + ")"
+        )
         # 完成一组：调用方推送
         if on_progress:
             on_progress(
                 "group_done",
-                0.2 + 0.7 * (i + 1) / max(1, total),
-                f"完成 {doc_meta.filename}（{len(group['version_changes'])} 变更 / "
-                f"{len(group['inconsistencies'])} 矛盾）",
+                group_end,
+                current_group["message"],
             )
 
     return groups
@@ -315,6 +444,13 @@ async def run_pre_review(task_id: str):
     await asyncio.sleep(0.5)
     task = _state.app.review_tasks[task_id]
     filepath = task["filepath"]
+    started_at = time.perf_counter()
+    log.info(
+        "预审核开始: task_id={} file_hash_suffix={} file_exists={}",
+        task_id,
+        task.get("file_hash", "")[-8:].upper(),
+        os.path.exists(filepath),
+    )
 
     if not os.path.exists(filepath):
         task["status"] = "error"
@@ -322,8 +458,21 @@ async def run_pre_review(task_id: str):
         task["result"] = {"error": "上传文件已丢失"}
         return
 
-    # ====== 1. 快速路径：检查预审核结果缓存 ======
+    # 上传路径按内容 hash 命名；若路径被替换或复用，禁止审核错误文件。
     file_md5 = compute_sha256(filepath)
+    expected_hash = task.get("file_hash", "")
+    if expected_hash and file_md5 != expected_hash:
+        message = f"审核文件校验失败：期望 {expected_hash[-8:].upper()}，实际 {file_md5[-8:].upper()}"
+        log.error(f"预审核终止: task_id={task_id} {message}")
+        task["status"] = "error"
+        task["current_step"] = message
+        task["result"] = {"error": message, "incomplete": True}
+        try:
+            _state.app.save_review_cache()
+        except Exception as save_error:
+            log.warning(f"保存文件校验失败状态失败: {save_error}")
+        return
+
     cached_result_path = os.path.join(_state.app.review_result_cache, f"{file_md5}.json")
 
     if os.path.exists(cached_result_path):
@@ -347,6 +496,8 @@ async def run_pre_review(task_id: str):
                 task["current_step"] = "预审核完成（使用缓存）"
                 task["result"] = copy.deepcopy(cached.get("result"))
                 task["result"]["new_filename"] = task["filename"]
+                task["result"]["existing_primary_doc_id"] = task.get("existing_primary_doc_id", "")
+                task["result"]["family_id"] = task.get("family_id", "")
                 task["parsed_paragraphs"] = copy.deepcopy(cached.get("parsed_paragraphs", []))
                 for paragraph in task["parsed_paragraphs"]:
                     paragraph["source_file"] = task["filename"]
@@ -354,54 +505,193 @@ async def run_pre_review(task_id: str):
                     {"id": "cache", "label": "读取预审核缓存"},
                     {"id": "done", "label": "完成"},
                 ]
+                now = time.time()
                 task["completed_steps"] = [
-                    {"id": "cache", "message": "读取预审核缓存", "started_at": 0, "elapsed": 0.01},
+                    {
+                        "id": "cache",
+                        "message": "读取预审核缓存",
+                        "started_at": now,
+                        "elapsed": 0.01,
+                        "pct": 100,
+                        "status": "done",
+                    },
+                    {
+                        "id": "done",
+                        "message": "预审核完成（使用缓存）",
+                        "started_at": now,
+                        "elapsed": 0.0,
+                        "pct": 100,
+                        "status": "done",
+                    },
                 ]
+                task["step_states"] = {
+                    s["id"]: {"status": s["status"], "pct": s["pct"]}
+                    for s in task["completed_steps"]
+                }
+                task["state_seq"] = task.get("state_seq", 0) + 1
                 _state.app.save_review_cache()
                 return
         except Exception as e:
             log.warning(f"预审核缓存加载失败，重新执行: {e}")
 
     # ====== 2. 慢速路径：完整预审核流程 ======
+    # 在第一条进度事件之前确定完整步骤列表，避免版本场景或空库场景中途换表，
+    # 也避免前端看到 scoring/comparing/group_done 这类内部事件后发生错位。
     parse_qa_cfg = _state.app.config.get_section("parse_qa") if _state.app and _state.app.config else {}
     parse_qa_enabled = bool(parse_qa_cfg.get("enabled", False))
-    # 步骤列表在加载已有文档后按需调整（空知识库时跳过检索/差异/判定）
-    all_steps = [
-        {"id": "model", "label": "加载向量模型"},
-        {"id": "loading", "label": "加载已有文档"},
-        {"id": "parsing", "label": "解析文档"},
-        {"id": "embedding", "label": "计算语义向量"},
-        {"id": "searching", "label": "跨文档语义检索"},
-        {"id": "diffing", "label": "计算文本差异"},
-        {"id": "judging", "label": "LLM 矛盾判定"},
-        {"id": "done", "label": "汇总结果"},
-    ]
+    old_version_filepath = task.get("old_version_filepath", "")
+    is_version_update = bool(old_version_filepath and os.path.exists(old_version_filepath))
+    kb_empty = _state.app.doc_store.total_documents == 0
+
+    if is_version_update:
+        # 版本更新任务仍可能同时比较库内其他文档，因此把底层版本差异和
+        # 跨文档比较统一呈现为一个稳定的可见阶段，避免 scoring/group_done 混入列表。
+        all_steps = [
+            {"id": "model", "label": "加载向量模型"},
+            {"id": "parsing", "label": "解析文档"},
+            {"id": "embedding", "label": "计算语义向量"},
+            {"id": "comparing", "label": "文档比对阶段（版本/跨文档）"},
+            {"id": "done", "label": "汇总结果"},
+        ]
+    elif kb_empty:
+        all_steps = [
+            {"id": "model", "label": "加载向量模型"},
+            {"id": "loading", "label": "加载已有文档"},
+            {"id": "parsing", "label": "解析文档"},
+            {"id": "embedding", "label": "计算语义向量"},
+            {"id": "done", "label": "汇总结果"},
+        ]
+    else:
+        all_steps = [
+            {"id": "model", "label": "加载向量模型"},
+            {"id": "loading", "label": "加载已有文档"},
+            {"id": "parsing", "label": "解析文档"},
+            {"id": "embedding", "label": "计算语义向量"},
+            {"id": "comparing", "label": "文档比对阶段"},
+            {"id": "done", "label": "汇总结果"},
+        ]
+    if parse_qa_enabled:
+        parsing_step = next((idx for idx, item in enumerate(all_steps) if item["id"] == "parsing"), None)
+        if parsing_step is not None:
+            all_steps.insert(parsing_step + 1, {"id": "parse_qa", "label": "解析质量检查"})
+
+    task["all_steps"] = all_steps
+    task["_comparison_finished"] = False
     task["completed_steps"] = []
-
+    task["step_states"] = {}
+    task["_state_seq"] = task.get("_state_seq", 0) + 1
+    task["_result_seq"] = task.get("_result_seq", 0)
     step_start_time = time.time()
+    step_ids = {item["id"] for item in all_steps}
 
-    def on_progress(step: str, pct: float, msg: str):
+    def _visible_step(raw_step: str) -> str:
+        if raw_step == "done" and not task.get("_comparison_finished") and "comparing" in step_ids:
+            # version_compare 内部的 done 只代表一组比较完成，不是整项预审核完成。
+            return "comparing"
+        if raw_step in ("scoring", "comparing", "group_done"):
+            return "comparing" if "comparing" in step_ids else raw_step
+        # 版本对比引擎在普通跨文档流程中发出的内部事件归并到一个可见步骤。
+        if raw_step in ("diffing", "filtering") and raw_step not in step_ids and "comparing" in step_ids:
+            return "comparing"
+        if (
+            raw_step in ("parsing", "embedding")
+            and "comparing" in step_ids
+            and task["completed_steps"]
+            and task["completed_steps"][-1]["id"] == "comparing"
+        ):
+            return "comparing"
+        return raw_step if raw_step in step_ids else ("comparing" if "comparing" in step_ids else "parsing")
+
+    def on_progress(step: str, pct: float, msg: str, details: dict | None = None):
         nonlocal step_start_time
         if task["status"] == "cancelled":
             raise InterruptedError("用户取消")
         now = time.time()
-        task["progress"] = int(pct * 100)
+        visible_step = _visible_step(step)
+        global_pct = max(task.get("progress", 0), min(100, round(pct * 100)))
+        progress_details = dict(details) if isinstance(details, dict) else None
+        if progress_details is not None:
+            progress_details["global_pct"] = global_pct
+        task["progress"] = global_pct
         task["current_step"] = msg
-        completed_ids = [s["id"] for s in task["completed_steps"]]
-        if step not in completed_ids:
-            # 新步骤开始：前一步标记完成（elapsed）
-            if task["completed_steps"]:
-                task["completed_steps"][-1]["elapsed"] = round(now - step_start_time, 1)
+        task["_state_seq"] = max(task.get("_state_seq", 0), task.get("state_seq", 0)) + 1
+        task["state_seq"] = task["_state_seq"]
+        completed = task["completed_steps"]
+
+        if visible_step != "done":
+            repeated_done = next(
+                (
+                    item
+                    for item in reversed(completed)
+                    if item["id"] == visible_step and item.get("status") == "done"
+                ),
+                None,
+            )
+            if repeated_done:
+                # 底层版本引擎可能再次报告解析/embedding；这些是同一可见步骤，
+                # 不要把它们追加成第二个步骤并造成列表回退。
+                task["steps"].append({
+                    "step": visible_step,
+                    "raw_step": step,
+                    "progress": global_pct,
+                    "message": msg,
+                    "details": progress_details,
+                })
+                return
+
+        if visible_step == "done":
+            if completed and completed[-1].get("status") != "done":
+                completed[-1]["status"] = "done"
+                completed[-1]["elapsed"] = round(now - step_start_time, 1)
+            completed.append({
+                "id": "done",
+                "message": msg,
+                "started_at": now,
+                "elapsed": 0.0,
+                "pct": 100,
+                "status": "done",
+            })
+            task["progress"] = 100
+        elif not completed or completed[-1]["id"] != visible_step:
+            if completed and completed[-1].get("status") != "done":
+                completed[-1]["status"] = "done"
+                completed[-1]["elapsed"] = round(now - step_start_time, 1)
             step_start_time = now
-            task["completed_steps"].append({"id": step, "message": msg, "started_at": now, "pct": int(pct * 100)})
+            completed.append({
+                "id": visible_step,
+                "message": msg,
+                "started_at": now,
+                "pct": global_pct,
+                "stage_pct": progress_details.get("stage_pct") if progress_details else None,
+                "details": progress_details,
+                "status": "active",
+            })
         else:
-            # 同步骤进度更新：刷新 pct/消息（供前端进度条）。
-            # pct 只升不降（不同调用方可能以更低 pct 重申同一阶段，如 engine 内部 parsing 0.0）
-            for _s in task["completed_steps"]:
-                if _s["id"] == step:
-                    _s["pct"] = max(_s.get("pct", 0), int(pct * 100))
-                    _s["message"] = msg
-        task["steps"].append({"step": step, "progress": int(pct * 100), "message": msg})
+            current = completed[-1]
+            current["pct"] = max(current.get("pct", 0), global_pct)
+            if progress_details and progress_details.get("stage_pct") is not None:
+                current["stage_pct"] = progress_details["stage_pct"]
+                current["details"] = progress_details
+            current["message"] = msg
+            current["status"] = "active"
+
+        task["step_states"] = {
+            item["id"]: {
+                "status": item.get("status", "pending"),
+                "pct": item.get("pct", 0),
+                "message": item.get("message", ""),
+                "stage_pct": item.get("stage_pct"),
+                "details": item.get("details"),
+            }
+            for item in completed
+        }
+        task["steps"].append({
+            "step": visible_step,
+            "raw_step": step,
+            "progress": global_pct,
+            "message": msg,
+            "details": progress_details,
+        })
 
     try:
         task["status"] = "running"
@@ -416,44 +706,15 @@ async def run_pre_review(task_id: str):
         await asyncio.to_thread(engine._get_model)
         log.info("向量模型加载完成")
 
-        # 版本更新场景：同名文档新版本上传，只需版本对比，无需跨文档矛盾检测
-        old_version_filepath = task.get("old_version_filepath", "")
-        is_version_update = bool(old_version_filepath and os.path.exists(old_version_filepath))
-
         if not is_version_update:
             on_progress("loading", 0.1, "加载已有文档到引擎...")
             log.info(f"开始加载已有文档 ({_state.app.doc_store.total_documents} 篇)...")
-            await asyncio.to_thread(load_existing_docs, engine)
+            await asyncio.to_thread(load_existing_docs, engine, on_progress)
             log.info("已有文档加载完成")
-
-        # 知识库为空时：精简步骤列表，跳过检索/差异/判定，直接到汇总
-        kb_empty = _state.app.doc_store.total_documents == 0
-        if kb_empty or is_version_update:
-            if is_version_update:
-                # 步骤与 engine.version_compare 内部 on_progress 一致
-                # （parsing/embedding/diffing/filtering/done），保证前端列表与实际执行同步
-                all_steps = [
-                    {"id": "parsing", "label": "解析文档"},
-                    {"id": "embedding", "label": "计算语义向量"},
-                    {"id": "diffing", "label": "版本差异对比"},
-                    {"id": "filtering", "label": "过滤非实质性差异"},
-                    {"id": "done", "label": "汇总结果"},
-                ]
-                log.info("检测到版本更新，跳过跨文档矛盾检测，直接执行版本对比")
-            else:
-                all_steps = [
-                    {"id": "model", "label": "加载向量模型"},
-                    {"id": "loading", "label": "加载已有文档"},
-                    {"id": "parsing", "label": "解析文档"},
-                    {"id": "embedding", "label": "计算语义向量"},
-                    {"id": "done", "label": "汇总结果"},
-                ]
-                log.info("知识库为空，跳过跨文档检索/差异/判定步骤")
-        if parse_qa_enabled:
-            parsing_step = next((idx for idx, step in enumerate(all_steps) if step["id"] == "parsing"), None)
-            if parsing_step is not None:
-                all_steps.insert(parsing_step + 1, {"id": "parse_qa", "label": "解析质量检查"})
-        task["all_steps"] = all_steps
+        elif is_version_update:
+            log.info("检测到版本更新：已选择版本对比分支，待新文档解析完成后执行")
+        elif kb_empty:
+            log.info("知识库为空，跳过跨文档检索/差异/判定步骤")
 
         from app.services.parse_cache import cached_parse as _parse
 
@@ -506,13 +767,14 @@ async def run_pre_review(task_id: str):
         task["parsed_paragraphs"] = [
             {"text": p.text, "location": p.location, "source_file": task["filename"]} for p in new_doc.paragraphs
         ]
+        on_progress("embedding", 0.35, "计算文档语义向量...")
 
         # ====== 增量结果推送准备 ======
         # task["result"] 在 pre_review 过程中被逐步填充：
         #   phase="candidates_ready" → embedding/search 完成，显示 N 个候选
         #   phase="judging"         → LLM 分批判定中，inconsistencies 逐步追加
         #   phase="done"            → 完成，is_safe 等字段就绪
-        task["_result_seq"] = 0  # 每次 result 修改时递增，SSE 检测此值决定是否推送
+        task["_result_seq"] = task.get("_result_seq", 0)
 
         def _bump_result():
             """原子地递增 _result_seq，让 SSE 推送此次 result 变更"""
@@ -520,20 +782,25 @@ async def run_pre_review(task_id: str):
 
         # ====== 统一流程：与库内每个文档逐一比较（渐进式披露）======
         # 结果结构 compare_groups：每组对应"新文档 vs 库内某文档"，
-        # 相似度 >= 阈值 → 版本差异对比；否则 → 内容一致性检查。
+        # 相似度 >= 阈值 → 版本差异对比；否则 → 跨文档矛盾检测。
         # 每完成一组即推送（前端逐步显示 fold），支持暂停/续跑/取消。
         task["result"] = {
             "phase": "scoring",
             "is_safe": True,
             "new_filename": task["filename"],
+            "new_doc_label": task.get("label", ""),
+            "existing_primary_doc_id": task.get("existing_primary_doc_id", ""),
+            "family_id": task.get("family_id", ""),
             "compare_groups": [],
             "compare_total": 0,
             "compare_done": 0,
+            "n_suspects": 0,
             "message": "正在评估与库内文档的相似度...",
         }
         _bump_result()
 
-        # 库内已有文档列表（含同名旧版，作为一组参与比较）
+        # 库内已有文档列表：DocStore.list_documents() 只返回当前 active 主版本。
+        # 同文档历史版本仅在显式版本审核中通过 old_version_filepath 加入。
         doc_list = _state.app.doc_store.list_documents()
         if old_version_filepath and os.path.exists(old_version_filepath):
             has_old = any(d.filepath == old_version_filepath for d in doc_list)
@@ -550,16 +817,27 @@ async def run_pre_review(task_id: str):
         task["result"]["compare_total"] = len(doc_list)
         _bump_result()
 
-        def _on_group_progress(step, percent, message):
+        def _on_group_progress(step, percent, message, details=None):
             """逐文档比较进度回调：更新 result 并推送（渐进式）"""
             r = task["result"]
-            r["phase"] = step if step in ("scoring", "comparing", "group_done") else r.get("phase", "comparing")
+            r["phase"] = "scoring" if step == "scoring" else "comparing"
             r["progress"] = round(percent * 100)
             r["message"] = message
+            if isinstance(details, dict):
+                r["embedding_progress"] = details
+            current_group = r.get("current_group")
+            if isinstance(current_group, dict):
+                current_group["message"] = message
+                if step in ("batch", "judging"):
+                    current_group["phase"] = "judging"
+                elif step == "group_done":
+                    current_group["phase"] = current_group.get("phase") or "done"
+                else:
+                    current_group["phase"] = step
             if step == "group_done":
                 r["compare_done"] = r.get("compare_done", 0) + 1
             task["progress"] = max(task.get("progress", 0), round(percent * 100))
-            on_progress(step, percent, message)
+            on_progress(step, percent, message, details)
             _bump_result()
             log.info(f"  增量推送: {message}")
 
@@ -583,6 +861,7 @@ async def run_pre_review(task_id: str):
         n_issue = sum(
             1 for g in compare_groups if len(g.get("version_changes", [])) > 0 or len(g.get("inconsistencies", [])) > 0
         )
+        n_suspects = sum(len(g.get("suspects", [])) for g in compare_groups)
         n_error = sum(1 for g in compare_groups if g.get("status") == "error")
         cancelled = task.get("status") == "cancelled"
         incomplete = n_error > 0
@@ -597,27 +876,52 @@ async def run_pre_review(task_id: str):
             message = f"有 {n_error} 组比较失败，不能判定为安全，请修复后重跑"
         else:
             task["current_step"] = "预审核完成"
-            task["status"] = "done"
-            message = "无矛盾，可安全入库" if n_issue == 0 else f"发现 {n_issue} 组存在差异/矛盾"
+            if n_issue == 0 and n_suspects > 0:
+                message = f"无确定性矛盾，但有 {n_suspects} 处疑似项需人工复核"
+            elif n_issue == 0:
+                message = "无矛盾，可安全入库"
+            else:
+                message = f"发现 {n_issue} 组存在差异/矛盾"
+                if n_suspects > 0:
+                    message += f"，另有 {n_suspects} 处疑似项需人工复核"
 
         task["result"] = {
             "phase": "error" if incomplete else "done",
             "is_safe": not incomplete and n_issue == 0,
             "incomplete": incomplete,
             "new_filename": task["filename"],
+            "new_doc_label": task.get("label", ""),
+            "existing_primary_doc_id": task.get("existing_primary_doc_id", ""),
+            "family_id": task.get("family_id", ""),
             "compare_groups": compare_groups,
             "compare_total": len(compare_groups),
             "compare_done": sum(1 for g in compare_groups if g.get("status") == "done"),
             "n_version_groups": n_version,
             "n_conflict_groups": n_conflict,
             "n_issue_groups": n_issue,
+            "n_suspects": n_suspects,
             "n_error_groups": n_error,
             "message": message,
             "kb_empty": kb_empty,
             "cancelled": cancelled,
             "parse_qa": task.get("parse_qa"),
         }
+        if not cancelled and not incomplete:
+            task["_comparison_finished"] = True
+            on_progress("done", 1.0, "预审核完成")
+            task["status"] = "done"
         _state.app.save_review_cache()
+        log.info(
+            "预审核结束: task_id={} status={} elapsed_ms={:.1f} groups={} issues={} suspects={} errors={} safe={}",
+            task_id,
+            task["status"],
+            (time.perf_counter() - started_at) * 1000,
+            len(compare_groups),
+            n_issue,
+            n_suspects,
+            n_error,
+            task["result"]["is_safe"],
+        )
 
         # 只缓存完整成功的审核结果；错误或取消结果必须重新计算。
         if not cancelled and not incomplete:
@@ -648,3 +952,7 @@ async def run_pre_review(task_id: str):
         task["status"] = "error"
         task["current_step"] = f"错误: {e!s}"
         task["result"] = {"error": str(e)}
+        try:
+            _state.app.save_review_cache()
+        except Exception as save_error:
+            log.warning(f"预审核错误状态持久化失败: {save_error}")

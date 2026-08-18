@@ -161,6 +161,31 @@ class TestChatHistoryAPI:
         resp = await client.delete("/api/qa/sessions/nonexistent")
         assert resp.status_code == 404
 
+    async def test_clear_all_sessions(self, client, tmp_path, monkeypatch):
+        from app.routes import _state
+        from app.services.chat_history import ChatHistoryStore
+
+        store = ChatHistoryStore(history_dir=str(tmp_path))
+        store.save_message("qa-clear-api-1", "user", "问题一")
+        store.save_message("qa-clear-api-2", "user", "问题二")
+        monkeypatch.setattr(_state.app.qa_engine, "_history", store)
+
+        resp = await client.delete("/api/qa/sessions")
+        assert resp.status_code == 200
+        assert resp.json()["deleted"] == 2
+        assert store.list_sessions() == []
+
+    async def test_clear_all_sessions_empty_is_idempotent(self, client, tmp_path, monkeypatch):
+        from app.routes import _state
+        from app.services.chat_history import ChatHistoryStore
+
+        store = ChatHistoryStore(history_dir=str(tmp_path))
+        monkeypatch.setattr(_state.app.qa_engine, "_history", store)
+
+        resp = await client.delete("/api/qa/sessions")
+        assert resp.status_code == 200
+        assert resp.json()["deleted"] == 0
+
     async def test_test_session_not_in_history(self, client):
         """test_ 前缀的 session 不应出现在历史列表中"""
         await client.post("/api/qa/ask", json={"question": "test", "session_id": "test_nohistory"})
@@ -265,9 +290,68 @@ class TestReviewAPI:
         # 清理
         _state.app.review_tasks.pop(task_id, None)
         _state.app.confirmed_or_rejected.discard(task_id)
+    async def test_active_review_exposes_suspects(self, client):
+        """终态审核结果应通过 compare group 暴露疑似项及其统计。"""
+        from app.routes import _state
+
+        task_id = "test-suspects-visible"
+        group = {
+            "doc_id": "doc-b",
+            "doc_filename": "policy-b.pdf",
+            "compare_type": "conflict",
+            "version_changes": [],
+            "minor_changes": [],
+            "inconsistencies": [],
+            "suspects": [
+                {
+                    "point": "待人工复核的候选",
+                    "doc_a_id": "new#ABC12345",
+                    "doc_a_file": "new.pdf",
+                    "doc_a_location": "第1页",
+                    "doc_a_says": "要求 A",
+                    "doc_b_id": "doc-b",
+                    "doc_b_file": "policy-b.pdf",
+                    "doc_b_location": "第2页",
+                    "doc_b_says": "要求 B",
+                    "similarity": 0.91,
+                }
+            ],
+            "status": "done",
+        }
+        _state.app.review_tasks[task_id] = {
+            "status": "done",
+            "filename": "new.pdf",
+            "filepath": "/nonexistent/new.pdf",
+            "file_hash": "abc123",
+            "progress": 100,
+            "current_step": "预审核完成",
+            "steps": [],
+            "result": {
+                "phase": "done",
+                "is_safe": True,
+                "incomplete": False,
+                "compare_groups": [group],
+                "n_issue_groups": 0,
+                "n_suspects": 1,
+                "message": "无确定性矛盾，但有 1 处疑似项需人工复核",
+            },
+        }
+        try:
+            resp = await client.get("/api/documents/review/active")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["task_id"] == task_id
+            result = data["result"]
+            assert result["is_safe"] is True
+            assert result["n_issue_groups"] == 0
+            assert result["n_suspects"] == 1
+            assert result["compare_groups"][0]["inconsistencies"] == []
+            assert result["compare_groups"][0]["suspects"][0]["point"] == "待人工复核的候选"
+            assert "人工复核" in result["message"]
+        finally:
+            _state.app.review_tasks.pop(task_id, None)
 
 
-class TestStaticFiles:
     """静态文件测试"""
 
     async def test_static_dir_accessible(self, client):

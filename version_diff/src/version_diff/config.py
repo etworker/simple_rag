@@ -106,6 +106,8 @@ class Config:
         default_factory=lambda: {
             # 为空则使用 ~/.simple_rag/vector_cache 目录
             "vector_cache_dir": "",
+            # LLM 单条判断缓存目录；为空表示不启用持久化判断缓存
+            "judge_cache_dir": "",
         }
     )
 

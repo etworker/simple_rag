@@ -128,6 +128,20 @@ class TestChatHistoryStore:
         # 新的应排前面（可能同秒，但至少两条）
         assert len(sessions) == 2
 
+    def test_clear_all_sessions(self, tmp_path):
+        from app.services.chat_history import ChatHistoryStore
+
+        store = ChatHistoryStore(history_dir=str(tmp_path))
+        store.save_message("qa-clear-1", "user", "问题一")
+        store.save_message("qa-clear-2", "user", "问题二")
+        (tmp_path / "keep.txt").write_text("not a session", encoding="utf-8")
+
+        assert store.clear_all() == 2
+        assert store.list_sessions() == []
+        assert not (tmp_path / "qa-clear-1.json").exists()
+        assert (tmp_path / "keep.txt").exists()
+        assert store.clear_all() == 0
+
 
 class TestChatMessageExport:
     """测试 chat.py 正确 re-export Message"""

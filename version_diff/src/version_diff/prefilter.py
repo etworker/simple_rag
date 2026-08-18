@@ -49,7 +49,9 @@ _VALUE_WITH_UNIT = re.compile(r"\d+\.?\d*\s*(?:天|日|月|年|分钟|小时|秒
 # 日期格式
 _DATE_PATTERN = re.compile(
     r"\d{4}[.\-/]\d{1,2}[.\-/]?\d{0,2}|"
-    r"\d{4}\s*\u5e74\s*\d{1,2}\s*\u6708"
+    r"\d{4}\s*\u5e74\s*\d{1,2}\s*\u6708|"
+    r"[零〇一二三四五六七八九十百千万两]+\s*\u5e74\s*"
+    r"[零〇一二三四五六七八九十百千万两]+\s*\u6708(?:\s*[零〇一二三四五六七八九十百千万两]+\s*[日号])?"
 )
 
 # 版本号格式
@@ -102,6 +104,30 @@ _HIERARCHY_PATTERNS = [
     (re.compile(r"管理手册|管理"), re.compile(r"工作手册|部工作|作业指导")),
     (re.compile(r"分管领导|副总"), re.compile(r"总经理|部门经理|部长")),
 ]
+
+_DOCUMENT_DATE_CONTEXT_WORDS = ("声明", "检查", "分管领导", "签署", "批准", "生效", "发布")
+
+
+def _rule_document_date(text_a, text_b, annotated, fragments):
+    """规则：声明/批准等文档元数据中的日期变化不属于内容矛盾。"""
+    annotations = [a.annotation for a in annotated]
+    date_in_text = _DATE_PATTERN.search(text_a) and _DATE_PATTERN.search(text_b)
+    same_without_date = _DATE_PATTERN.sub("<DATE>", text_a) == _DATE_PATTERN.sub("<DATE>", text_b)
+    if (
+        date_in_text
+        and same_without_date
+        and any(word in text_a + text_b for word in _DOCUMENT_DATE_CONTEXT_WORDS)
+    ):
+        return PreClassifyResult(category="metadata", confidence=0.97, reason="文档声明/批准等元数据日期变化")
+    if (
+        annotated
+        and "date" in annotations
+        and all(a in ("date", "version", "section_ref", "mgmt_info", "ambiguous_number") for a in annotations)
+        and any(word in text_a + text_b for word in _DOCUMENT_DATE_CONTEXT_WORDS)
+    ):
+        return PreClassifyResult(category="metadata", confidence=0.97, reason="文档声明/批准等元数据日期变化")
+    return None
+
 
 # 章节引用上下文（出现这些词时旁边的数字更可能是章节号）
 _SECTION_CONTEXT_WORDS = {
@@ -369,8 +395,194 @@ def _rule_hierarchy_names(text_a, text_b, annotated, fragments):
     return None
 
 
+_HEADING_PREFIX = re.compile(r"^\s*(?:(?:第\s*)?\d+(?:\.\d+){0,4}\s*)")
+_HEADING_NORMATIVE_WORDS = ("应", "必须", "负责", "适用于", "禁止", "不得", "审批", "申请", "权限")
+
+
+def _heading_core(text: str) -> str:
+    """去掉章节编号并规范空白，返回标题主体。"""
+    core = re.sub(r"\s+", "", _HEADING_PREFIX.sub("", text or "")).strip(" ：:、．.")
+    return re.sub(r"^(?:相关|支持性)", "", core)
+
+
+def _looks_like_heading(para, text: str) -> bool:
+    """识别纯标题/结构标签，不把带规范性内容的短段落误过滤。"""
+    block_type = getattr(para, "block_type", "")
+    core = _heading_core(text)
+    return bool(
+        core
+        and (block_type == "heading" or bool(_HEADING_PREFIX.match(text or "")))
+        and len(core) <= 40
+        and not any(word in core for word in _HEADING_NORMATIVE_WORDS)
+    )
+
+
+def _rule_same_structural_heading(text_a, text_b, annotated, fragments):
+    """规则：两边只是同名章节/结构标题，章节编号不同不构成矛盾。"""
+    if _looks_like_heading(None, text_a) and _looks_like_heading(None, text_b):
+        if _heading_core(text_a) == _heading_core(text_b):
+            return PreClassifyResult(category="structural", confidence=0.98, reason="同名章节/结构标题，仅编号或层级不同")
+    return None
+
+
+_EQUIVALENT_SCOPE_PHRASES = (
+    ("所有员工", "全体员工"),
+    ("本规定适用于", "适用于"),
+)
+
+
+def _normalize_safe_equivalents(text: str) -> str:
+    """只归一化已确认的制度措辞等价词，不泛化员工/用户等角色范围。"""
+    value = re.sub(r"\s+", "", text or "")
+    for source, target in _EQUIVALENT_SCOPE_PHRASES:
+        value = value.replace(source, target)
+    return value
+
+
+def _rule_normalized_same_content(text_a, text_b, annotated, fragments):
+    """规则：仅有标点、空白或解析尾符差异时，不是内容矛盾。"""
+    normalize = lambda text: re.sub(r"[\\s，。；：、,.;:（）()【】\\[\\]《》]", "", text)
+    if text_a != text_b and normalize(text_a) == normalize(text_b):
+        return PreClassifyResult(category="wording", confidence=0.99, reason="正文内容相同，仅标点/格式不同")
+    return None
+
+
+def _rule_safe_equivalent_wording(text_a, text_b, annotated, fragments):
+    """规则：严格等价措辞且其余内容完全一致时，不送 LLM。"""
+    if text_a != text_b and _normalize_safe_equivalents(text_a) == _normalize_safe_equivalents(text_b):
+        return PreClassifyResult(category="wording", confidence=0.98, reason="已确认的同义范围措辞，规范要求未改变")
+    return None
+
+
+_OBJECT_MARKERS = (
+    ("email", ("企业邮箱", "电子邮箱", "电子邮件", "邮箱", "邮件")),
+    ("storage", ("移动存储设备", "移动存储", "U盘", "USB")),
+    ("office_computer", ("办公电脑", "办公计算机")),
+    ("vpn", ("VPN",)),
+    ("video_conference", ("视频会议系统", "视频会议")),
+    ("network", ("办公网络", "有线网络", "互联网", "IP地址")),
+)
+
+
+def _primary_object(text: str) -> str:
+    """提取明确的 IT 控制对象；只用于两边对象明确不同的保守过滤。"""
+    for name, markers in _OBJECT_MARKERS:
+        if any(marker in text for marker in markers):
+            return name
+    return ""
+
+
+def _rule_explicitly_different_objects(text_a, text_b, annotated, fragments):
+    """规则：明确指向不同系统/设备的段落不是同一事项。"""
+    object_a = _primary_object(text_a)
+    object_b = _primary_object(text_b)
+    if object_a and object_b and object_a != object_b:
+        return PreClassifyResult(category="scope", confidence=0.96, reason=f"明确不同控制对象：{object_a} vs {object_b}")
+    return None
+
+
+_ACTION_MARKERS = ("立项", "论证", "监督", "审核", "跟进", "沟通", "保密", "保护", "解释", "培训", "考核", "运行维护", "管理", "维护", "安装", "维修", "防病毒", "保管", "使用")
+
+
+def _rule_complementary_responsibilities(text_a, text_b, annotated, fragments):
+    """规则：同样出现负责，但动作集合完全不同，优先视为职责分工。"""
+    if "负责" not in text_a or "负责" not in text_b:
+        return None
+    actions_a = {word for word in _ACTION_MARKERS if word in text_a}
+    actions_b = {word for word in _ACTION_MARKERS if word in text_b}
+    if actions_a and actions_b:
+        shared_specific = (actions_a & actions_b) - {"管理", "使用"}
+        distinct_a = actions_a - {"管理", "使用"}
+        distinct_b = actions_b - {"管理", "使用"}
+        if not shared_specific and not distinct_a.intersection(distinct_b):
+            return PreClassifyResult(category="scope", confidence=0.91, reason="职责动作不重叠，属于不同角色/流程分工")
+    return None
+
+
+def _rule_asymmetric_missing_requirement(text_a, text_b, annotated, fragments):
+    """规则：一方新增禁止要求、另一方仅未提及，不构成矛盾。"""
+    prohibitions = ("禁止", "不得", "严禁", "不允许")
+    permissions = ("允许", "可以", "可自行", "自由", "无需", "必须", "应当", "采用", "设置成", "填写", "使用", "访问", "协助", "需告知")
+    has_a = any(word in text_a for word in prohibitions)
+    has_b = any(word in text_b for word in prohibitions)
+    if has_a == has_b:
+        return None
+    if "自动获取" in text_a and "自动获取" in text_b:
+        return PreClassifyResult(category="scope", confidence=0.9, reason="两边要求相同，单边仅增加禁止私自填写限制")
+    other_text = text_b if has_a else text_a
+    if any(word in other_text for word in permissions):
+        # 若另一边明确给出相反许可/要求，保留给 LLM 判断。
+        normalized_a = re.sub(r"配置(?:成|为)|采用|的方式|均|\s+", "", text_a)
+        normalized_b = re.sub(r"配置(?:成|为)|采用|的方式|均|\s+", "", text_b)
+        prohibition_a = re.sub(r"(?:禁止|不得|严禁|不允许)[^，。；;]*", "", normalized_a)
+        prohibition_b = re.sub(r"(?:禁止|不得|严禁|不允许)[^，。；;]*", "", normalized_b)
+        if (
+            (has_a and prohibition_a and prohibition_a in normalized_b)
+            or (has_b and prohibition_b and prohibition_b in normalized_a)
+        ):
+            return PreClassifyResult(category="scope", confidence=0.9, reason="一方仅新增限制，另一方未给出相反许可")
+        return None
+    return PreClassifyResult(category="scope", confidence=0.9, reason="一方未提及新增限制，不能据此认定冲突")
+
+
+def _rule_scope_subset(text_a, text_b, annotated, fragments):
+    """规则：适用范围短句是另一段的完整子集/概括，不构成矛盾。"""
+    normalized_a = re.sub(r"\s+", "", text_a)
+    normalized_b = re.sub(r"\s+", "", text_b)
+    if len(normalized_a) >= 8 and len(normalized_b) >= 8 and (
+        normalized_a in normalized_b or normalized_b in normalized_a
+    ):
+        if any(word in text_a + text_b for word in ("适用于", "适用范围", "定义")):
+            return PreClassifyResult(category="scope", confidence=0.94, reason="适用范围/定义为概括与细化关系")
+    return None
+
+
+def _rule_document_declaration(text_a, text_b, annotated, fragments):
+    """规则：各文档声明执行各自手册，不是两个控制要求互斥。"""
+    if all(word in text_a and word in text_b for word in ("严格执行", "本手册规定", "《")):
+        return PreClassifyResult(category="reference", confidence=0.95, reason="声明页分别引用各自手册")
+    return None
+
+
+def _rule_definition_subtype(text_a, text_b, annotated, fragments):
+    """规则：专门定义与上位概念定义可以同时成立。"""
+    if "内网信息系统" in text_a and "信息系统" in text_b and "：" in text_a + text_b:
+        return PreClassifyResult(category="scope", confidence=0.94, reason="专门概念与上位概念定义关系")
+    if "内网信息系统" in text_b and "信息系统" in text_a and "：" in text_a + text_b:
+        return PreClassifyResult(category="scope", confidence=0.94, reason="专门概念与上位概念定义关系")
+    return None
+
+
+def _rule_placeholder_or_reference_heading(text_a, text_b, annotated, fragments):
+    """规则：目录/占位引用与正文段落错配不是内容矛盾。"""
+    placeholder = re.compile(r"^\s*\d+(?:\.\d+)*x+", re.IGNORECASE)
+    if placeholder.match(text_a) or placeholder.match(text_b):
+        return PreClassifyResult(category="structural", confidence=0.97, reason="章节占位符/目录引用噪声")
+    return None
+
+
+def _rule_reference_list(text_a, text_b, annotated, fragments):
+    """规则：支持性文件章节中的纯引用清单差异不是正文矛盾。"""
+    reference_only = re.compile(r"^(?:\s*《[^》]+》\s*(?:[（(][^）)]*[）)])?\s*[、,，;；]?)+$")
+    if reference_only.match(text_a) and reference_only.match(text_b):
+        return PreClassifyResult(category="reference", confidence=0.96, reason="纯支持性文件/引用清单差异")
+    return None
+
+
 # 规则优先级：靠前的规则先判定
 _PRECLASSIFY_RULES = [
+    _rule_same_structural_heading,
+    _rule_normalized_same_content,
+    _rule_safe_equivalent_wording,
+    _rule_document_date,
+    _rule_document_declaration,
+    _rule_explicitly_different_objects,
+    _rule_complementary_responsibilities,
+    _rule_asymmetric_missing_requirement,
+    _rule_scope_subset,
+    _rule_definition_subtype,
+    _rule_placeholder_or_reference_heading,
+    _rule_reference_list,
     _rule_all_section_ref,
     _rule_mostly_section_ref,
     _rule_mgmt_context,

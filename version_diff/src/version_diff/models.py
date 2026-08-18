@@ -17,6 +17,11 @@ class VersionChange:
     summary: str = ""  # 变更摘要（如"备份频率从每4小时改为每2小时"）
     similarity: float = 0.0  # 段落相似度（modified 时有值）
     category: str = "content"  # "content" | "tracking_table" | "metadata"
+    # 表格差异的结构化定位；普通段落变更保持默认空值。
+    table_name: str = ""
+    row_key: str = ""
+    row_index: int = 0
+    cell_changes: list[dict] = field(default_factory=list)
 
 
 @dataclass

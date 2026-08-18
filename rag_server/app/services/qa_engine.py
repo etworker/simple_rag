@@ -112,28 +112,38 @@ class QAEngine:
 
         # 6. 封装结果 —— sources 带编号
         # idx 是 chunk 序号（回答中的 [1][2] 引用编号）；
-        # doc_id 是文档级标识（文件名#HASH8），前端用它映射到 B1/B2 文档编号；
-        # label 是用户上传时填写的补充描述（tag，如版本号），legend 显示。
+        # doc_id 是稳定文档标识（文件名#HASH8），前端用它精确打开对应版本；
+        # label/status/version 信息帮助用户区分当前版本和历史版本。
         _doc_meta_cache = {}
 
-        def _get_label(doc_id: str) -> str:
+        def _get_meta(doc_id: str):
             if doc_id not in _doc_meta_cache:
-                meta = self._doc_store.get_document(doc_id)
-                _doc_meta_cache[doc_id] = (meta.label if meta else "") or ""
+                _doc_meta_cache[doc_id] = self._doc_store.get_document(doc_id)
             return _doc_meta_cache[doc_id]
 
-        source_list = [
-            {
-                "idx": i,
-                "text": c.text[:200],
-                "source_file": c.source_file,
-                "doc_id": c.source_file,
-                "label": _get_label(c.source_file),
-                "location": c.location,
-                "score": round(c.score, 3),
-            }
-            for i, c in enumerate(chunks, start=1)
-        ]
+        def _get_label(doc_id: str) -> str:
+            meta = _get_meta(doc_id)
+            return (meta.label if meta else "") or ""
+
+        source_list = []
+        for i, c in enumerate(chunks, start=1):
+            meta = _get_meta(c.source_file)
+            source_list.append(
+                {
+                    "idx": i,
+                    "text": c.text[:200],
+                    "source_file": c.source_file,
+                    "doc_id": c.source_file,
+                    "filename": meta.filename if meta else c.source_file.split("#", 1)[0],
+                    "family_id": getattr(meta, "family_id", "") if meta else "",
+                    "status": getattr(meta, "status", "") if meta else "",
+                    "is_primary": getattr(meta, "is_primary", False) if meta else False,
+                    "version": getattr(meta, "version", "") if meta else "",
+                    "label": _get_label(c.source_file),
+                    "location": c.location,
+                    "score": round(c.score, 3),
+                }
+            )
 
         # 7. 持久化问答历史
         self._history.save_message(session_id, "user", question)
@@ -150,6 +160,11 @@ class QAEngine:
         """重置指定会话"""
         if session_id in self._sessions:
             self._sessions[session_id].reset()
+
+    def clear_all_history(self) -> int:
+        """清空持久化历史并丢弃当前进程中的会话上下文。"""
+        self._sessions.clear()
+        return self._history.clear_all()
 
     def _get_session(self, session_id: str) -> ChatSession:
         """获取或创建会话（超出上限时淘汰最久未使用的会话）"""
@@ -198,17 +213,28 @@ class QAEngine:
         """
         # 给每个 chunk 编号
         template = self._config.get("prompts.context_template", "[{idx}] {source} | {location}\n{text}\n")
-        radius = int(self._config.get("retrieval.context_radius", 0) or 0)
+        # 流程类问题经常命中章节标题；默认带入前后两段，避免只把标题交给 LLM。
+        radius = int(self._config.get("retrieval.context_radius", 2) or 0)
 
         parts = []
         for i, chunk in enumerate(chunks, start=1):
             text = chunk.text
             if radius > 0:
                 text = self._expand_chunk_context(chunk, radius) or text
+            meta = self._doc_store.get_document(chunk.source_file)
+            source_name = meta.filename if meta else chunk.source_file
+            version_label = ""
+            if meta:
+                version_label = meta.label or meta.version or ""
+                if meta.status == "active":
+                    version_label = f"{version_label} · 当前版本" if version_label else "当前版本"
+            source_display = source_name
+            if version_label:
+                source_display += f" [{version_label}]"
             parts.append(
                 template.format(
                     idx=i,
-                    source=chunk.source_file,
+                    source=source_display,
                     location=chunk.location,
                     text=text,
                 )

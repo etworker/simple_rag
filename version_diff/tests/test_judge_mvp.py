@@ -187,17 +187,38 @@ class TestSplitHalfRetry:
             assert has_failure is False
             assert call_count[0] == 3  # 1 原始 + 2 拆半
 
-    def test_no_split_for_small_batch(self):
-        """批次太小（≤min_split）不再拆分"""
+    def test_split_to_single_items(self):
+        """批次失败后应继续拆到单条，单条失败仍保留失败标记"""
         from version_diff.judge import _judge_batch_with_split_retry
 
-        items = [SimpleNamespace(para_a=SimpleNamespace(text="A", source_file="a", location=""),
-                                  para_b=SimpleNamespace(text="B", source_file="b", location=""))] * 2
-
-        with patch("version_diff.judge._judge_batch", return_value=None):
+        items = [SimpleNamespace(para_a=SimpleNamespace(text=str(i), source_file="a", location=""),
+                                  para_b=SimpleNamespace(text="B", source_file="b", location="")) for i in range(2)]
+        with patch("version_diff.judge._judge_batch", return_value=None) as mock_judge:
             results, has_failure = _judge_batch_with_split_retry(items, {}, "")
             assert results is None
             assert has_failure is True
+            assert mock_judge.call_count == 3  # 原批次 + 两个单条
+
+    def test_successful_results_are_reused_from_cache(self, tmp_path):
+        """完整结果应按单条写缓存，后续相同输入不再调用 LLM"""
+        from version_diff.judge import _judge_batch_with_cache
+
+        items = [SimpleNamespace(
+            para_a=SimpleNamespace(text="A", source_file="a", location="1"),
+            para_b=SimpleNamespace(text="B", source_file="b", location="2"),
+        )]
+        response = [{"index": 1, "inconsistent": False, "point": ""}]
+        with patch("version_diff.judge._judge_batch", return_value=response) as first:
+            results, failed = _judge_batch_with_cache(items, {}, "{count} {items}", str(tmp_path))
+            assert results == response
+            assert failed is False
+            assert first.call_count == 1
+
+        with patch("version_diff.judge._judge_batch", side_effect=AssertionError("cache miss")) as second:
+            results, failed = _judge_batch_with_cache(items, {}, "{count} {items}", str(tmp_path))
+            assert results == response
+            assert failed is False
+            assert second.call_count == 0
 
 
 # ============================================================
@@ -222,3 +243,98 @@ class TestPromptContent:
 
         assert "{count}" in CONSISTENCY_JUDGE_PROMPT
         assert "{items}" in CONSISTENCY_JUDGE_PROMPT
+
+
+# ============================================================
+# 同一事项边界与安全降级
+# ============================================================
+
+
+def test_same_heading_is_structural_not_a_conflict():
+    """同名章节标题只改变编号时，不应进入 LLM 矛盾结果。"""
+    from doc_parser.models import Paragraph
+    from version_diff.matcher import compute_diff
+    from version_diff.prefilter import pre_classify
+
+    item = compute_diff(
+        Paragraph(text="4.1.3 术语与定义", block_type="heading"),
+        Paragraph(text="2.4.3 术语与定义", block_type="heading"),
+        similarity=0.97,
+    )
+    result = pre_classify(item)
+    assert result.category == "structural"
+
+
+def test_equivalent_employee_scope_is_wording_only():
+    """公司所有员工/公司全体员工不应被判为实质矛盾。"""
+    from doc_parser.models import Paragraph
+    from version_diff.matcher import compute_diff
+    from version_diff.prefilter import pre_classify
+
+    item = compute_diff(
+        Paragraph(text="本规定适用于公司所有员工"),
+        Paragraph(text="适用于公司全体员工"),
+        similarity=0.92,
+    )
+    result = pre_classify(item)
+    assert result.category == "wording"
+
+
+def test_missing_confidence_is_suspect_not_confirmed():
+    """LLM 对 true 结果未给 confidence 时，不能默认升级为确认矛盾。"""
+    from version_diff.judge import _process_batch_results
+
+    item = SimpleNamespace(
+        para_a=SimpleNamespace(text="A", source_file="a", location="1"),
+        para_b=SimpleNamespace(text="B", source_file="b", location="2"),
+    )
+    confirmed, suspects = _process_batch_results(
+        [item], [{"index": 1, "inconsistent": True, "point": "事项"}]
+    )
+    assert confirmed == []
+    assert suspects == [item]
+
+
+def test_chinese_document_date_is_metadata():
+    """声明页中文日期变化属于文档元数据，不应送 LLM。"""
+    from doc_parser.models import Paragraph
+    from version_diff.matcher import compute_diff
+    from version_diff.prefilter import pre_classify
+
+    item = compute_diff(
+        Paragraph(text="奥凯航空有限公司随时准备接受局方的检查。分管领导：二零二四年四月三十日"),
+        Paragraph(text="奥凯航空有限公司随时准备接受局方的检查。分管领导：二零二三年七月十八日"),
+        similarity=0.99,
+    )
+    result = pre_classify(item)
+    assert result.category == "metadata"
+
+
+def test_reference_lists_are_not_content_conflicts():
+    """支持性文件纯引用清单不同，不应直接判正文矛盾。"""
+    from doc_parser.models import Paragraph
+    from version_diff.matcher import compute_diff
+    from version_diff.prefilter import pre_classify
+
+    item = compute_diff(
+        Paragraph(text="《网络与信息安全管理手册》《奥凯航空OA系统文件审批管理办法》"),
+        Paragraph(text="《民航网络与信息安全管理暂行办法》（MD-PE-2013-01）"),
+        similarity=0.86,
+    )
+    result = pre_classify(item)
+    assert result.category == "reference"
+
+
+def test_explicitly_different_it_objects_are_not_paired_as_conflicts():
+    """企业邮箱与办公电脑是不同控制对象，不应进入矛盾判断。"""
+    from doc_parser.models import Paragraph
+    from version_diff.matcher import compute_diff
+    from version_diff.prefilter import pre_classify
+
+    item = compute_diff(
+        Paragraph(text="信息技术部负责企业邮箱开通、变更和维护"),
+        Paragraph(text="信息技术部负责办公电脑的安装、维修和防病毒管理"),
+        similarity=0.84,
+    )
+    result = pre_classify(item)
+    assert result.category == "scope"

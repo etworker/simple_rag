@@ -126,6 +126,23 @@ class ChatHistoryStore:
             return True
         return False
 
+    def clear_all(self) -> int:
+        """删除全部已持久化会话，返回删除的文件数量。"""
+        if not os.path.exists(self._dir):
+            return 0
+        deleted = 0
+        for filename in os.listdir(self._dir):
+            if not filename.endswith(".json"):
+                continue
+            filepath = os.path.join(self._dir, filename)
+            try:
+                if os.path.isfile(filepath):
+                    os.remove(filepath)
+                    deleted += 1
+            except OSError as exc:
+                log.warning(f"删除问答历史失败: {filepath}: {exc}")
+        return deleted
+
     def _summarize(self, data: dict) -> dict:
         """提取会话摘要（不含完整消息）"""
         return {

@@ -6,6 +6,7 @@ import asyncio
 from urllib.parse import unquote
 
 from fastapi import APIRouter, HTTPException
+from loguru import logger as log
 from pydantic import BaseModel
 
 from app.routes import _state
@@ -34,13 +35,27 @@ async def ask(req: AskRequest):
         raise HTTPException(status_code=400, detail="问题不能为空")
 
     qa_engine = _state.app.qa_engine
+    log.info(
+        "QA 开始: question_chars={} session_present={}",
+        len(req.question),
+        bool(req.session_id),
+    )
     try:
         response = await asyncio.to_thread(qa_engine.ask, req.question, session_id=req.session_id)
     except RuntimeError as e:
         # LLM 层错误统一按"服务不可用"处理（API Key 缺失 / 网络超时 / 重试耗尽均抛 RuntimeError）
+        log.warning("QA LLM 不可用: error_type={} question_chars={}", type(e).__name__, len(req.question))
         raise HTTPException(status_code=503, detail=f"LLM 服务不可用: {e}") from e
     except Exception as e:
+        log.exception("QA 失败: error_type={} question_chars={}", type(e).__name__, len(req.question))
         raise HTTPException(status_code=500, detail=f"内部错误: {e}") from e
+    log.info(
+        "QA 完成: answer_chars={} sources={} conflicts={} has_conflicts={}",
+        len(response.answer),
+        len(response.sources),
+        len(response.conflicts),
+        response.has_conflicts,
+    )
     return response.to_dict()
 
 
@@ -56,6 +71,13 @@ async def list_sessions(limit: int = 50):
     """列出所有问答历史会话"""
     sessions = _state.app.qa_engine._history.list_sessions(limit=limit)
     return {"sessions": sessions, "total": len(sessions)}
+
+
+@router.delete("/sessions")
+async def clear_sessions():
+    """清空全部问答历史和当前进程中的会话上下文"""
+    deleted = _state.app.qa_engine.clear_all_history()
+    return {"message": "全部问答历史已清空", "deleted": deleted}
 
 
 @router.get("/sessions/{session_id}")
