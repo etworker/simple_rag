@@ -13,6 +13,8 @@ import time
 import urllib.error
 import urllib.request
 
+from app.paths import resolve_cache_root
+
 BASE = "http://127.0.0.1:8000"
 PASS = 0
 FAIL = 0
@@ -68,9 +70,9 @@ def wait_server():
 
 def find_pdf():
     """Find a test PDF file"""
-    # Try both old and new cache dirs
-    for cache_dir in [".simple_rag", ".cache/simple_rag"]:
-        cache_upload = os.path.join(os.path.expanduser("~"), cache_dir, "uploads")
+    # 当前缓存根目录（环境变量 > 配置 > 默认 ~/.simple_rag），外加旧版 .cache/simple_rag 兜底
+    for cache_root in [resolve_cache_root(), os.path.join(os.path.expanduser("~"), ".cache", "simple_rag")]:
+        cache_upload = os.path.join(cache_root, "uploads")
         if os.path.exists(cache_upload):
             pdfs = glob.glob(os.path.join(cache_upload, "**", "*.pdf"), recursive=True)
             if pdfs:

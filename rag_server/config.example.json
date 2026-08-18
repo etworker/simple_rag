@@ -61,7 +61,8 @@
   "llm_routing": {
     "qa": "bedrock_glm_flash",
     "pre_review": "bedrock_glm_flash",
-    "conflict_detection": "bedrock_glm_flash"
+    "conflict_detection": "bedrock_glm_flash",
+    "parse_qa": "bedrock_glm_flash"
   },
   "retrieval": {
     "top_k": 15,
@@ -70,8 +71,9 @@
   },
   "pre_review": {
     "similarity_threshold": 0.8,
+    "version_similarity_threshold": 0.9,
     "batch_size": 0,
-    "parse_backend": "pdfplumber",
+    "parse_backend": "auto",
     "docling_device": "auto",
     "docling_batch_size": 0,
     "noise_filter": {
@@ -103,5 +105,13 @@
   "parse_cleanup": {
     "enabled": false,
     "llm_profile": "pre_review"
+  },
+  "parse_qa": {
+    "enabled": false,
+    "llm_profile": "pre_review",
+    "max_candidates": 20,
+    "batch_size": 10,
+    "max_retries": 2,
+    "retry_backoff": 1.0
   }
 }

@@ -132,10 +132,21 @@ class FaissRetriever(Retriever):
         emb_path = os.path.join(directory, "embeddings.npy")
         idx_path = os.path.join(directory, "index.faiss")
         if self._embeddings is not None and len(self._embeddings) > 0:
-            np.save(emb_path, self._embeddings)
-            if self._index is not None:
-                self._faiss.write_index(self._index, idx_path)
-            log.info(f"Retriever 持久化: {self.count} 向量 → {directory}")
+            emb_tmp = f"{emb_path}.tmp.npy"
+            idx_tmp = f"{idx_path}.tmp"
+            try:
+                np.save(emb_tmp, self._embeddings)
+                if self._index is not None:
+                    self._faiss.write_index(self._index, idx_tmp)
+                os.replace(emb_tmp, emb_path)
+                if self._index is not None:
+                    os.replace(idx_tmp, idx_path)
+                log.info(f"Retriever 持久化: {self.count} 向量 → {directory}")
+            except Exception:
+                for tmp_path in (emb_tmp, idx_tmp):
+                    if os.path.exists(tmp_path):
+                        os.remove(tmp_path)
+                raise
         else:
             log.info("Retriever 持久化: 空（跳过）")
 

@@ -11,6 +11,8 @@ import sys
 
 from loguru import logger
 
+from app.paths import ENV_LOG_DIR, ENV_LOG_LEVEL, resolve_cache_root
+
 # 禁用 HuggingFace 联网检查（必须在任何 HF/transformers 导入前设置）
 os.environ.setdefault("HF_HUB_OFFLINE", "1")
 os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
@@ -54,14 +56,14 @@ from app.services.config_store import CONFIG_DESCRIPTIONS, ConfigStore
 from app.services.doc_store import DocStore
 from app.services.qa_engine import QAEngine
 
-# 缓存根目录（可配置，默认 ~/.simple_rag/）
-_CACHE_ROOT = os.path.join(os.path.expanduser("~"), ".simple_rag")
+# 缓存根目录（解析优先级见 app.paths：环境变量 > 配置 > 默认 ~/.simple_rag/）
+_CACHE_ROOT = resolve_cache_root()
 
 # 日志：统一在应用入口配置一次（loguru 为进程级全局单例，各库内部不配置 sink）
-# 位置可用环境变量 SIMPLE_RAG_LOG_DIR 覆盖，级别用 SIMPLE_RAG_LOG_LEVEL。
-_LOG_DIR = os.environ.get("SIMPLE_RAG_LOG_DIR", os.path.join(_CACHE_ROOT, "log"))
+# 位置/级别可用环境变量 SIMPLE_RAG_LOG_DIR / SIMPLE_RAG_LOG_LEVEL 覆盖。
+_LOG_DIR = os.environ.get(ENV_LOG_DIR, os.path.join(_CACHE_ROOT, "log"))
 os.makedirs(_LOG_DIR, exist_ok=True)
-_LEVEL = os.environ.get("SIMPLE_RAG_LOG_LEVEL", "INFO")
+_LEVEL = os.environ.get(ENV_LOG_LEVEL, "INFO")
 _FMT = "{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {name}:{line} | {message}"
 
 log = logger
@@ -109,7 +111,7 @@ log.info(_session_sep)
 
 # 路径
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-CONFIG_PATH = os.path.join(BASE_DIR, "config.json")
+CONFIG_PATH = os.environ.get("CONFIG_PATH") or os.path.join(BASE_DIR, "config.json")
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 
 # 初始化配置
@@ -156,7 +158,7 @@ app.include_router(qa.router, prefix="/api/qa", tags=["问答"])
 # 配置 API
 @app.get("/api/config")
 async def get_config():
-    """获取当前配置"""
+    """获取已保存配置；若刚更新，则返回重启后将生效的值。"""
     return config_store.to_dict()
 
 
@@ -168,10 +170,16 @@ async def get_config_schema():
 
 @app.post("/api/config")
 async def update_config(updates: dict):
-    """更新配置"""
-    config_store.update(updates)
-    config_store.save()
-    return {"message": "配置已更新"}
+    """保存待重启配置，不修改当前进程中的运行时快照。"""
+    active_embedding = config_store.get_section("embedding")
+    pending = config_store.stage_updates(updates)
+    reset_required = pending.get("embedding", {}) != active_embedding
+    return {
+        "message": "配置已更新并保存，请重启服务使全部配置生效",
+        "restart_required": True,
+        "reset_knowledge_base_required": reset_required,
+        "updated_sections": sorted(updates),
+    }
 
 
 # 首页

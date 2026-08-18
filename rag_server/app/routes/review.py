@@ -33,7 +33,7 @@ async def get_active_review():
     # 先查找 pending/running（按插入逆序，取最新的）
     items = list(_state.app.review_tasks.items())
     for task_id, task in reversed(items):
-        if task["status"] in ("pending", "running"):
+        if task["status"] in ("pending", "running", "paused"):
             return {
                 "task_id": task_id,
                 "status": task["status"],
@@ -121,8 +121,12 @@ async def upload_document(file: UploadFile = File(...), choice: str = Form(""), 
     # 记录旧版本信息（如果是同名文档更新）
     old_version_filepath = ""
     old_doc_filename = ""
+    replace_doc_id = ""
 
-    existing = _state.app.doc_store.get_document(filename)
+    if choice not in ("", "overwrite", "coexist"):
+        raise HTTPException(status_code=400, detail="choice 必须是 overwrite 或 coexist")
+
+    existing = _state.app.doc_store.get_latest_document_by_filename(filename)
     if existing and existing.status == "active":
         if existing.file_hash == new_sha:
             raise HTTPException(status_code=409, detail=f"文档 '{filename}' 内容完全相同，请勿重复上传")
@@ -146,9 +150,10 @@ async def upload_document(file: UploadFile = File(...), choice: str = Form(""), 
         # 记录旧版文档信息（可对比版本）
         old_doc_filename = existing.filename if existing else ""
         if choice == "overwrite":
-            _state.app.doc_store.remove_document(existing.doc_id)
-            log.info(f"用户选择覆盖: 已删除旧文档 {existing.doc_id}")
-            old_version_filepath = existing.filepath  # 保存旧版路径用于版本对比
+            # 审核期间保留旧文档；仅在新版本确认入库成功后替换。
+            replace_doc_id = existing.doc_id
+            old_version_filepath = existing.filepath
+            log.info(f"用户选择覆盖: 旧文档保留至确认入库 {existing.doc_id}")
         elif choice == "coexist":
             old_version_filepath = existing.filepath  # coexist 模式也记录旧版路径
             log.info("用户选择并存: 旧文档保留, 新文档将做版本对比")
@@ -177,6 +182,7 @@ async def upload_document(file: UploadFile = File(...), choice: str = Form(""), 
         "result": None,
         "old_version_filepath": old_version_filepath,  # 版本对比用（文件路径）
         "old_doc_filename": old_doc_filename,  # 版本对比用（可读文件名）
+        "replace_doc_id": replace_doc_id,  # overwrite 模式：确认成功后再移除旧文档
         "label": label.strip()[:60],  # 用户补充描述（如版本号），入库时写入 DocMeta
     }
 
@@ -254,20 +260,39 @@ async def confirm_review(task_id: str):
 
     file_hash = compute_sha256(filepath)
     existing = _state.app.doc_store.get_document(f"{filename}#{file_hash[-8:].upper()}")
-    if existing and existing.status == "active":
+    replace_doc_id = task.get("replace_doc_id", "")
+    if existing and existing.status == "active" and not replace_doc_id:
         raise HTTPException(status_code=409, detail=f"文档 '{filename}' 已入库（相同内容）")
 
     try:
-        meta = await asyncio.to_thread(
-            _state.app.doc_store.add_document, filepath, task["filename"], task.get("label", "")
-        )
+        if existing and existing.status == "active":
+            # 上一次确认可能已完成新文档提交、但旧版清理或任务状态保存失败。
+            # 复用已入库的新文档并继续清理，使 overwrite 确认可安全重试。
+            meta = existing
+            log.info(f"继续未完成的覆盖确认: {meta.doc_id} -> 清理 {replace_doc_id}")
+        else:
+            meta = await asyncio.to_thread(
+                _state.app.doc_store.add_document, filepath, task["filename"], task.get("label", "")
+            )
+        if replace_doc_id and replace_doc_id != meta.doc_id:
+            removed = await asyncio.to_thread(_state.app.doc_store.remove_document, replace_doc_id)
+            if not removed:
+                log.warning(f"新版本已入库，但待替换旧文档不存在: {replace_doc_id}")
+            else:
+                log.info(f"覆盖完成: 新文档 {meta.doc_id} 已替换旧文档 {replace_doc_id}")
     except Exception as e:
         log.error(f"入库失败: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"入库失败: {e!s}") from e
 
     task["status"] = "confirmed"
     _state.app.confirmed_or_rejected.add(task_id)
-    _state.app.save_review_cache()  # 持久化确认状态，重启后不会旧任务被当作未确认
+    try:
+        _state.app.save_review_cache()
+    except Exception as e:
+        task["status"] = "done"
+        _state.app.confirmed_or_rejected.discard(task_id)
+        log.error(f"文档已入库，但确认状态保存失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="文档已入库，但确认状态保存失败；请重试确认") from e
     log.info(f"入库成功: {meta.filename} ({meta.paragraph_count} paras) @ {filepath}")
     return {
         "message": "文档已入库",
@@ -282,9 +307,17 @@ async def reject_review(task_id: str):
     if task_id not in _state.app.review_tasks:
         raise HTTPException(status_code=404, detail="任务不存在")
     task = _state.app.review_tasks[task_id]
+    if task["status"] in ("confirmed", "rejected"):
+        raise HTTPException(status_code=400, detail=f"任务已{task['status']}，无法拒绝")
+    previous_status = task["status"]
     task["status"] = "rejected"
     _state.app.confirmed_or_rejected.add(task_id)
-    _state.app.save_review_cache()  # 持久化拒绝状态
+    try:
+        _state.app.save_review_cache()
+    except Exception as e:
+        task["status"] = previous_status
+        _state.app.confirmed_or_rejected.discard(task_id)
+        raise HTTPException(status_code=500, detail="拒绝状态保存失败，请重试") from e
     if os.path.exists(task["filepath"]):
         os.remove(task["filepath"])
     return {"message": "已拒绝，文档不入库"}
@@ -302,6 +335,8 @@ async def rerun_review(task_id: str):
             status_code=400,
             detail=f"任务已{task['status']}，无法重跑",
         )
+    if task["status"] in ("pending", "running", "paused"):
+        raise HTTPException(status_code=409, detail=f"任务正在{task['status']}，请先取消或等待完成")
 
     filepath = task.get("filepath", "")
     if not filepath or not os.path.exists(filepath):

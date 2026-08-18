@@ -15,10 +15,11 @@ from doc_parser import Document
 from doc_parser import parse as _raw_parse
 from loguru import logger as log
 
+from app.paths import cache_subdir
 from app.services.utils import compute_sha256
 
-# 默认缓存目录（~/.simple_rag/parse_cache/）
-_CACHE_DIR = os.path.join(os.path.expanduser("~"), ".simple_rag", "parse_cache")
+# 默认缓存目录（<root>/parse_cache/），root 解析见 app.paths
+_CACHE_DIR = cache_subdir("parse_cache")
 
 
 def _config_sig(config) -> str:

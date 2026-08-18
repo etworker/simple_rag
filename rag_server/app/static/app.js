@@ -88,7 +88,7 @@ function toggleKbSidebar(){
 // ============================================================
 // 知识库管理 — 状态
 // ============================================================
-let docMap={}, fileHashToName={}, reviewResult=null, reviewTaskId=null, newDocFile=null, newDocHash='', activeFileName=null;
+let docMap={}, fileHashToName={}, docRefToId={}, reviewResult=null, reviewTaskId=null, newDocFile=null, newDocHash='', activeFileName=null;
 let currentDoc=null, currentPage=1, totalPages=1;
 
 // 自定义确认对话框（是/否），返回 Promise<boolean>
@@ -120,6 +120,7 @@ async function refreshDocList(){
     const data=await res.json();
     docMap={};
     fileHashToName={};
+    docRefToId={};
     const el=document.getElementById('docList');
     let pendingHtml='', ingestedHtml='';
 // 待审核文档（放上面）
@@ -137,7 +138,7 @@ pendingHtml=`<div class="doc-list-title" style="color:var(--warn);">待审核</d
         ingestedHtml='<div class="doc-list-title">已入库文档</div><div style="color:#aaa;padding:12px;font-size:12px;">请上传第一份文档</div>';
     } else {
         ingestedHtml='<div class="doc-list-title">已入库文档</div>';
-data.documents.forEach((d,i)=>{const id='B'+(i+1);const hashShort=d.file_hash?d.file_hash.slice(-8).toUpperCase():'';const docId=d.doc_id||d.filename;docMap[docId]=id;docMap[d.filename]=id;if(d.file_hash)fileHashToName[d.file_hash]=d.filename;const cls=(currentDoc===docId||currentDoc===d.filename)?'doc-item active':'doc-item';const pg=d.page_count||kbTotalPagesCache[d.filename]||'';const stats=[];if(pg)stats.push(pg+'页');if(d.char_count)stats.push(d.char_count+'字');if(d.paragraph_count)stats.push(d.paragraph_count+'段');if(d.table_count)stats.push(d.table_count+'表');if(d.added_at){const dt=new Date(d.added_at);const pad=n=>String(n).padStart(2,'0');stats.push((dt.getMonth()+1)+'/'+pad(dt.getDate())+' '+pad(dt.getHours())+':'+pad(dt.getMinutes()));}const verTag=(d.label||d.version)?`<span class="doc-label-tag" onclick="event.stopPropagation();editDocLabel('${escA(d.doc_id||'')}')" title="点击修改补充描述" style="cursor:pointer;">${esc(d.label||d.version)} ✎</span>`:'';const displayName=hashShort?`${esc(d.filename)}<span style="color:var(--text3);font-size:10px;"> [${hashShort}]</span>${verTag}`:esc(d.filename);ingestedHtml+=`<div class="${cls}" data-filename="${escA(d.filename)}" data-hash="${escA(d.file_hash||'')}" onclick="selectDoc('${escA(docId)}')" title="${escA(d.filename)} [${hashShort}]"><span class="id">${id}</span><div class="info"><div class="name">${displayName}</div>${stats.length?'<div class="stats">'+stats.join(' · ')+'</div>':''}</div><span class="del-btn" onclick="event.stopPropagation();removeDoc('${escA(docId)}')">🗑️</span></div>`;});
+data.documents.forEach((d,i)=>{const id='B'+(i+1);const hashShort=d.file_hash?d.file_hash.slice(-8).toUpperCase():'';const docId=d.doc_id||d.filename;docMap[docId]=id;docMap[d.filename]=id;docRefToId[docId]=docId;docRefToId[d.filename]=docId;if(d.file_hash){fileHashToName[d.file_hash]=d.filename;docRefToId[d.file_hash]=docId;docRefToId[d.file_hash+'.pdf']=docId;}const cls=(currentDoc===docId||currentDoc===d.filename)?'doc-item active':'doc-item';const pg=d.page_count||kbTotalPagesCache[d.filename]||'';const stats=[];if(pg)stats.push(pg+'页');if(d.char_count)stats.push(d.char_count+'字');if(d.paragraph_count)stats.push(d.paragraph_count+'段');if(d.table_count)stats.push(d.table_count+'表');if(d.added_at){const dt=new Date(d.added_at);const pad=n=>String(n).padStart(2,'0');stats.push((dt.getMonth()+1)+'/'+pad(dt.getDate())+' '+pad(dt.getHours())+':'+pad(dt.getMinutes()));}const verTag=(d.label||d.version)?`<span class="doc-label-tag" onclick="event.stopPropagation();editDocLabel('${escA(d.doc_id||'')}')" title="点击修改补充描述" style="cursor:pointer;">${esc(d.label||d.version)} ✎</span>`:'';const displayName=hashShort?`${esc(d.filename)}<span style="color:var(--text3);font-size:10px;"> [${hashShort}]</span>${verTag}`:esc(d.filename);ingestedHtml+=`<div class="${cls}" data-filename="${escA(d.filename)}" data-hash="${escA(d.file_hash||'')}" onclick="selectDoc('${escA(docId)}')" title="${escA(d.filename)} [${hashShort}]"><span class="id">${id}</span><div class="info"><div class="name">${displayName}</div>${stats.length?'<div class="stats">'+stats.join(' · ')+'</div>':''}</div><span class="del-btn" onclick="event.stopPropagation();removeDoc('${escA(docId)}')">🗑️</span></div>`;});
     }
     el.innerHTML=pendingHtml+ingestedHtml;
 }
@@ -537,6 +538,11 @@ window.__uploadLabel=labelVal===null?'':labelVal;
 reviewResult=null;reviewTaskId=null;
 const oldBtn=document.getElementById('reviewBtn');if(oldBtn){oldBtn.classList.remove('show');oldBtn.textContent='';}
 const oldPanel=document.getElementById('reviewPanel');if(oldPanel)oldPanel.classList.remove('active');
+// 新一轮审核复用固定的操作栏；上一轮确认入库会暂时禁用按钮，必须在新任务开始前恢复。
+const reviewOkBtn=document.querySelector('.review-actions .btn-ok');
+const reviewNoBtn=document.querySelector('.review-actions .btn-no');
+if(reviewOkBtn){reviewOkBtn.disabled=false;reviewOkBtn.textContent='确认入库';}
+if(reviewNoBtn)reviewNoBtn.disabled=false;
 newDocFile=file.name;newDocHash='';activeFileName=file.name;
 uploadZone.classList.add('disabled');
 document.getElementById('stepArea').classList.add('show');
@@ -767,7 +773,7 @@ if(groups.length>0){
                 groupsHtml+='<div style="padding:8px;color:var(--text3);font-size:11px;">未发现矛盾</div>';
             }
             incons.forEach((inc,ci)=>{
-                groupsHtml+=`<div class="conflict-item" style="cursor:pointer;" onclick="showGroupConflict(${gi},${ci})">`;
+                groupsHtml+=`<div class="conflict-item" data-gi="${gi}" data-ci="${ci}" style="cursor:pointer;" onclick="showGroupConflict(${gi},${ci})">`;
                 groupsHtml+=`<div class="title">${esc(inc.point||'内容差异')}</div>`;
                 groupsHtml+=`<div class="desc"><span style="color:var(--primary);">新:</span> ${esc((inc.doc_a_says||'').slice(0,100))}`;
                 groupsHtml+=`<br><span style="color:var(--warn);">旧:</span> ${esc((inc.doc_b_says||'').slice(0,100))}</div>`;
@@ -1090,7 +1096,27 @@ function resolveFileName(fileRef){
     return fileRef.replace(/\.[^.]+$/,'').slice(0,14);
 }
 
+function showGroupConflict(gi,ci){
+    const g=reviewResult?.compare_groups?.[gi];
+    const c=g?.inconsistencies?.[ci];
+    if(!c)return;
+    window.__conflictGroupIdx=gi;
+    window.__conflictIdx=ci;
+    document.querySelectorAll('.conflict-item').forEach(el=>el.classList.toggle('selected',Number(el.dataset.gi)===gi&&Number(el.dataset.ci)===ci));
+    document.getElementById('conflictList').classList.add('collapsed');
+    const panel=document.getElementById('comparePanel');
+    panel.classList.add('show');
+    const bFile=resolveFileName(c.doc_b?.file||c.doc_b_file||'')||'?';
+    const tabsEl=document.getElementById('cmpTabs');
+    tabsEl.innerHTML=`<button id="cmpTabA" class="active" onclick="compareShowTab('a')">N 新文档</button>`;
+    tabsEl.innerHTML+=`<button id="cmpTabB" onclick="compareShowTab('b')">${esc(bFile)} 已有文档</button>`;
+    tabsEl.innerHTML+=`<span class="compare-close" onclick="closeCompare()" title="返回列表" style="margin-left:auto;cursor:pointer;color:var(--text3);font-size:12px;display:flex;align-items:center;gap:3px;"><span style="font-size:14px;">⟵</span> 返回列表</span>`;
+    compareShowTab('a');
+}
+
 function selectConflict(idx){
+window.__conflictGroupIdx=-1;
+window.__conflictIdx=idx;
 document.querySelectorAll('.conflict-item').forEach((el,i)=>el.classList.toggle('selected',i===idx));
 document.getElementById('conflictList').classList.add('collapsed');
 const c=reviewResult.inconsistencies[idx];
@@ -1132,8 +1158,9 @@ function diffMark(textA, textB, side){
 
 function compareShowTab(side){
 const items=document.querySelectorAll('.conflict-item');
+const gi=Number(window.__conflictGroupIdx),ci=Number(window.__conflictIdx);
 const idx=Array.from(items).findIndex(el=>el.classList.contains('selected'));
-const c=reviewResult.inconsistencies[idx<0?0:idx];
+const c=(Number.isInteger(gi)&&gi>=0)?reviewResult?.compare_groups?.[gi]?.inconsistencies?.[ci]:reviewResult.inconsistencies[idx<0?0:idx];
 if(!c)return;
 
 // 更新 tab 按钮高亮
@@ -1170,9 +1197,10 @@ if(side==='a'){
     imgUrl = `/api/documents/review/page?task_id=${reviewTaskId}&page=`;
 } else {
     // B 侧 → 已有文档（在知识库中），使用 documents/page API
-    const bFile = resolveFileName(c.doc_b?.file||c.doc_b_file||'') || '';
+    const bRef = c.doc_b?.file||c.doc_b_file||'';
+    const bFile = resolveFileName(bRef) || '';
     if(bFile){
-        const fullName = Object.keys(docMap).find(k=>docMap[k]===bFile) || bFile;
+        const fullName = docRefToId[bRef] || docRefToId[bFile] || Object.keys(docMap).find(k=>docMap[k]===bFile&&k.includes('#')) || bFile;
         imgUrl = `/api/documents/page?name=${encodeURIComponent(fullName)}&page=`;
     } else {
         body.innerHTML=`<div style="color:#aaa;padding:20px;text-align:center;">${textDiffHtml}<br>⚠️ 旧文档信息缺失，无法定位预览</div>`;
@@ -1954,7 +1982,12 @@ async function saveSettings(){
   try{
     const res=await fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(updates)});
     if(!res.ok){const e=await res.json();st.textContent='保存失败: '+(e.detail||res.status);return;}
-    st.textContent='✅ 已保存';
+    const data=await res.json();
+    const notes=[data.message||'配置已更新'];
+    if(data.reset_knowledge_base_required){
+      notes.push('Embedding 配置已变化；重启后请重置知识库并重新入库。');
+    }
+    st.textContent=(data.restart_required?'⚠️ ':'✅ ')+notes.join(' ');
     _settingsConfig=null; // 下次进入页面时重新加载
   }catch(e){
     st.textContent='保存失败: '+e.message;

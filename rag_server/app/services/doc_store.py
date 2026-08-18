@@ -18,6 +18,7 @@ from doc_parser import Paragraph
 from loguru import logger as log
 from version_diff.vectorstore import VectorStore
 
+from app.paths import cache_subdir, resolve_cache_root
 from app.services.parse_cache import cached_parse as parse
 from app.services.utils import compute_sha256, get_pdf_page_count
 
@@ -75,17 +76,16 @@ class DocStore:
 
         self._retriever = FaissRetriever()
 
-        # 持久化目录（默认 ~/.simple_rag/doc_store/）
-        self._persist_dir = config.get("persist_dir") or os.path.join(
-            os.path.expanduser("~"), ".simple_rag", "doc_store"
-        )
+        # 缓存根目录：总配置 cache.base_dir > 默认 ~/.simple_rag
+        _cache_base = resolve_cache_root((config or {}).get("cache", {}).get("base_dir"))
+
+        # 持久化目录（默认 <root>/doc_store/）
+        self._persist_dir = config.get("persist_dir") or cache_subdir("doc_store", _cache_base)
         os.makedirs(self._persist_dir, exist_ok=True)
         self._load_from_disk()
 
-        # 解析缓存目录（默认 ~/.simple_rag/parse_cache/）
-        self._parse_cache_dir = config.get("parse_cache_dir") or os.path.join(
-            os.path.expanduser("~"), ".simple_rag", "parse_cache"
-        )
+        # 解析缓存目录（默认 <root>/parse_cache/）
+        self._parse_cache_dir = config.get("parse_cache_dir") or cache_subdir("parse_cache", _cache_base)
         os.makedirs(self._parse_cache_dir, exist_ok=True)
 
         # 向量缓存（复用 version_diff 的 VectorStore，避免重复计算 embedding）
@@ -95,7 +95,7 @@ class DocStore:
         #   导致入库时缓存未命中、重新计算全部 embedding。
         #   doc_store 的 config 来自 config_store.to_dict()，embedding 段不含
         #   parse_config，这里按 build_parse_config 同构逻辑注入后参与哈希。
-        vector_cache_dir = config.get("vector_cache_dir", "")
+        vector_cache_dir = config.get("vector_cache_dir") or cache_subdir("vector_cache", _cache_base)
         _emb_cfg = dict(config.get("embedding", {}))
         _pre_review = config.get("pre_review") or {}
         _parse_backend = _pre_review.get("parse_backend", "auto")
@@ -111,7 +111,7 @@ class DocStore:
         cfg_hash = VectorStore.compute_config_hash(_emb_cfg.get("parse_config", {}), _emb_cfg)
         self._vector_store = VectorStore(cache_dir=vector_cache_dir, config_hash=cfg_hash)
 
-        # 解析配置（与预审核一致：pre_review.parse_backend，默认 docling）。
+        # 解析配置（与预审核一致：pre_review.parse_backend，默认 auto）。
         # 入库（confirm）时复用同一解析配置，命中预审核阶段的 parse_cache，
         # 避免走 auto(PyMuPDF) 重新解析且缓存签名不匹配。
         pre_review = config.get("pre_review") or {}
@@ -231,14 +231,25 @@ class DocStore:
         )
         self._documents[doc_id] = meta
         log.info(f"已入库: {doc.filename}")
-        self._save_to_disk()
+        try:
+            self._save_to_disk()
+        except Exception:
+            # 保存失败时回滚本次内存追加，避免 API 报错但当前进程仍显示已入库。
+            self._documents.pop(doc_id, None)
+            keep_mask = np.zeros(len(self._paragraphs), dtype=bool)
+            keep_mask[:start_idx] = True
+            self._paragraphs = self._paragraphs[:start_idx]
+            self._retriever.remove(keep_mask)
+            raise
         return meta
 
     def remove_document(self, doc_id: str) -> bool:
         """从库中移除文档（按 doc_id）"""
         if doc_id not in self._documents:
-            # 兼容：尝试用 filename 匹配
-            matches = [k for k, v in self._documents.items() if v.filename == doc_id]
+            # 兼容 filename：优先移除最新的 active 同名文档。
+            matches = [
+                k for k, v in reversed(list(self._documents.items())) if v.filename == doc_id and v.status == "active"
+            ]
             if not matches:
                 return False
             doc_id = matches[0]
@@ -246,7 +257,8 @@ class DocStore:
         # 找到该文档段落的范围
         indices_to_remove = [i for i, p in enumerate(self._paragraphs) if p.source_file == doc_id]
         if not indices_to_remove:
-            del self._documents[doc_id]
+            self._documents[doc_id].status = "deleted"
+            self._save_to_disk()
             return True
 
         # 移除段落和 embedding
@@ -330,15 +342,18 @@ class DocStore:
         docs.sort(key=lambda d: d.added_at)
         return docs
 
+    def get_latest_document_by_filename(self, filename: str) -> DocMeta | None:
+        """返回最新插入的 active 同名文档。"""
+        for meta in reversed(list(self._documents.values())):
+            if meta.filename == filename and meta.status == "active":
+                return meta
+        return None
+
     def get_document(self, doc_id: str) -> DocMeta | None:
-        """获取文档元数据（按 doc_id 或 filename）"""
+        """获取文档元数据；doc_id 精确匹配，filename 返回最新 active 版本。"""
         if doc_id in self._documents:
             return self._documents[doc_id]
-        # 兼容：尝试用 filename 匹配
-        for _k, v in self._documents.items():
-            if v.filename == doc_id:
-                return v
-        return None
+        return self.get_latest_document_by_filename(doc_id)
 
     def update_label(self, doc_id: str, label: str) -> bool:
         """更新文档的补充描述（label/tag）。"""
@@ -363,26 +378,32 @@ class DocStore:
     # ============================================================
 
     def _save_to_disk(self):
-        """将元数据、段落、embeddings 保存到磁盘"""
+        """将元数据、段落和向量索引保存到磁盘；失败时向调用方抛出。"""
+        os.makedirs(self._persist_dir, exist_ok=True)
+        meta_path = os.path.join(self._persist_dir, "documents.json")
+        paras_path = os.path.join(self._persist_dir, "paragraphs.json")
+        meta_tmp = f"{meta_path}.tmp"
+        paras_tmp = f"{paras_path}.tmp"
         try:
-            # 1. 元数据
-            meta_path = os.path.join(self._persist_dir, "documents.json")
             meta_list = {k: asdict(v) for k, v in self._documents.items()}
-            with open(meta_path, "w", encoding="utf-8") as f:
+            with open(meta_tmp, "w", encoding="utf-8") as f:
                 json.dump(meta_list, f, ensure_ascii=False, indent=2)
 
-            # 2. 段落（序列化为 JSON）
-            paras_path = os.path.join(self._persist_dir, "paragraphs.json")
             paras_data = [p.to_dict() for p in self._paragraphs]
-            with open(paras_path, "w", encoding="utf-8") as f:
+            with open(paras_tmp, "w", encoding="utf-8") as f:
                 json.dump(paras_data, f, ensure_ascii=False)
 
-            # 3. 向量索引（交给 Retriever 持久化）
+            # 每个文件均先写临时文件再替换，避免进程中断留下截断 JSON。
+            os.replace(meta_tmp, meta_path)
+            os.replace(paras_tmp, paras_path)
             self._retriever.save(self._persist_dir)
-
             log.info(f"持久化完成: {len(self._documents)} 文档, {len(self._paragraphs)} 段落")
         except Exception as e:
+            for tmp_path in (meta_tmp, paras_tmp):
+                if os.path.exists(tmp_path):
+                    os.remove(tmp_path)
             log.error(f"持久化失败: {e}", exc_info=True)
+            raise
 
     def _load_from_disk(self):
         """从磁盘恢复状态"""

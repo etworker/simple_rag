@@ -7,6 +7,7 @@
 
 import asyncio
 import copy
+import hashlib
 import json
 import os
 import time
@@ -15,6 +16,8 @@ from loguru import logger as log
 
 from app.routes import _state
 from app.services.utils import compute_sha256
+
+_REVIEW_CACHE_VERSION = 2
 
 
 def load_existing_docs(engine):
@@ -42,16 +45,54 @@ def load_existing_docs(engine):
 
 
 def _compute_doc_signature() -> str:
-    """计算已有文档库的签名（用于预审核结果缓存失效判断）"""
-    doc_names = sorted(d.filename for d in _state.app.doc_store.list_documents())
-    return "|".join(doc_names) + f"|{_state.app.doc_store.total_paragraphs}"
+    """计算知识库内容与全部有效审核输入的稳定签名。"""
+    documents = sorted(
+        ({"doc_id": d.doc_id, "file_hash": d.file_hash} for d in _state.app.doc_store.list_documents()),
+        key=lambda item: item["doc_id"],
+    )
+    llm = _state.app.config.get_llm_profile("pre_review")
+    llm_without_secrets = {
+        key: value
+        for key, value in llm.items()
+        if key not in {"api_key", "api_key_env", "access_key", "secret_key", "token"}
+    }
+    parse_qa = _state.app.config.get_section("parse_qa")
+    parse_qa_llm_without_secrets = {}
+    if parse_qa.get("enabled", False):
+        parse_qa_llm = _state.app.config.get_llm_profile(parse_qa.get("llm_profile", "pre_review"))
+        parse_qa_llm_without_secrets = {
+            key: value
+            for key, value in parse_qa_llm.items()
+            if key not in {"api_key", "api_key_env", "access_key", "secret_key", "token"}
+        }
+    judge = _state.app.config.get_section("judge")
+    prompt_file = judge.get("prompt_file", "")
+    if prompt_file:
+        try:
+            with open(prompt_file, "rb") as prompt_stream:
+                judge["prompt_file_sha256"] = hashlib.sha256(prompt_stream.read()).hexdigest()
+        except OSError:
+            judge["prompt_file_sha256"] = "missing"
+    payload = {
+        "cache_version": _REVIEW_CACHE_VERSION,
+        "documents": documents,
+        "embedding": _state.app.config.get_section("embedding"),
+        "pre_review": _state.app.config.get_section("pre_review"),
+        "parse_cleanup": _state.app.config.get_section("parse_cleanup"),
+        "parse_qa": parse_qa,
+        "parse_qa_llm": parse_qa_llm_without_secrets,
+        "judge": judge,
+        "llm": llm_without_secrets,
+    }
+    encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
 def _build_engine_config() -> dict:
     """构造 DiffEngine 配置（embedding / llm / diff / judge / cache）
 
-    解析后端：pre_review.parse_backend（默认 docling——准确度最高，GPU 加速；
-    docling_device 控制推理设备）。embedding 段注入 parse_config（带 extract 包装，
+    解析后端：pre_review.parse_backend（默认 auto，按文档特征选择；
+    docling_device 控制 Docling 推理设备）。embedding 段注入 parse_config（带 extract 包装，
     与 doc_parser.get_extract_config 契约一致）供 engine/新文档解析使用。
     """
     embedding = _state.app.config.get_section("embedding")
@@ -91,19 +132,9 @@ def build_parse_config(pre_review: dict) -> dict:
 
 
 def _run_version_compare(engine, old_version_filepath: str, new_filepath: str, on_progress=None) -> dict:
-    """若提供旧版本文档，执行版本对比并返回变更列表（失败返回空结果）
-
-    Args:
-        on_progress: 进度回调（透传给 engine.version_compare，步骤:
-            parsing/embedding/diffing/filtering/done），使前端进度列表与实际执行一致。
-
-    返回: {
-        "changes": [...],         # 实质性变更
-        "minor_changes": [...],   # 被过滤的细微变更（跟踪表 / 修订日期等）
-    }
-    """
+    """执行版本对比；失败时抛出异常，禁止把未完成误报为无差异。"""
     if not old_version_filepath or not os.path.exists(old_version_filepath):
-        return {"changes": [], "minor_changes": []}
+        raise FileNotFoundError(f"旧版本文件不存在: {old_version_filepath}")
     log.info(f"检测到旧版本文档，启动版本对比: {old_version_filepath}")
 
     def _serialize(change) -> dict:
@@ -120,22 +151,15 @@ def _run_version_compare(engine, old_version_filepath: str, new_filepath: str, o
             "similarity": change.similarity,
         }
 
-    version_changes = []
-    minor_changes = []
-    try:
-        version_result = engine.version_compare(old_version_filepath, new_filepath, on_progress=on_progress)
-        for change in version_result.changes:
-            version_changes.append(_serialize(change))
-        for change in version_result.minor_changes:
-            minor_changes.append(_serialize(change))
-        log.info(
-            f"版本对比完成: {len(version_changes)} 实质性 + {len(minor_changes)} 细微变更 "
-            f"(modified={sum(1 for c in version_changes if c['type'] == 'modified')}, "
-            f"added={sum(1 for c in version_changes if c['type'] == 'added')}, "
-            f"removed={sum(1 for c in version_changes if c['type'] == 'removed')})"
-        )
-    except Exception as e:
-        log.error(f"版本对比失败: {e}", exc_info=True)
+    version_result = engine.version_compare(old_version_filepath, new_filepath, on_progress=on_progress)
+    version_changes = [_serialize(change) for change in version_result.changes]
+    minor_changes = [_serialize(change) for change in version_result.minor_changes]
+    log.info(
+        f"版本对比完成: {len(version_changes)} 实质性 + {len(minor_changes)} 细微变更 "
+        f"(modified={sum(1 for c in version_changes if c['type'] == 'modified')}, "
+        f"added={sum(1 for c in version_changes if c['type'] == 'added')}, "
+        f"removed={sum(1 for c in version_changes if c['type'] == 'removed')})"
+    )
     return {"changes": version_changes, "minor_changes": minor_changes}
 
 
@@ -197,13 +221,15 @@ def _run_multi_compare(
 
     # 1. 快速相似度排序（渐进式披露：最接近的先对比）
     scored = []
+    scoring_errors = {}
     for idx, doc_meta in enumerate(doc_list):
         if task["status"] == "cancelled":
             break
         try:
             sim = engine.document_similarity(new_filepath, doc_meta.filepath)
         except Exception as e:
-            log.warning(f"相似度评估失败 {doc_meta.filename}: {e}")
+            log.error(f"相似度评估失败 {doc_meta.filename}: {e}", exc_info=True)
+            scoring_errors[doc_meta.doc_id] = str(e)[:200]
             sim = 0.0
         scored.append((sim, doc_meta))
         if on_progress:
@@ -232,6 +258,17 @@ def _run_multi_compare(
             "status": "running",
         }
         groups.append(group)
+
+        if doc_meta.doc_id in scoring_errors:
+            group["status"] = "error"
+            group["error"] = f"文档相似度评估失败: {scoring_errors[doc_meta.doc_id]}"
+            if on_progress:
+                on_progress(
+                    "group_done",
+                    0.2 + 0.7 * (i + 1) / max(1, total),
+                    f"跳过 {doc_meta.filename}：相似度评估失败",
+                )
+            continue
 
         step_label = "版本差异对比" if is_version else "内容一致性检查"
         if on_progress:
@@ -295,15 +332,24 @@ async def run_pre_review(task_id: str):
                 cached = json.load(_f)
             doc_sig = _compute_doc_signature()
             cache_doc_sig = cached.get("doc_signature", "")
-            if cache_doc_sig != doc_sig:
-                log.info(f"📦 缓存已过期（库文档变化），重新执行预审核: {task['filename']}")
+            cache_valid = (
+                cached.get("cache_version") == _REVIEW_CACHE_VERSION
+                and cache_doc_sig == doc_sig
+                and not cached.get("result", {}).get("incomplete", False)
+                and not cached.get("result", {}).get("parse_qa", {}).get("incomplete", False)
+            )
+            if not cache_valid:
+                log.info(f"预审核缓存已过期（文档、配置或算法变化），重新执行: {task['filename']}")
             else:
                 log.info(f"📦 命中预审核结果缓存: {task['filename']} (SHA256={file_md5[-8:].upper()})")
                 task["status"] = "done"
                 task["progress"] = 100
                 task["current_step"] = "预审核完成（使用缓存）"
                 task["result"] = copy.deepcopy(cached.get("result"))
+                task["result"]["new_filename"] = task["filename"]
                 task["parsed_paragraphs"] = copy.deepcopy(cached.get("parsed_paragraphs", []))
+                for paragraph in task["parsed_paragraphs"]:
+                    paragraph["source_file"] = task["filename"]
                 task["all_steps"] = [
                     {"id": "cache", "label": "读取预审核缓存"},
                     {"id": "done", "label": "完成"},
@@ -317,6 +363,8 @@ async def run_pre_review(task_id: str):
             log.warning(f"预审核缓存加载失败，重新执行: {e}")
 
     # ====== 2. 慢速路径：完整预审核流程 ======
+    parse_qa_cfg = _state.app.config.get_section("parse_qa") if _state.app and _state.app.config else {}
+    parse_qa_enabled = bool(parse_qa_cfg.get("enabled", False))
     # 步骤列表在加载已有文档后按需调整（空知识库时跳过检索/差异/判定）
     all_steps = [
         {"id": "model", "label": "加载向量模型"},
@@ -401,13 +449,17 @@ async def run_pre_review(task_id: str):
                     {"id": "done", "label": "汇总结果"},
                 ]
                 log.info("知识库为空，跳过跨文档检索/差异/判定步骤")
+        if parse_qa_enabled:
+            parsing_step = next((idx for idx, step in enumerate(all_steps) if step["id"] == "parsing"), None)
+            if parsing_step is not None:
+                all_steps.insert(parsing_step + 1, {"id": "parse_qa", "label": "解析质量检查"})
         task["all_steps"] = all_steps
 
         from app.services.parse_cache import cached_parse as _parse
 
         log.info(f"开始解析新文档: {task['filename']}")
         parse_cache_dir = os.path.join(_state.app.cache_dir, "parse_cache")
-        # 解析配置与 version_compare 一致（pre_review.parse_backend，默认 docling）
+        # 解析配置与 version_compare 一致（pre_review.parse_backend，默认 auto）
         parse_config = build_parse_config(_state.app.config.get_section("pre_review"))
         # 进度推送：解析开始/完成都通知，避免左侧进度滞后于日志（解析期间 active）
         on_progress("parsing", 0.15, f"解析文档（{parse_config['extract'].get('backend', 'auto')}）...")
@@ -423,7 +475,31 @@ async def run_pre_review(task_id: str):
             new_doc = await asyncio.to_thread(
                 clean_headers, new_doc, {**cleanup_cfg, "config_path": _state.app.config._config_path}
             )
-        on_progress("parsing", 0.25, f"解析完成: {len(new_doc.paragraphs)} 段")
+
+        if parse_qa_enabled:
+            on_progress("parse_qa", 0.26, "检查解析结果质量...")
+            try:
+                from app.services.parse_qa import review_document_parse_quality
+
+                llm_profile = parse_qa_cfg.get("llm_profile", "pre_review")
+                llm_config = _state.app.config.get_llm_profile(llm_profile)
+                qa_report = await asyncio.to_thread(
+                    review_document_parse_quality,
+                    new_doc,
+                    llm_config,
+                    parse_qa_cfg,
+                )
+            except Exception as exc:
+                # QA 是旁路能力：配置或 LLM 异常不能阻断原有预审核，保留规则报告并标记不完整。
+                from doc_parser.qa import inspect_document
+
+                log.warning("解析质量检查失败，保留规则报告并标记 incomplete: {}", exc)
+                qa_report = inspect_document(new_doc, parse_qa_cfg)
+                qa_report.incomplete = True
+            task["parse_qa"] = qa_report.to_dict(include_markdown=False)
+            on_progress("parse_qa", 0.30, f"解析质量检查完成: {qa_report.status}")
+
+        on_progress("parsing", 0.30, f"解析完成: {len(new_doc.paragraphs)} 段")
         log.info(f"新文档解析完成: {len(new_doc.paragraphs)} 段落")
         # ★ 用 task["filename"]（原始上传名）作为 source_file，
         #   确保前端 /review/paragraphs?file=原名 能匹配到段落
@@ -507,58 +583,61 @@ async def run_pre_review(task_id: str):
         n_issue = sum(
             1 for g in compare_groups if len(g.get("version_changes", [])) > 0 or len(g.get("inconsistencies", [])) > 0
         )
+        n_error = sum(1 for g in compare_groups if g.get("status") == "error")
         cancelled = task.get("status") == "cancelled"
+        incomplete = n_error > 0
         task["progress"] = 100 if not cancelled else task.get("progress", 0)
-        task["current_step"] = "已取消" if cancelled else "预审核完成"
-        task["status"] = "cancelled" if cancelled else "done"
+        if cancelled:
+            task["current_step"] = "已取消"
+            task["status"] = "cancelled"
+            message = "已取消"
+        elif incomplete:
+            task["current_step"] = f"预审核未完成：{n_error} 组比较失败"
+            task["status"] = "error"
+            message = f"有 {n_error} 组比较失败，不能判定为安全，请修复后重跑"
+        else:
+            task["current_step"] = "预审核完成"
+            task["status"] = "done"
+            message = "无矛盾，可安全入库" if n_issue == 0 else f"发现 {n_issue} 组存在差异/矛盾"
+
         task["result"] = {
-            "phase": "done",
-            "is_safe": n_issue == 0,
+            "phase": "error" if incomplete else "done",
+            "is_safe": not incomplete and n_issue == 0,
+            "incomplete": incomplete,
             "new_filename": task["filename"],
             "compare_groups": compare_groups,
             "compare_total": len(compare_groups),
-            "compare_done": len(compare_groups),
+            "compare_done": sum(1 for g in compare_groups if g.get("status") == "done"),
             "n_version_groups": n_version,
             "n_conflict_groups": n_conflict,
             "n_issue_groups": n_issue,
-            "message": (
-                "已取消" if cancelled else ("无矛盾，可安全入库" if n_issue == 0 else f"发现 {n_issue} 组存在差异/矛盾")
-            ),
+            "n_error_groups": n_error,
+            "message": message,
             "kb_empty": kb_empty,
             "cancelled": cancelled,
+            "parse_qa": task.get("parse_qa"),
         }
         _state.app.save_review_cache()
 
-        try:
-            doc_sig = _compute_doc_signature()
-            cache_data = {
-                "result": task["result"],
-                "parsed_paragraphs": task.get("parsed_paragraphs", []),
-                "filename": task["filename"],
-                "cached_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-                "doc_signature": doc_sig,
-            }
-            with open(cached_result_path, "w", encoding="utf-8") as _f:
-                json.dump(cache_data, _f, ensure_ascii=False)
-            log.info(f"💾 已缓存预审核结果: {task['filename']} (SHA256={file_md5[-8:].upper()})")
-        except Exception as e:
-            log.warning(f"预审核结果缓存写入失败: {e}")
-
-        # 写入预审核结果缓存
-        try:
-            doc_sig = _compute_doc_signature()
-            cache_data = {
-                "result": task["result"],
-                "parsed_paragraphs": task.get("parsed_paragraphs", []),
-                "filename": task["filename"],
-                "cached_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-                "doc_signature": doc_sig,
-            }
-            with open(cached_result_path, "w", encoding="utf-8") as _f:
-                json.dump(cache_data, _f, ensure_ascii=False)
-            log.info(f"💾 已缓存预审核结果: {task['filename']} (SHA256={file_md5[-8:].upper()})")
-        except Exception as e:
-            log.warning(f"预审核结果缓存写入失败: {e}")
+        # 只缓存完整成功的审核结果；错误或取消结果必须重新计算。
+        if not cancelled and not incomplete:
+            try:
+                doc_sig = _compute_doc_signature()
+                cache_data = {
+                    "cache_version": _REVIEW_CACHE_VERSION,
+                    "result": task["result"],
+                    "parsed_paragraphs": task.get("parsed_paragraphs", []),
+                    "filename": task["filename"],
+                    "cached_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                    "doc_signature": doc_sig,
+                }
+                tmp_cache_path = f"{cached_result_path}.tmp"
+                with open(tmp_cache_path, "w", encoding="utf-8") as _f:
+                    json.dump(cache_data, _f, ensure_ascii=False)
+                os.replace(tmp_cache_path, cached_result_path)
+                log.info(f"已缓存预审核结果: {task['filename']} (SHA256={file_md5[-8:].upper()})")
+            except Exception as e:
+                log.warning(f"预审核结果缓存写入失败: {e}")
 
     except InterruptedError:
         log.info(f"预审核已取消: {task['filename']}")

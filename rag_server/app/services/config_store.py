@@ -16,19 +16,20 @@ from typing import Any
 
 # doc_parser 的默认解析配置（单一数据源，避免两处维护不一致）
 from doc_parser.parser import DEFAULT_CONFIG as _PARSER_DEFAULT_CONFIG
+from llm_chat.defaults import BEDROCK_API_KEY_ENV, DEFAULT_LLM_MODEL
 from loguru import logger as log
+from version_diff.paths import DEFAULT_EMBEDDING_MODEL
 
-# 默认缓存根目录
-_DEFAULT_CACHE_DIR = os.path.join(os.path.expanduser("~"), ".simple_rag")
+from app.paths import DEFAULT_CACHE_ROOT
 
 # 默认配置
 DEFAULT_CONFIG = {
     "cache": {
-        "base_dir": _DEFAULT_CACHE_DIR,
+        "base_dir": DEFAULT_CACHE_ROOT,  # 解析优先级见 app.paths.resolve_cache_root
         "upload_dir": "",  # 空=默认 ~/.simple_rag/uploads/
     },
     "embedding": {
-        "model": "BAAI/bge-small-zh-v1.5",
+        "model": DEFAULT_EMBEDDING_MODEL,
         "cache_dir": "",
         # device: "auto" / "cpu" / "cuda" / "cuda:0" / "mps"
         "device": "auto",
@@ -40,9 +41,9 @@ DEFAULT_CONFIG = {
     "llm_profiles": {
         "bedrock_glm_flash": {
             "provider": "bedrock",
-            "model": "zai.glm-4.7-flash",
+            "model": DEFAULT_LLM_MODEL,
             "region": "us-east-1",
-            "api_key_env": "AWS_BEARER_TOKEN_BEDROCK",
+            "api_key_env": BEDROCK_API_KEY_ENV,
             "max_tokens": 2048,
             "timeout": 120,
             "max_retries": 3,
@@ -55,6 +56,7 @@ DEFAULT_CONFIG = {
         "qa": "bedrock_glm_flash",
         "pre_review": "bedrock_glm_flash",
         "conflict_detection": "bedrock_glm_flash",
+        "parse_qa": "bedrock_glm_flash",
     },
     "retrieval": {
         "top_k": 5,
@@ -62,7 +64,18 @@ DEFAULT_CONFIG = {
     },
     "pre_review": {
         "similarity_threshold": 0.80,
+        "version_similarity_threshold": 0.90,
+        "parse_backend": "auto",
         "batch_size": 0,  # 0=按 context_window 自动计算
+    },
+    "parse_qa": {
+        "enabled": False,
+        # 默认复用预审核 LLM 路由；也可配置为 llm_routing 中的其他 use case。
+        "llm_profile": "pre_review",
+        "max_candidates": 20,
+        "batch_size": 10,
+        "max_retries": 2,
+        "retry_backoff": 1.0,
     },
     "judge": {
         "prompt_file": "",  # 空=用随包默认, 设路径则加载自定义 prompt
@@ -113,6 +126,7 @@ CONFIG_DESCRIPTIONS = {
     "retrieval.top_k": "检索时返回的最相关段落数量。增大可提高召回率但可能引入噪音。",
     "retrieval.similarity_threshold": "检索相似度下限。低于此分数的段落不会返回给用户。",
     "pre_review.similarity_threshold": "版本对比时的段落配对相似度阈值。只有向量相似度超过此值的段落对才会进入差异比较流程。",
+    "pre_review.version_similarity_threshold": "整篇文档相似度达到此阈值时走版本差异对比，否则走跨文档一致性检查。",
     "pre_review.batch_size": "版本对比时LLM批量调用大小。每批发送多少对差异给LLM判断。设为0表示根据模型上下文窗口自动计算。",
     "pre_review.parse_backend": "PDF 解析后端。auto=智能路由（扫描件→mineru，无框线表格→docling，数字文本→pymupdf）；pymupdf=快路径；docling=深度学习版面+表格（最准，GPU 加速）；mineru=中文扫描件 OCR；pdfplumber=轻量兜底。",
     "pre_review.docling_device": "docling 推理设备。auto=自动探测（有 GPU 用 cuda）；cuda=强制 GPU；cpu=强制 CPU。仅 parse_backend=docling 时生效。",
@@ -123,6 +137,13 @@ CONFIG_DESCRIPTIONS = {
     "llm_routing.qa": "问答场景使用的LLM配置名称。对应 llm_profiles 中的某个 profile key。",
     "llm_routing.pre_review": "版本对比/预审核场景使用的LLM配置名称。",
     "llm_routing.conflict_detection": "冲突检测场景使用的LLM配置名称。",
+    "llm_routing.parse_qa": "解析质量审查使用的LLM配置名称；当 parse_qa.llm_profile=parse_qa 时生效。",
+    "parse_qa.enabled": "解析结果质量检查开关。默认关闭；开启后在预审核解析完成后执行规则检查和有限的 LLM 审查，不修改原始解析缓存。",
+    "parse_qa.llm_profile": "解析质量 LLM 使用的路由 use case 名称。默认复用 pre_review，可配置为 llm_routing 中的其他路由。",
+    "parse_qa.max_candidates": "每份文档最多发送给 LLM 的解析质量候选数，避免将整份 Markdown 放入上下文。",
+    "parse_qa.batch_size": "解析质量 LLM 每批审查的候选数。",
+    "parse_qa.max_retries": "解析质量 LLM 单批调用失败时的最大重试次数。",
+    "parse_qa.retry_backoff": "解析质量 LLM 重试之间的等待秒数。",
     "chat.max_history": "对话历史保留轮数。超过此数量的历史消息会被截断，避免上下文过长。",
 }
 
@@ -132,6 +153,7 @@ class ConfigStore:
 
     def __init__(self, config_path: str | None = None):
         self._config = deepcopy(DEFAULT_CONFIG)
+        self._pending_config: dict | None = None
         self._config_path = config_path
         if config_path and os.path.exists(config_path):
             self.load(config_path)
@@ -195,20 +217,48 @@ class ConfigStore:
         return deepcopy(cfg)
 
     def to_dict(self) -> dict:
-        """导出完整配置"""
-        return deepcopy(self._config)
+        """导出磁盘目标配置；存在待重启更新时返回待生效值。"""
+        return deepcopy(self._pending_config or self._config)
+
+    def stage_updates(self, updates: dict) -> dict:
+        """原子保存待重启配置，但不修改当前进程正在使用的配置。"""
+        pending = deepcopy(self._pending_config or self._config)
+        self._deep_merge(pending, updates)
+        path = self._config_path
+        if not path:
+            raise ValueError("未配置配置文件路径")
+
+        tmp_path = f"{path}.tmp"
+        try:
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                json.dump(pending, f, ensure_ascii=False, indent=2)
+            os.replace(tmp_path, path)
+        except Exception:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+            raise
+        self._pending_config = pending
+        log.info(f"待重启配置已保存: {path}")
+        return deepcopy(pending)
 
     def update(self, updates: dict):
         """批量更新配置"""
         self._deep_merge(self._config, updates)
 
     def save(self, path: str | None = None):
-        """保存配置到文件"""
+        """原子保存配置到文件。"""
         path = path or self._config_path
         if path:
-            with open(path, "w", encoding="utf-8") as f:
-                json.dump(self._config, f, ensure_ascii=False, indent=2)
-            log.info(f"配置已保存: {path}")
+            tmp_path = f"{path}.tmp"
+            try:
+                with open(tmp_path, "w", encoding="utf-8") as f:
+                    json.dump(self._config, f, ensure_ascii=False, indent=2)
+                os.replace(tmp_path, path)
+                log.info(f"配置已保存: {path}")
+            except Exception:
+                if os.path.exists(tmp_path):
+                    os.remove(tmp_path)
+                raise
 
     def load(self, path: str):
         """从文件加载配置"""

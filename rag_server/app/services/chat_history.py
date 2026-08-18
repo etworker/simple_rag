@@ -147,8 +147,13 @@ class ChatHistoryStore:
 
     @staticmethod
     def _save_file(filepath: str, data: dict):
+        tmp_path = f"{filepath}.tmp"
         try:
-            with open(filepath, "w", encoding="utf-8") as f:
+            with open(tmp_path, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
+            os.replace(tmp_path, filepath)
         except Exception as e:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
             log.error(f"保存历史文件失败: {filepath}: {e}")
+            raise

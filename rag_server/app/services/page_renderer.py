@@ -11,6 +11,8 @@ import os
 
 from loguru import logger as log
 
+from app.paths import cache_subdir
+
 
 def _tolerant_search_rects(pg, highlight, min_len: int = 12):
     """忽略空白差异的文字定位（用于高亮）。
@@ -80,9 +82,9 @@ class PageRenderer:
     """
 
     def __init__(self, cache_dir: str = "", dpi: int = 150):
-        # 默认缓存目录（~/.simple_rag/page_cache/）
+        # 默认缓存目录（<root>/page_cache/），root 解析见 app.paths
         if not cache_dir:
-            cache_dir = os.path.join(os.path.expanduser("~"), ".simple_rag", "page_cache")
+            cache_dir = cache_subdir("page_cache")
         self._cache_dir = cache_dir
         self._dpi = dpi
         os.makedirs(cache_dir, exist_ok=True)
