@@ -13,7 +13,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
 import numpy as np
 from loguru import logger as log
@@ -47,40 +47,86 @@ class VectorStore:
         os.makedirs(self.cache_dir, exist_ok=True)
         self._config_hash = config_hash or self._default_config_hash()
 
-    def get_or_compute(self, filepath: str, paragraphs: list, model) -> tuple:
+    def get_or_compute(
+        self,
+        filepath: str,
+        paragraphs: list,
+        model,
+        *,
+        on_progress: Callable | None = None,
+        batch_size: int = 64,
+    ) -> tuple:
         """
-        获取文档的 embedding（优先读缓存）
+        获取文档的 embedding（优先读缓存）。
 
-        Args:
-            filepath: 文档路径（用于计算内容哈希）
-            paragraphs: Paragraph 对象列表
-            model: SentenceTransformer 模型实例
-
-        Returns:
-            (embeddings: np.ndarray, faiss_index: faiss.Index)
+        ``on_progress`` 是可选的 best-effort 回调，收到一个字典：
+        ``phase/status/completed/total/batch_index/batch_total/pct/cached``。
+        不影响原有三参数调用和二元返回值。
         """
         import faiss
 
+        def notify(status, completed, total, batch_index=0, batch_total=0, cached=False):
+            if on_progress is None:
+                return
+            event = {
+                "phase": "embedding",
+                "status": status,
+                "completed": int(completed),
+                "total": int(total),
+                "batch_index": int(batch_index),
+                "batch_total": int(batch_total),
+                "pct": round(100 * completed / max(1, total)),
+                "cached": bool(cached),
+            }
+            try:
+                on_progress(event)
+            except Exception as exc:
+                # 进度展示不能影响 embedding 主流程。
+                log.debug(f"embedding 进度回调失败（已忽略）: {exc}")
+
         if not paragraphs:
             log.info(f"  ⏭️ {filepath} 无段落，跳过嵌入计算")
+            notify("empty", 0, 0)
             return np.empty((0, 0), dtype=np.float32), None
 
+        total = len(paragraphs)
         cache_key = self._compute_cache_key(filepath, paragraphs)
         cached = self._load_cache(cache_key)
 
         if cached is not None:
             log.info(f"  💾 命中缓存 ({cache_key[:8]}...)，跳过 embedding 计算")
+            notify("cached", total, total, batch_index=0, batch_total=0, cached=True)
             return cached["embeddings"], cached["index"]
 
-        # 缓存未命中，计算 embedding
-        texts = [p.text for p in paragraphs]
-        log.info(f"  ⏳ 计算 {len(texts)} 段嵌入...")
-        embeddings = model.encode(texts, normalize_embeddings=True, show_progress_bar=False)
-        embeddings = np.array(embeddings, dtype=np.float32)
+        # 显式按批调用 encode，才能在模型计算期间产生可观测进度。
+        texts = [self.embedding_text(p) for p in paragraphs]
+        safe_batch_size = max(1, int(batch_size or 64))
+        batch_total = (total + safe_batch_size - 1) // safe_batch_size
+        log.info(f"  ⏳ 计算 {total} 段嵌入（{batch_total} 批，每批最多 {safe_batch_size} 段）...")
+        notify("running", 0, total, batch_index=0, batch_total=batch_total)
 
-        # 单句 encode 时 model 返回 (dim,) 而非 (1, dim)，统一升维避免下游 shape[1] 报错
-        if embeddings.ndim == 1:
-            embeddings = embeddings[np.newaxis, :]
+        embedding_batches = []
+        for batch_index, start in enumerate(range(0, total, safe_batch_size), start=1):
+            batch_texts = texts[start : start + safe_batch_size]
+            batch_embeddings = model.encode(
+                batch_texts,
+                normalize_embeddings=True,
+                show_progress_bar=False,
+            )
+            batch_array = np.asarray(batch_embeddings, dtype=np.float32)
+            if batch_array.ndim == 1:
+                batch_array = batch_array[np.newaxis, :]
+            embedding_batches.append(batch_array)
+            completed = min(start + len(batch_texts), total)
+            notify(
+                "done" if completed >= total else "running",
+                completed,
+                total,
+                batch_index=batch_index,
+                batch_total=batch_total,
+            )
+
+        embeddings = np.vstack(embedding_batches).astype(np.float32, copy=False)
 
         # 构建 FAISS index（内积，因为向量已归一化所以等价于余弦相似度）
         dim = embeddings.shape[1]
@@ -89,9 +135,20 @@ class VectorStore:
 
         # 写入缓存
         self._save_cache(cache_key, embeddings, index, paragraphs)
-        log.info(f"  💾 已缓存 ({cache_key[:8]}..., {len(texts)} 段, {dim}维)")
+        log.info(f"  💾 已缓存 ({cache_key[:8]}..., {total} 段, {dim}维)")
 
         return embeddings, index
+
+    @staticmethod
+    def embedding_text(paragraph) -> str:
+        """构造用于 embedding 的文本，不改变段落原文。"""
+        text = str(getattr(paragraph, "text", "") or "").strip()
+        chapter = str(getattr(paragraph, "chapter", "") or "").strip()
+        chapter_title = str(getattr(paragraph, "chapter_title", "") or "").strip()
+        heading = " / ".join(part for part in (chapter, chapter_title) if part)
+        if not heading:
+            return text
+        return f"章节：{heading}\n正文：{text}" if text else f"章节：{heading}"
 
     def search_similar(self, query_embeddings: np.ndarray, index: faiss.Index, top_k: int = 5):
         """
@@ -131,8 +188,8 @@ class VectorStore:
         - 解析配置变了（config.yaml 的 extract 段变化）
         - embedding 模型变了（config.yaml 的 embedding 段变化）
         """
-        # 文档内容哈希
-        content_str = "\n".join(p.text for p in paragraphs)
+        # 文档内容哈希：必须与实际 embedding 输入一致，章节元数据变化时缓存也失效。
+        content_str = "\n".join(self.embedding_text(p) for p in paragraphs)
         content_hash = hashlib.sha256(content_str.encode("utf-8")).hexdigest()[:12]
 
         return f"{content_hash}_{len(paragraphs)}_{self._config_hash}"
