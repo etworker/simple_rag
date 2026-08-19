@@ -124,21 +124,6 @@ uv run python examples/verify_version_diff.py <旧版.pdf> <新版.pdf> --model 
 
 ---
 
-## 近期迭代（2026-08-12 ~ 08-16）
-
-- **PDF 解析后端选型与新增 PyMuPDF 快路径**（08-16）：基于 opendataloader-bench（200 份真实 PDF）与中文真实文档实测，新增 doc_parser 的 **pymupdf** 后端（数字文本 PDF 秒级解析，实测比 pdfplumber 快约 2 倍；116 页手册 4.99s vs 9.75s）；select_backend auto 路由升级为：扫描件→MinerU、无框线表格→Docling（深度学习表格，TEDS 开源最强）、数字文本→PyMuPDF；详见 docs/PDF解析库对比与选型报告.md 与 temp/pdf_parsers_verification.md。
-- **GPU 全链路加速**（08-16，现已改为环境自适应）：安装脚本自动选择互斥的 CPU/GPU 运行时。NVIDIA GPU 使用 fastembed-gpu/onnxruntime-gpu；Linux 可使用 faiss-gpu，Windows 因无 Faiss GPU wheel 使用 faiss-cpu；CPU 环境使用 fastembed/onnxruntime/faiss-cpu。MinerU/Magika 在 GPU 环境仍可能通过依赖元数据引入 `onnxruntime` distribution，安装脚本会校验实际导入是否包含 `CUDAExecutionProvider`，不允许静默回退 CPU。
-- **默认解析后端切 auto**（08-17）：根据文档特征自动选择 PyMuPDF、Docling 或 MinerU；也可在配置中固定 `pdfplumber` 作为已验证的数字文本 PDF 稳定路径。
-- **解析质量与版本对比准确度**（08-16）：解析缓存（SHA256+配置签名，重复解析秒级）；docling 碎尾合并 + 页眉前缀剥离（168→0 段）；版本对比精确文本优先配对 + removed/added 二次配对（改写归为修改）+ removed×modified 吸收（半句并入改写段落）+ 表格行不参与二次配对（保留真实行增删）+ 前缀规则（解析截断归细微）；fastembed parallel=None 修复显存泄漏/OOM；测试隔离根除 config.json 污染。详见 docs/设计文档.md §12.6-12.7 与 docs/文档解析与chunk切分说明.md。
-- **锁定镜像安装**（08-17）：普通包默认走清华 PyPI 镜像；PyTorch 按互斥 extra 固定到官方 CPU/cu126 索引，避免后续 `uv sync` 覆盖设备版本；支持 `--pypi-index` 覆盖普通包镜像。
-- **llm_chat**：后端异常挂 `status_code` / `is_network_error` 属性，`retry` 据此判断重试（不再正则解析异常文本）；公共字段初始化上提到 `_init_common`。
-- **跨模块去重**：`version_diff.llm_util` 改用新增的 `llm_chat.ask_once_with_config`；`rag_server` 的 PDF 页数计算统一为 `get_pdf_page_count`（fitz）。
-- **错误处理契约**：ChatSession 问答失败向上抛出；预审核任一 LLM/版本比较失败均标记为 `incomplete/error`，不得误报安全；版本差异过滤遇到不完整 LLM 响应时保守保留变更。
-- **依赖管理重构**（08-14，08-17 更新）：四个模块使用根级 uv workspace/lock；安装脚本自动检测设备，并通过互斥 `cpu`/`gpu` extras 排除另一套运行时后同步全部 workspace 包。
-- **Embedding 改 fastembed**（08-14）：`sentence-transformers` → `fastembed`（ONNX Runtime），`device_utils.py` 新增 `EmbeddingModel` 适配器，零 torch 依赖也能跑 embedding。
-- **torch 策略**（08-15）：无 GPU 也安装 **CPU 版 torch** + 全量解析 extras —— docling / mineru 均可用（mineru 用 pipeline 模式，慢但能跑；已用 9 页真实 PDF 端到端验证，CPU 解析 86s）。mineru extra 改为 `mineru[pipeline,vlm]`（不再 `mineru[all]`，不装 lmdeploy/vllm）。
-- 详细决策与原理见 [设计文档 §迭代记录](docs/设计文档.md)。
-
 ## 测试
 
 各模块独立 `pytest`（uv workspace 下共用根 `.venv`），本次工作树验证结果：
