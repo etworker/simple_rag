@@ -43,6 +43,41 @@ function tableChangeSummary(change){
   if((change.new_text||'').startsWith('新增列:')||(change.old_text||'').startsWith('删除列:'))return `[表格${type}列] ${tableLabel}${change.new_text||change.old_text?`；${change.new_text||change.old_text}`:''}`;
   return `[表格${type}行] ${tableLabel}${rowIndex}${row}${detail}`;
 }
+function changeSummaryParts(change){
+  if(!change?.table_name&&!change?.cell_changes?.length)return null;
+  const type=change.type==='added'?'新增':change.type==='removed'?'删除':'修改';
+  const table=change.table_name||String(change.section||'').replace(/^表格[:：]?\s*/, '')||'未命名表格';
+  const oldTable=_changeLocationForSide(change,'old');
+  const newTable=_changeLocationForSide(change,'new');
+  const tableLabel=change.type==='modified'&&oldTable&&newTable
+    ? `${oldTable} → ${newTable}`
+    : change.type==='removed'&&oldTable ? oldTable
+    : change.type==='added'&&newTable ? newTable
+    : table;
+  const parts=[{label:'类型',value:`表格${type}${(change.new_text||'').startsWith('新增列:')||(change.old_text||'').startsWith('删除列:')?'列':'行'}`},{label:'定位',value:tableLabel}];
+  if(change.row_index)parts.push({label:'数据行',value:`第 ${change.row_index} 行`});
+  if(change.row_key)parts.push({label:'行标识',value:String(change.row_key)});
+  if((change.new_text||'').startsWith('新增列:')||(change.old_text||'').startsWith('删除列:')){
+    parts.push({label:'列操作',value:String(change.new_text||change.old_text)});
+  }else{
+    (change.cell_changes||[]).forEach(cell=>{
+      const oldValue=String(cell.old_value||'');
+      const newValue=String(cell.new_value||'');
+      const value=change.type==='added'
+        ? `${cell.column||''} = ${newValue}`
+        : change.type==='removed'
+        ? `${cell.column||''} = ${oldValue}`
+        : `${cell.column||''}：${oldValue||'（空）'} → ${newValue||'（空）'}`;
+      parts.push({label:'列变化',value});
+    });
+  }
+  return parts;
+}
+function changeSummaryHtml(change){
+  const parts=changeSummaryParts(change);
+  if(!parts)return `<div class="vc-summary-line"><span class="vc-summary-label">摘要：</span><span class="vc-summary-value">${esc(changeSummary(change))}</span></div>`;
+  return parts.map(part=>`<div class="vc-summary-line"><span class="vc-summary-label">${esc(part.label)}：</span><span class="vc-summary-value">${esc(part.value)}</span></div>`).join('');
+}
 function changeSummary(change){
   const tableSummary=tableChangeSummary(change);
   if(tableSummary)return tableSummary;
@@ -54,7 +89,10 @@ function changeSummary(change){
   if(oldText&&newText)return `[修改] ${oldText.slice(0,80)} → ${newText.slice(0,80)}`;
   return '[修改] 内容发生变化';
 }
-function _hasPageLocation(loc){return /第\s*\d+\s*页/.test(String(loc||''));}
+
+function _hasPageLocation(value){
+  return /第\s*\d+(?:\s*[-–—至到]\s*\d+)?\s*页/.test(String(value||''));
+}
 function _changeLocationForSide(change,side){
   const direct=side==='old'?change?.old_location:change?.location;
   if(_hasPageLocation(direct))return String(direct);
@@ -107,6 +145,17 @@ function compareGroupSummary(group,bTag){
   const shown=entries.slice(0,2).join('；');
   const rest=entries.length>2?`；另有 ${entries.length-2} 项`:'';
   return shown+rest;
+}
+function compareGroupSummaryHtml(group,bTag){
+  if(!group)return '<div class="vc-summary-line"><span class="vc-summary-value">等待比较</span></div>';
+  if(group.compare_type==='version_diff'&&(group.version_changes||[]).length){
+    const changes=group.version_changes||[];
+    let html=changes.slice(0,2).map(changeSummaryHtml).join('');
+    if(changes.length>2)html+=`<div class="vc-summary-line"><span class="vc-summary-value">另有 ${changes.length-2} 项差异</span></div>`;
+    return html;
+  }
+  const summary=compareGroupSummary(group,bTag);
+  return `<div class="vc-summary-line"><span class="vc-summary-label">摘要：</span><span class="vc-summary-value">${esc(summary)}</span></div>`;
 }
 function normalizeConflictText(text,bTag){
   let value=String(text||'');
@@ -193,8 +242,475 @@ function toggleKbSidebar(){
 // ============================================================
 let docMap={}, fileHashToName={}, docRefToId={}, docLabelMap={}, reviewResult=null, reviewTaskId=null, newDocFile=null, newDocHash='', newDocLabel='', activeFileName=null;
 let currentDoc=null, currentPage=1, totalPages=1;
+let reviewLayout='side-by-side';
+let reviewPanelWidthPercent=32;
+let reviewStackHeight=420;
+let reviewPreviewVisible=true;
+const REVIEW_PANEL_WIDTH_KEY='simple-rag.review-panel-width-percent';
+const REVIEW_STACK_HEIGHT_KEY='simple-rag.review-stack-height';
+const REVIEW_PREVIEW_VISIBLE_KEY='simple-rag.review-preview-visible';
+let reviewPreviewViewToken=0;
+let reviewLayoutReady=Promise.resolve();
 const reviewPageInfoCache=new Map();
+const REVIEW_PDF_CACHE_LIMIT=4;
+
+// 预审核专用 N/B 预览状态。普通文档预览继续使用 currentDoc/kbPdfDoc，两个场景互不覆盖。
+const reviewPanes={
+    n:{side:'n',ref:null,refKey:'',kind:'',url:'',pdfDoc:null,loadingTask:null,page:1,totalPages:0,observer:null,loadToken:0,textLoaded:false},
+    b:{side:'b',ref:null,refKey:'',kind:'',url:'',pdfDoc:null,loadingTask:null,page:1,totalPages:0,observer:null,loadToken:0,textLoaded:false},
+};
+const reviewPdfCache={n:new Map(),b:new Map()};
+let reviewFocusedSide='n';
+
+function reviewPaneRefKey(ref){
+    if(!ref)return '';
+    return [ref.kind||'',ref.taskId||'',ref.docId||'',ref.filename||''].join('|');
+}
+function reviewPaneElement(side,name){
+    const suffix=side==='n'?'N':'B';
+    return document.getElementById(`reviewPane${name||'Body'}${suffix}`);
+}
+function reviewPaneBody(side){return reviewPaneElement(side,'Body');}
+function reviewPaneSetMessage(side,message,color='var(--text3)'){
+    const body=reviewPaneBody(side);
+    if(body)body.innerHTML=`<div class="review-pane-placeholder" style="color:${color};">${esc(message)}</div>`;
+}
+function disposeReviewPdfEntry(side,key,entry){
+    const cache=reviewPdfCache[side];
+    if(cache?.get(key)===entry)cache.delete(key);
+    if(entry.loadingTask?.destroy)Promise.resolve(entry.loadingTask.destroy()).catch(()=>{});
+    if(entry.pdfDoc?.destroy)Promise.resolve(entry.pdfDoc.destroy()).catch(()=>{});
+    entry.loadingTask=null;entry.pdfDoc=null;
+}
+function evictReviewPdfCache(side,preserveKey=''){
+    const cache=reviewPdfCache[side];
+    if(!cache)return;
+    const candidates=[...cache.entries()].filter(([key])=>key!==preserveKey).sort((a,b)=>(a[1].lastUsed||0)-(b[1].lastUsed||0));
+    while(cache.size>REVIEW_PDF_CACHE_LIMIT&&candidates.length){const [key,entry]=candidates.shift();disposeReviewPdfEntry(side,key,entry);}
+}
+function getReviewPdfEntry(side,key,url){
+    const cache=reviewPdfCache[side];
+    let entry=cache.get(key);
+    if(entry&&entry.url===url){entry.lastUsed=Date.now();return entry;}
+    if(entry)disposeReviewPdfEntry(side,key,entry);
+    const loadingTask=pdfjsLib.getDocument(url);
+    entry={key,url,loadingTask,promise:null,pdfDoc:null,lastUsed:Date.now()};
+    entry.promise=loadingTask.promise.then(pdfDoc=>{
+        entry.pdfDoc=pdfDoc;entry.loadingTask=null;entry.lastUsed=Date.now();return pdfDoc;
+    }).catch(error=>{
+        if(cache.get(key)===entry)cache.delete(key);
+        entry.loadingTask=null;entry.pdfDoc=null;
+        throw error;
+    });
+    cache.set(key,entry);
+    evictReviewPdfCache(side,key);
+    return entry;
+}
+function disposeReviewPaneResources(state){
+    // 切换条目或暂时关闭预览时不销毁 PDF；文档由 reviewPdfCache 统一复用和淘汰。
+    if(!state)return;
+    state.loadingTask=null;state.pdfDoc=null;
+}
+function reviewPaneUpdateNav(side){
+    const state=reviewPanes[side];
+    const input=reviewPaneElement(side,'Page');
+    const total=reviewPaneElement(side,'Total');
+    const pager=reviewPaneElement(side,'Pager');
+    if(input)input.value=state.page||1;
+    if(total)total.textContent=state.totalPages||'?';
+    if(pager)pager.style.display=state.kind==='text'?'none':'';
+}
+function reviewPaneReset(side,message='选择一条审核结果后加载对比文档'){
+    const state=reviewPanes[side];
+    if(state.observer)state.observer.disconnect();
+    disposeReviewPaneResources(state);
+    state.ref=null;state.refKey='';state.kind='';state.url='';state.page=1;state.totalPages=0;state.textLoaded=false;state.loadToken++;
+    const title=reviewPaneElement(side,'Title');
+    if(title)title.textContent=side==='n'?'N 新文档':'B 对比文档';
+    reviewPaneUpdateNav(side);
+    reviewPaneSetMessage(side,message);
+}
+function resolveReviewStoredDocId(ref){
+    const raw=String(ref||'');
+    if(!raw)return '';
+    if(docRefToId[raw])return docRefToId[raw];
+    if(raw.includes('#'))return raw;
+    if(fileHashToName[raw]&&docRefToId[raw])return docRefToId[raw];
+    const base=splitFileHash(raw).name;
+    if(docRefToId[base])return docRefToId[base];
+    const match=Object.keys(docRefToId).find(key=>key===base||key.split('#')[0]===base);
+    return match?docRefToId[match]:raw;
+}
+function reviewComparisonContext(kind){
+    const panel=document.getElementById('versionComparePanel');
+    if(kind==='version'){
+        const gi=Number(panel?.dataset.groupIdx);
+        const ci=Number(panel?.dataset.vcIdx);
+        const group=reviewResult?.compare_groups?.[gi];
+        return {kind,group,change:group?.version_changes?.[ci],bRef:group?.doc_id||''};
+    }
+    const gi=Number(window.__conflictGroupIdx),ci=Number(window.__conflictIdx),si=Number(window.__suspectIdx);
+    const group=(Number.isInteger(gi)&&gi>=0)?reviewResult?.compare_groups?.[gi]:null;
+    let item;
+    if(group){
+        item=Number.isInteger(si)&&si>=0?group.suspects?.[si]:group.inconsistencies?.[ci];
+    }else{
+        const selected=document.querySelector('.conflict-item.selected');
+        const selectedIndex=selected?.dataset?.ci!=null?Number(selected.dataset.ci):ci;
+        item=reviewResult?.inconsistencies?.[Number.isInteger(selectedIndex)&&selectedIndex>=0?selectedIndex:0];
+    }
+    return {kind:'conflict',group,item,bRef:item?.doc_b_id||item?.doc_b?.file||item?.doc_b_file||''};
+}
+function resolveReviewPreviewRef(side,context={}){
+    if(side==='n'){
+        if(!newDocFile||!reviewTaskId)return null;
+        return {kind:'pending',taskId:reviewTaskId,filename:newDocFile,hash:newDocHash,label:newDocLabel};
+    }
+    const docId=resolveReviewStoredDocId(context.bRef||context.group?.doc_id||'');
+    if(!docId)return null;
+    const filename=String(docId).split('#')[0];
+    return {kind:'stored',docId,filename,label:docLabelMap[docId]||'',hash:docId.includes('#')?docId.split('#').pop():''};
+}
+function reviewRefPage(side,context){
+    if(context.change)return _changePageForSide(context.change,side==='n'?'new':'old');
+    const item=context.item||{};
+    const loc=side==='n'
+        ? (item.doc_a?.location||item.doc_a_location||'')
+        : (item.doc_b?.location||item.doc_b_location||'');
+    return extractPage(loc)||1;
+}
+function reviewPaneTitle(side,ref,context){
+    if(side==='n')return 'N '+fmtDocName(ref.filename,ref.hash,ref.label);
+    const tag=docMap[ref.docId]||'B';
+    const name=compareDocName(context.group)||fmtDocName(ref.filename,ref.hash,ref.label);
+    return `${tag} ${name}`;
+}
+function reviewPaneUrl(ref){
+    if(ref.kind==='pending')return `/api/documents/review/pdf?task_id=${encodeURIComponent(ref.taskId)}`;
+    return `/api/documents/pdf?doc_id=${encodeURIComponent(ref.docId)}`;
+}
+
+async function loadReviewPane(side,ref,page=1,context={},viewToken=null){
+    if(!isReviewPreviewViewCurrent(viewToken))return false;
+    const state=reviewPanes[side];
+    const paneToken=++state.loadToken;
+    if(!ref){reviewPaneReset(side);return false;}
+    const key=reviewPaneRefKey(ref);
+    state.ref=ref;state.refKey=key;state.kind='';state.url='';state.textLoaded=false;
+    const title=reviewPaneElement(side,'Title');
+    if(title)title.textContent=reviewPaneTitle(side,ref,context);
+    if(state.observer)state.observer.disconnect();
+    state.observer=null;
+    disposeReviewPaneResources(state);
+    const body=reviewPaneBody(side);
+    if(!body)return false;
+    const ext=String(ref.filename||'').split('.').pop().toLowerCase();
+    if(ext!=='pdf'){
+        state.kind='text';state.totalPages=0;reviewPaneUpdateNav(side);
+        body.innerHTML='<div class="review-pane-placeholder">加载文本内容...</div>';
+        try{
+            const query=ref.kind==='pending'
+                ? `file=${encodeURIComponent(ref.filename)}&task_id=${encodeURIComponent(ref.taskId)}`
+                : `name=${encodeURIComponent(ref.docId)}`;
+            const response=await fetch(ref.kind==='pending'?`/api/documents/review/paragraphs?${query}`:`/api/documents/paragraphs?${query}`);
+            const data=await response.json();
+            if(paneToken!==state.loadToken||!isReviewPreviewViewCurrent(viewToken))return false;
+            const paragraphs=data.paragraphs||[];
+            if(!paragraphs.length){reviewPaneSetMessage(side,'该文档无段落内容');return false;}
+            let html='<div style="width:100%;max-width:800px;padding:8px;">';
+            paragraphs.forEach((p,i)=>{html+=`<div class="text-para" style="margin-bottom:10px;padding:8px 10px;background:var(--bg2);border-radius:5px;font-size:12px;line-height:1.6;"><span style="color:var(--primary);font-size:10px;margin-right:5px;">¶${i+1}</span>${esc(p.text||'')}${p.location?`<span style="color:var(--text3);font-size:10px;margin-left:6px;">${esc(p.location)}</span>`:''}</div>`;});
+            html+='</div>';body.innerHTML=html;state.textLoaded=true;
+        }catch(err){
+            if(paneToken===state.loadToken&&isReviewPreviewViewCurrent(viewToken))reviewPaneSetMessage(side,`预览加载失败: ${err.message||err}`,'var(--danger)');
+            return false;
+        }
+        return true;
+    }
+    state.kind='pdf';state.url=reviewPaneUrl(ref);reviewPaneUpdateNav(side);
+    const entry=getReviewPdfEntry(side,key,state.url);
+    body.innerHTML=entry.pdfDoc
+        ? ''
+        : '<div class="review-pane-placeholder">PDF 加载中...</div>';
+    try{
+        const pdfDoc=await entry.promise;
+        if(paneToken!==state.loadToken||!isReviewPreviewViewCurrent(viewToken))return false;
+        state.pdfDoc=pdfDoc;state.totalPages=pdfDoc.numPages;state.page=Math.max(1,Math.min(Number(page)||1,state.totalPages||1));
+        buildPageSlots(body.id,state.totalPages);
+        setupReviewFullRender(side,body,pdfDoc,paneToken,viewToken);
+        reviewPaneUpdateNav(side);reviewScrollToPage(side,state.page);
+        return true;
+    }catch(err){
+        if(paneToken!==state.loadToken||!isReviewPreviewViewCurrent(viewToken))return false;
+        state.pdfDoc=null;state.totalPages=0;reviewPaneUpdateNav(side);
+        console.warn('[review preview] PDF load failed', {side,url:state.url,ref,error:err});
+        reviewPaneSetMessage(side,`PDF 加载失败: ${err.message||err}`,'var(--danger)');
+        return false;
+    }
+}
+function setupReviewFullRender(side,container,pdfDoc,paneToken,viewToken=null){
+    const state=reviewPanes[side];
+    if(state.observer)state.observer.disconnect();
+    state.observer=null;
+    const slots=[...container.querySelectorAll('.page-slot')];
+    let nextIndex=0;
+    const renderSlot=async slot=>{
+        if(paneToken!==state.loadToken||!isReviewPreviewViewCurrent(viewToken))return;
+        const pageNum=parseInt(slot.dataset.page,10);
+        slot.dataset.rendered='loading';slot.onclick=null;
+        try{
+            await renderPageInSlot(pdfDoc,pageNum,slot);
+            slot.dataset.rendered='1';
+        }catch(err){
+            if(paneToken!==state.loadToken||!isReviewPreviewViewCurrent(viewToken))return;
+            slot.dataset.rendered='error';
+            slot.innerHTML=`<button type="button" style="border:1px solid var(--border);background:var(--card);border-radius:4px;padding:8px 14px;color:var(--danger);cursor:pointer;">第 ${pageNum} 页加载失败，点击重试</button>`;
+            slot.onclick=()=>{
+                if(paneToken!==state.loadToken||!isReviewPreviewViewCurrent(viewToken))return;
+                renderSlot(slot);
+            };
+            console.warn('[review preview] page render failed',{side,page:pageNum,error:err});
+        }
+    };
+    const worker=async()=>{
+        while(nextIndex<slots.length){
+            const slot=slots[nextIndex++];
+            await renderSlot(slot);
+        }
+    };
+    // 完整渲染所有页面，但限制并发，避免两个 PDF 同时打开时瞬时占满内存。
+    const workerCount=Math.min(2,slots.length);
+    Promise.all(Array.from({length:workerCount},worker)).catch(error=>console.warn('[review preview] full render failed',{side,error}));
+    container.onscroll=()=>{
+        if(paneToken!==state.loadToken||!isReviewPreviewViewCurrent(viewToken))return;
+        const visibleSlots=container.querySelectorAll('.page-slot');let visible=state.page||1;
+        for(const slot of visibleSlots){if(slot.offsetTop<=container.scrollTop+100)visible=parseInt(slot.dataset.page,10);else break;}
+        state.page=visible;reviewPaneUpdateNav(side);
+    };
+}
+function reviewScrollToPage(side,page){
+    const state=reviewPanes[side],body=reviewPaneBody(side);if(!body)return;
+    state.page=Math.max(1,Math.min(Number(page)||1,state.totalPages||1));reviewPaneUpdateNav(side);
+    const slot=body.querySelector(`.page-slot[data-page="${state.page}"]`);if(slot)slot.scrollIntoView({block:'start'});
+}
+function reviewGoToPage(side){const input=reviewPaneElement(side,'Page');reviewScrollToPage(side,parseInt(input?.value)||1);}
+function reviewPrevPage(side){reviewScrollToPage(side,reviewPanes[side].page-1);}
+function reviewNextPage(side){reviewScrollToPage(side,reviewPanes[side].page+1);}
+function setReviewPreviewFocus(side){
+    reviewFocusedSide=side==='b'?'b':'n';
+    const right=document.getElementById('kbRight');if(right)right.dataset.reviewFocus=reviewFocusedSide;
+    document.querySelectorAll('.review-focus-btn').forEach(btn=>btn.classList.toggle('active',btn.dataset.focusSide===reviewFocusedSide));
+}
+function applyReviewPreviewPaneMode(){
+    const right=document.getElementById('kbRight');
+    const groups=reviewResult?.compare_groups||[];
+    const hasComparison=groups.length>0&&!reviewResult?.kb_empty;
+    const mode=hasComparison?'dual':'single';
+    if(right)right.dataset.reviewPaneMode=mode;
+    if(!hasComparison)setReviewPreviewFocus('n');
+    const hint=document.querySelector('.review-preview-hint');
+    if(hint)hint.textContent=hasComparison?'N 新文档与 B 对比文档独立加载、翻页和滚动':'当前为首篇文档，无 B 对比文档';
+    return hasComparison;
+}
+function initialReviewPreviewContext(){
+    const groups=reviewResult?.compare_groups||[];
+    const group=groups.find(g=>(g.version_changes||[]).length||(g.inconsistencies||[]).length||(g.suspects||[]).length||(g.minor_changes||[]).length);
+    if(!group)return null;
+    if(group.compare_type==='version_diff'&&(group.version_changes||[]).length){
+        return {kind:'version',group,change:group.version_changes[0],bRef:group.doc_id||''};
+    }
+    const item=(group.inconsistencies||[])[0]||(group.suspects||[])[0];
+    return {kind:'conflict',group,item,bRef:item?.doc_b_id||item?.doc_b?.file||item?.doc_b_file||group.doc_id||''};
+}
+function initializeReviewPreviews(){
+    if(reviewPanes.n.ref&&reviewPanes.n.ref.taskId!==reviewTaskId)reviewPaneReset('n','等待当前 N 文档加载');
+    if(reviewPanes.b.ref&&reviewPanes.b.refKey&&!reviewResult)reviewPaneReset('b');
+    const viewToken=reviewPreviewViewToken;
+    if(newDocFile&&reviewTaskId){
+        const context=initialReviewPreviewContext();
+        applyReviewPreviewPaneMode();
+        if(!context)reviewPaneReset('b','无对比文档');
+        const refs=context
+            ? {n:resolveReviewPreviewRef('n',context),b:resolveReviewPreviewRef('b',context)}
+            : {n:resolveReviewPreviewRef('n'),b:null};
+        const pages=context
+            ? {n:reviewRefPage('n',context)||1,b:reviewRefPage('b',context)||1}
+            : {n:getDocPage(newDocFile),b:1};
+        const loads=Object.entries(refs).map(([side,ref])=>{
+            if(!ref){
+                if(side==='b'&&context)reviewPaneSetMessage('b','B 对比文档信息缺失','var(--danger)');
+                return Promise.resolve(false);
+            }
+            return loadReviewPane(side,ref,pages[side],context||{},viewToken).catch(err=>{
+                console.warn('[review preview] initial pane load failed',{side,ref,error:err});
+                return false;
+            });
+        });
+        Promise.all(loads).catch(error=>console.warn('[review preview] initial pair load failed',error));
+    }else reviewPaneReset('n','暂无待审核 N 文档');
+    setReviewPreviewFocus(reviewFocusedSide);
+}
+
+function normalizeReviewLayout(layout){
+    return ['side-by-side','stacked','single'].includes(layout)?layout:'side-by-side';
+}
+
+function applyReviewLayout(layout){
+    const normalized=normalizeReviewLayout(layout);
+    reviewLayout=normalized;
+    const kbRight=document.getElementById('kbRight');
+    if(kbRight)kbRight.dataset.reviewLayout=normalized;
+    applyReviewPanelWidth(reviewPanelWidthPercent);
+    applyReviewStackHeight(reviewStackHeight);
+    setReviewPreviewVisible(reviewPreviewVisible,false);
+    return normalized;
+}
+
+function clampReviewPanelWidthPercent(percent){
+    const kbRight=document.getElementById('kbRight');
+    const total=kbRight?.clientWidth||1000;
+    const minLeft=240;
+    const minPreview=420;
+    const maxLeft=Math.max(minLeft,total-minPreview);
+    const requested=Math.max(minLeft,Math.min(maxLeft,total*(Number(percent)||32)/100));
+    return Math.max(20,Math.min(55,requested/total*100));
+}
+function applyReviewPanelWidth(percent){
+    reviewPanelWidthPercent=clampReviewPanelWidthPercent(percent);
+    const kbRight=document.getElementById('kbRight');
+    if(kbRight)kbRight.style.setProperty('--review-panel-width',`${reviewPanelWidthPercent}%`);
+    return reviewPanelWidthPercent;
+}
+function loadReviewPanelWidth(){
+    let saved=32;
+    try{saved=parseFloat(localStorage.getItem(REVIEW_PANEL_WIDTH_KEY))||32;}catch(e){}
+    applyReviewPanelWidth(saved);
+}
+function saveReviewPanelWidth(){
+    try{localStorage.setItem(REVIEW_PANEL_WIDTH_KEY,String(reviewPanelWidthPercent));}catch(e){}
+}
+function reviewStackBounds(){
+    const kbRight=document.getElementById('kbRight');
+    const total=kbRight?.clientHeight||800;
+    const header=kbRight?.querySelector('.kb-tabs')?.offsetHeight||28;
+    const minReview=260;
+    const minPreview=240;
+    return {min:minPreview,max:Math.max(minPreview,total-header-minReview)};
+}
+function clampReviewStackHeight(height){
+    const {min,max}=reviewStackBounds();
+    const total=document.getElementById('kbRight')?.clientHeight||800;
+    const fallback=Math.round(Math.max(min,total*.48));
+    return Math.round(Math.max(min,Math.min(max,Number(height)||fallback)));
+}
+function applyReviewStackHeight(height){
+    reviewStackHeight=clampReviewStackHeight(height);
+    const kbRight=document.getElementById('kbRight');
+    if(kbRight)kbRight.style.setProperty('--review-stack-height',`${reviewStackHeight}px`);
+    return reviewStackHeight;
+}
+function loadReviewStackHeight(){
+    let saved=0;
+    try{saved=parseFloat(localStorage.getItem(REVIEW_STACK_HEIGHT_KEY))||0;}catch(e){}
+    applyReviewStackHeight(saved);
+}
+function saveReviewStackHeight(){
+    try{localStorage.setItem(REVIEW_STACK_HEIGHT_KEY,String(reviewStackHeight));}catch(e){}
+}
+function setReviewPreviewVisible(visible,persist=true){
+    reviewPreviewVisible=Boolean(visible);
+    const kbRight=document.getElementById('kbRight');
+    if(kbRight)kbRight.dataset.reviewPreview=reviewPreviewVisible?'open':'closed';
+    const closeBtn=document.getElementById('reviewPreviewCloseBtn');
+    const restoreBtn=document.getElementById('reviewPreviewRestoreBtn');
+    if(closeBtn)closeBtn.style.display=reviewPreviewVisible?'':'none';
+    if(restoreBtn)restoreBtn.style.display=reviewPreviewVisible?'none':'inline-block';
+    if(persist){try{localStorage.setItem(REVIEW_PREVIEW_VISIBLE_KEY,reviewPreviewVisible?'1':'0');}catch(e){}}
+}
+function loadReviewPreviewVisibility(){
+    try{reviewPreviewVisible=localStorage.getItem(REVIEW_PREVIEW_VISIBLE_KEY)!=='0';}catch(e){reviewPreviewVisible=true;}
+    setReviewPreviewVisible(reviewPreviewVisible,false);
+}
+function initReviewResize(){
+    const handle=document.getElementById('reviewResizeHandle');
+    const stackHandle=document.getElementById('reviewStackResizeHandle');
+    const kbRight=document.getElementById('kbRight');
+    if(!kbRight)return;
+    if(handle&&!handle.dataset.bound){
+        handle.dataset.bound='1';
+        let dragging=false;
+        const finish=()=>{
+            if(!dragging)return;
+            dragging=false;handle.classList.remove('dragging');
+            document.body.style.cursor='';document.body.style.userSelect='';
+            saveReviewPanelWidth();
+        };
+        handle.addEventListener('pointerdown',event=>{
+            if(reviewLayout!=='side-by-side'||reviewPreviewVisible===false)return;
+            dragging=true;handle.classList.add('dragging');
+            document.body.style.cursor='col-resize';document.body.style.userSelect='none';
+            handle.setPointerCapture?.(event.pointerId);event.preventDefault();
+        });
+        handle.addEventListener('pointermove',event=>{
+            if(!dragging)return;
+            const rect=kbRight.getBoundingClientRect();
+            const minLeft=240,minPreview=420;
+            const maxLeft=Math.max(minLeft,rect.width-minPreview);
+            const px=Math.max(minLeft,Math.min(maxLeft,event.clientX-rect.left));
+            applyReviewPanelWidth(px/rect.width*100);
+        });
+        handle.addEventListener('pointerup',finish);
+        handle.addEventListener('pointercancel',finish);
+        handle.addEventListener('lostpointercapture',finish);
+    }
+    if(stackHandle&&!stackHandle.dataset.bound){
+        stackHandle.dataset.bound='1';
+        let dragging=false;
+        const finish=()=>{
+            if(!dragging)return;
+            dragging=false;stackHandle.classList.remove('dragging');
+            document.body.style.cursor='';document.body.style.userSelect='';
+            saveReviewStackHeight();
+        };
+        stackHandle.addEventListener('pointerdown',event=>{
+            if(reviewLayout!=='stacked'||reviewPreviewVisible===false)return;
+            dragging=true;stackHandle.classList.add('dragging');
+            document.body.style.cursor='row-resize';document.body.style.userSelect='none';
+            stackHandle.setPointerCapture?.(event.pointerId);event.preventDefault();
+        });
+        stackHandle.addEventListener('pointermove',event=>{
+            if(!dragging)return;
+            const rect=kbRight.getBoundingClientRect();
+            applyReviewStackHeight(rect.bottom-event.clientY);
+        });
+        stackHandle.addEventListener('pointerup',finish);
+        stackHandle.addEventListener('pointercancel',finish);
+        stackHandle.addEventListener('lostpointercapture',finish);
+    }
+    window.addEventListener('resize',()=>{
+        applyReviewPanelWidth(reviewPanelWidthPercent);
+        applyReviewStackHeight(reviewStackHeight);
+    });
+}
+
+function nextReviewPreviewViewToken(){return ++reviewPreviewViewToken;}
+function isReviewPreviewViewCurrent(token){return token==null||token===reviewPreviewViewToken;}
+async function loadReviewLayoutFromServer(){
+    try{
+        const response=await fetch('/api/config');
+        if(!response.ok)throw new Error(`config request failed: ${response.status}`);
+        const config=await response.json();
+        applyReviewLayout(config.review_layout);
+    }catch(error){
+        console.warn('加载预审核布局配置失败，使用默认布局:',error);
+        applyReviewLayout(reviewLayout);
+    }
+}
+
 const openCompareGroups=new Set();
+let reviewEventSource=null;
+let reviewReconcileTimer=null;
+let reviewTerminalTaskId=null;
+let reviewTabSwitchToken=0;
 
 // 自定义确认对话框（是/否），返回 Promise<boolean>
 function customConfirm(message){
@@ -344,9 +860,15 @@ async function resetKnowledgeBase(){
 // ============================================================
 // 预览待审核文档（支持 PDF / docx 等）
 async function selectPendingDoc(filename, taskId=reviewTaskId){
-    // 点击待审核文档即切换到文档预览；进行中的审核结果仍由顶部标签保留入口。
+    // 预审核模式下保持左侧结果和右侧文档预览并排；普通模式才切回文档预览 Tab。
     const reviewTabActive=document.getElementById('reviewPanel').classList.contains('active');
-    if(reviewTabActive)switchKbTab('preview');
+    const splitReview=document.getElementById('kbRight')?.classList.contains('review-mode');
+    if(reviewTabActive&&splitReview){
+        const ref={kind:'pending',taskId:taskId||reviewTaskId,filename,hash:newDocHash,label:newDocLabel};
+        reviewFocusedSide='n';setReviewPreviewFocus('n');
+        return loadReviewPane('n',ref,getDocPage(filename));
+    }
+    if(reviewTabActive&&!splitReview)switchKbTab('preview');
     // 清理 PDF 状态
     kbPdfDoc=null;kbPdfUrl=null;
     currentDoc=filename;
@@ -501,9 +1023,16 @@ function getDocPage(filename){
 async function selectDoc(filename){
     // filename 可能是 doc_id（含 #hash）或纯文件名
     const basename = filename.split('#')[0];
-    // 如果正在预审核 tab，弹窗确认
+    // 普通预审核 Tab 仍需确认切换；并排模式下直接在右侧预览选中的文档。
     const reviewTabActive=document.getElementById('reviewPanel').classList.contains('active');
-    if(reviewTabActive){
+    const splitReview=document.getElementById('kbRight')?.classList.contains('review-mode');
+    if(reviewTabActive&&splitReview){
+        const docId=resolveReviewStoredDocId(filename);
+        const ref={kind:'stored',docId,filename:docId.split('#')[0],label:docLabelMap[docId]||'',hash:docId.includes('#')?docId.split('#').pop():''};
+        reviewFocusedSide='b';setReviewPreviewFocus('b');
+        return loadReviewPane('b',ref,1,{group:{doc_id:docId}});
+    }
+    if(reviewTabActive&&!splitReview){
         if(!confirm('当前正在查看预审核结果，确定切换到文档预览？')){
             return;
         }
@@ -519,7 +1048,7 @@ async function selectDoc(filename){
     currentDoc=filename;
     currentPage=getDocPage(filename);
     refreshDocList();
-    loadKbPreview(basename);
+    return loadKbPreview(basename);
 }
 
 // PDF.js 渲染核心
@@ -710,17 +1239,44 @@ function restoreVersionCompare(){
     });
 }
 
-function switchKbTab(tab){
+async function switchKbTab(tab){
+    const switchToken=++reviewTabSwitchToken;
+    const switchTaskId=reviewTaskId;
+    if(tab==='review'){
+        await reviewLayoutReady;
+        if(switchToken!==reviewTabSwitchToken||switchTaskId!==reviewTaskId)return;
+        try{await refreshDocList();}catch(error){console.warn('[review] 刷新文档映射失败，继续显示审核结果:',error);}
+        if(switchToken!==reviewTabSwitchToken||switchTaskId!==reviewTaskId)return;
+    }
+    const kbRight=document.getElementById('kbRight');
+    const previewPanel=document.getElementById('previewPanel');
+    const previewEmpty=document.getElementById('previewEmpty');
+    const previewContent=document.getElementById('previewContent');
+    const reviewPreviewContent=document.getElementById('reviewPreviewContent');
+    const reviewPanel=document.getElementById('reviewPanel');
     document.querySelectorAll('.kb-tabs .kb-tab').forEach(b=>b.classList.remove('active'));
     if(tab==='preview'){
+        nextReviewPreviewViewToken();
         rememberVersionCompare();
+        kbRight?.classList.remove('review-mode');
         document.querySelector('.kb-tabs .kb-tab:first-child').classList.add('active');
-        document.getElementById('previewPanel').classList.add('active');
-        document.getElementById('reviewPanel').classList.remove('active');
+        previewPanel.classList.add('active');
+        reviewPanel.classList.remove('active');
+        if(reviewPreviewContent)reviewPreviewContent.style.display='none';
+        if(previewContent)previewContent.style.display=currentDoc?'flex':'none';
+        if(previewEmpty)previewEmpty.style.display=currentDoc?'none':'flex';
     } else {
+        applyReviewLayout(reviewLayout);
+        applyReviewPreviewPaneMode();
+        if(reviewResult)buildReviewPanel();
+        kbRight?.classList.add('review-mode');
         document.getElementById('reviewTabBtn').classList.add('active');
-        document.getElementById('previewPanel').classList.remove('active');
-        document.getElementById('reviewPanel').classList.add('active');
+        previewPanel.classList.add('active');
+        reviewPanel.classList.add('active');
+        if(previewEmpty)previewEmpty.style.display='none';
+        if(previewContent)previewContent.style.display='none';
+        if(reviewPreviewContent)reviewPreviewContent.style.display='flex';
+        initializeReviewPreviews();
         restoreVersionCompare();
     }
 }
@@ -750,6 +1306,10 @@ function updateReviewTab(){
 
 function showReviewTab(){
     updateReviewTab();
+    const kbRight=document.getElementById('kbRight');
+    const reviewPanel=document.getElementById('reviewPanel');
+    kbRight?.classList.add('review-mode');
+    reviewPanel?.classList.add('active');
     switchKbTab('review');
 }
 
@@ -828,7 +1388,8 @@ const labelVal=await promptLabel('为文档「'+file.name+'」添加补充描述
 window.__uploadLabel=labelVal===null?'':labelVal;
 newDocLabel=window.__uploadLabel;
 // 清理上一轮预审核结果，避免在 SSE 首个事件到达前仍显示旧结果
-reviewResult=null;reviewTaskId=null;reviewViewState=null;openCompareGroups.clear();
+stopReviewEventSource();
+reviewResult=null;reviewTaskId=null;reviewTerminalTaskId=null;reviewViewState=null;openCompareGroups.clear();
 const oldVersionPanel=document.getElementById('versionComparePanel');
 if(oldVersionPanel){oldVersionPanel.classList.remove('show');oldVersionPanel.replaceChildren();}
 const oldBtn=document.getElementById('reviewBtn');if(oldBtn){oldBtn.classList.remove('show');oldBtn.textContent='';}
@@ -880,6 +1441,7 @@ connectSSE(data.task_id);
 }
 
 function showTerminalReviewResult(d){
+    reviewTerminalTaskId=reviewTaskId;
     const isError=d.status==='error';
     const result=d.result&&typeof d.result==='object'
         ? d.result
@@ -922,9 +1484,38 @@ function showTerminalReviewResult(d){
     showReviewTab();
 }
 
+function clearReviewReconcileTimer(){
+    if(reviewReconcileTimer){clearInterval(reviewReconcileTimer);reviewReconcileTimer=null;}
+}
+function stopReviewEventSource(){
+    clearReviewReconcileTimer();
+    if(reviewEventSource){reviewEventSource.close();reviewEventSource=null;}
+}
+async function reconcileReviewTask(taskId,es){
+    if(taskId!==reviewTaskId||reviewEventSource!==es||reviewTerminalTaskId===taskId)return;
+    try{
+        const res=await fetch('/api/documents/review/active',{cache:'no-store'});
+        const d=await res.json();
+        if(taskId!==reviewTaskId||reviewEventSource!==es||reviewTerminalTaskId===taskId)return;
+        if(d.task_id!==taskId||!d.result)return;
+        if(d.status==='done'||d.status==='error'){
+            clearReviewReconcileTimer();
+            es.close();
+            if(reviewEventSource===es)reviewEventSource=null;
+            showTerminalReviewResult(d);
+        }
+    }catch(error){
+        if(taskId===reviewTaskId&&reviewEventSource===es)console.warn('[review] 状态校准失败:',error);
+    }
+}
 function connectSSE(taskId){
+    stopReviewEventSource();
     const es=new EventSource(`/api/documents/review/${taskId}/progress`);
+    reviewEventSource=es;
+    reviewReconcileTimer=setInterval(()=>reconcileReviewTask(taskId,es),1000);
     es.onmessage=function(event){
+        // 旧任务、旧连接或已进入终态的事件不能覆盖当前结果。
+        if(taskId!==reviewTaskId||reviewEventSource!==es||reviewTerminalTaskId===taskId)return;
         const d=JSON.parse(event.data);
         renderSteps(d);
         // 增量结果推送：已有比较组时允许用户随时打开右侧预审核面板。
@@ -941,7 +1532,9 @@ function connectSSE(taskId){
             }
         }
         if(d.status==='done'||d.status==='error'||d.status==='cancelled'){
+            clearReviewReconcileTimer();
             es.close();
+            if(reviewEventSource===es)reviewEventSource=null;
             if((d.status==='done'||d.status==='error')&&d.result){
                 showTerminalReviewResult(d);
             }else{
@@ -949,7 +1542,11 @@ function connectSSE(taskId){
             }
         }
     };
+    es.onerror=function(){
+        if(reviewEventSource===es&&taskId===reviewTaskId)console.warn('[review] SSE connection error',{taskId});
+    };
 }
+
 
 let stepTimer=null,lastSSEElapsed=0,lastSSETime=Date.now();
 function renderSteps(d){
@@ -995,11 +1592,13 @@ function renderSteps(d){
 function tickTimer(){const el=document.getElementById('activeTimer');if(!el)return;el.textContent=Math.floor(lastSSEElapsed+(Date.now()-lastSSETime)/1000)+'s';}
 
 function resetUpload(){
+    stopReviewEventSource();
     document.getElementById('stepArea').classList.remove('show');
     uploadZone.classList.remove('disabled');
     // 清理当前审核上下文，避免上一轮终态按钮残留到下一轮或重新上传流程。
     reviewResult=null;
     reviewTaskId=null;
+    reviewTerminalTaskId=null;
     reviewViewState=null;
     openCompareGroups.clear();
     const fileInput=document.getElementById('fileInput');
@@ -1081,7 +1680,11 @@ function updateReviewActionButtons(){
 
 function buildReviewPanel(){
 const r=reviewResult;if(!r)return;
+applyReviewPreviewPaneMode();
 const groups=r.compare_groups||[];
+const currentGroupKeys=new Set(groups.map((_,gi)=>String(gi)));
+for(const key of openCompareGroups){if(!currentGroupKeys.has(key))openCompareGroups.delete(key);}
+const hasOpenReviewGroup=groups.some((g,gi)=>openCompareGroups.has(String(gi))&&((g.version_changes||[]).length||(g.inconsistencies||[]).length||(g.suspects||[]).length));
 const phase = r.phase || 'done';
 const isError = phase==='error' || r.incomplete===true;
 const isCancelled = phase==='cancelled' || r.cancelled===true;
@@ -1158,11 +1761,11 @@ if(groups.length){
             detail=`${count} 处矛盾`;
             if(suspectCount) detail+=`，${suspectCount} 处疑似待复核`;
         }
-        const summary=compareGroupSummary(g,label);
+        const summaryHtml=compareGroupSummaryHtml(g,label);
         compareSummaryHtml+=`<button type="button" class="compare-summary-card" data-gi="${gi}" onclick="jumpToCompareGroup(${gi})">`;
         compareSummaryHtml+=`<span class="src-id">${esc(label)}</span><span class="summary-doc">${esc(compareDocName(g))}</span>`;
         compareSummaryHtml+=`<span class="summary-kind">${kind} · ${detail} · 相似度 ${g.similarity!==undefined?(g.similarity*100).toFixed(0)+'%':'—'}</span>`;
-        compareSummaryHtml+=`<span class="summary-detail">${esc(summary)}</span></button>`;
+        compareSummaryHtml+=`<span class="summary-detail">${summaryHtml}</span></button>`;
     });
     compareSummaryHtml+='</div></div>';
 }
@@ -1185,7 +1788,8 @@ if(groups.length>0){
         const gHash = g.file_hash ? '#'+g.file_hash.slice(-8).toUpperCase() : '';
         const simTag = g.similarity!==undefined ? `<span style="color:var(--text3);font-size:10px;">相似度 ${(g.similarity*100).toFixed(0)}%</span>` : '';
         const statusIcon = g.status==='done' ? '✅' : g.status==='error' ? '❌' : '⏳';
-        const groupOpen=openCompareGroups.has(String(gi));
+        const groupHasItems=changes.length>0||incons.length>0||suspects.length>0;
+        const groupOpen=openCompareGroups.has(String(gi))||(!hasOpenReviewGroup&&groupHasItems);
         groupsHtml+=`<div class="compare-group" data-gi="${gi}">`;
         const bTag=docMap[g.doc_id]||'B—';
         groupsHtml+=`<div class="compare-group-title" onclick="toggleCompareGroup(${gi})" aria-expanded="${groupOpen}">`;
@@ -1261,7 +1865,9 @@ if(!isTerminal){
     infoText+=`　（新文档: ${esc(newDocName)}）`;
 }
 document.getElementById('reviewInfo').textContent=infoText;
-document.getElementById('conflictList').innerHTML=progressHtml+compareSummaryHtml+groupsHtml;
+const conflictList=document.getElementById('conflictList');
+if(conflictList&&!document.getElementById('comparePanel')?.classList.contains('show')&&!document.getElementById('versionComparePanel')?.classList.contains('show'))conflictList.classList.remove('collapsed');
+if(conflictList)conflictList.innerHTML=progressHtml+compareSummaryHtml+groupsHtml;
 }
 
 function setCompareGroupOpen(gi,open){
@@ -1323,8 +1929,10 @@ async function showVersionDiffForGroup(gi,ci){
     window.__groupIdx=gi;
     const panel=document.getElementById('versionComparePanel');
     if(!panel)return;
+    const previewToken=nextReviewPreviewViewToken();
     const viewToken=`${Date.now()}-${gi}-${ci}`;
     panel.dataset.viewToken=viewToken;
+    panel.dataset.previewToken=String(previewToken);
     panel.classList.add('show');
     panel.dataset.vcIdx=ci;
     panel.dataset.groupDocId=g.doc_id||'';
@@ -1353,7 +1961,7 @@ async function showVersionDiffForGroup(gi,ci){
     const newName=fmtDocName(newDocFile||reviewResult?.new_filename||'新文档',newDocHash,reviewResult?.new_doc_label||newDocLabel);
     html+=`<div class="vc-loc-side vc-loc-new"><span class="vc-loc-tag">N 新文档</span><span class="vc-loc-page">第 ${newLoc.page||newDiffPage} 页</span><span class="vc-loc-section" title="${escA(newName + ' ' + (newLoc.raw||''))}">${esc(newName)}${newLoc.raw?(' · '+esc(newLoc.raw)):''}</span></div>`;
     html+=`</div>`;
-    html+=`<div class="vc-summary-bar">💡 ${esc(changeSummary(vc))}</div>`;
+    html+=`<div class="vc-summary-bar">💡 ${changeSummaryHtml(vc)}</div>`;
     html+=tableChangeDetailsHtml(vc);
     html+=`<div class="vc-text-diff">`;
     html+=`<div style="font-size:11px;font-weight:600;color:var(--text3);margin-bottom:8px;">📝 文字差异对比</div>`;
@@ -1394,7 +2002,7 @@ async function showVersionDiffForGroup(gi,ci){
     panel.dataset.newDiffPage=newDiffPage;
     panel.dataset.oldDiffPage=oldDiffPage;
     panel.dataset.diffPage=newDiffPage;
-    renderVcPages('new');
+    await renderVcPages('new',previewToken);
 }
 
 async function showVersionDiff(idx){
@@ -1404,8 +2012,10 @@ async function showVersionDiff(idx){
 
     const panel = document.getElementById('versionComparePanel');
     if(!panel)return;
+    const previewToken=nextReviewPreviewViewToken();
     const viewToken = `${Date.now()}-${idx}`;
     panel.dataset.viewToken = viewToken;
+    panel.dataset.previewToken=String(previewToken);
     panel.classList.add('show');
     panel.dataset.vcIdx = idx;
     panel.dataset.groupIdx = 0;
@@ -1440,7 +2050,8 @@ async function showVersionDiff(idx){
     html += `<div class="vc-loc-side vc-loc-new"><span class="vc-loc-tag">N 新文档</span><span class="vc-loc-page">第 ${newLoc.page||newDiffPage} 页</span><span class="vc-loc-section">${esc(newLoc.raw||'—')}</span></div>`;
     html += `</div>`;
     // LLM 摘要
-    html += `<div class="vc-summary-bar">💡 ${esc(changeSummary(vc))}</div>`;
+    html += `<div class="vc-summary-bar">💡 ${changeSummaryHtml(vc)}</div>`;
+    html += tableChangeDetailsHtml(vc);
     // 文字差异高亮（双栏 diff）
     html += `<div class="vc-text-diff">`;
     html += `<div style="font-size:11px;font-weight:600;color:var(--text3);margin-bottom:8px;">📝 文字差异对比</div>`;
@@ -1484,7 +2095,7 @@ async function showVersionDiff(idx){
     panel.dataset.oldDiffPage=oldDiffPage;
     panel.dataset.diffPage=newDiffPage;
 
-    renderVcPages('new');
+    await renderVcPages('new',previewToken);
 }
 
 // 解析 location 字符串 → {page, section}
@@ -1507,15 +2118,18 @@ function focusVcPage(container,target){
 }
 
 // 渲染指定侧（old/new）的 PDF 预览，默认显示差异页前后各 3 页
-function renderVcPages(side){
+async function renderVcPages(side,viewToken=Number(document.getElementById('versionComparePanel')?.dataset.previewToken)||reviewPreviewViewToken){
     const panel = document.getElementById('versionComparePanel');
-    if(!panel)return;
+    if(!panel)return false;
     const container = document.getElementById('vcPagesContainer');
-    if(!container)return;
+    if(!container)return false;
     const pages = parseInt(panel.dataset[side==='new'?'newPages':'oldPages'])||0;
     const sidePageKey=side==='new'?'newDiffPage':'oldDiffPage';
     const rawDiffPage=parseInt(panel.dataset[sidePageKey]||panel.dataset.diffPage)||1;
-    const diffPage=Math.max(1,Math.min(pages,rawDiffPage));
+    const diffPage=Math.max(1,Math.min(pages||rawDiffPage,rawDiffPage));
+    // 版本差异的页面预览统一使用右侧固定预览，审核面板只保留差异详情。
+    container.innerHTML=`<div style="padding:12px 14px;color:var(--text3);font-size:11px;text-align:center;">页面预览已移至右侧固定文档预览：${side==='new'?'N 新文档':'对比文档'}，第 ${diffPage} 页</div>`;
+    return showReviewComparePreview(side,diffPage,'version',viewToken);
 
     if(!pages){container.innerHTML='<div style="padding:20px;text-align:center;color:#aaa;">文档不可用</div>';return;}
 
@@ -1582,7 +2196,9 @@ function switchVcTab(side){
     });
     panel.dataset.showAll = '0';
     if(reviewViewState)reviewViewState={...reviewViewState,side};
-    renderVcPages(side);
+    const previewToken=nextReviewPreviewViewToken();
+    panel.dataset.previewToken=String(previewToken);
+    return renderVcPages(side,previewToken);
 }
 
 // 从 location 描述中提取页码；支持“第 N 页”、页码范围和段落回退。
@@ -1733,7 +2349,37 @@ function diffQueryText(textA,textB,side){
     return (mid||source).slice(0,120);
 }
 
+async function showReviewComparePreview(side,page,kind,viewToken=reviewPreviewViewToken){
+    if(!isReviewPreviewViewCurrent(viewToken))return false;
+    const target=side==='a'||side==='new'?'n':'b';
+    const context=reviewComparisonContext(kind==='version'?'version':'conflict');
+    // 差异点击时同时启动 N/B，单侧失败不应阻塞另一侧显示。
+    setReviewPreviewFocus(target);
+    const refs={
+        n:resolveReviewPreviewRef('n',context),
+        b:resolveReviewPreviewRef('b',context),
+    };
+    const pages={
+        n:target==='n'?(Number(page)||reviewRefPage('n',context)||1):(reviewRefPage('n',context)||1),
+        b:target==='b'?(Number(page)||reviewRefPage('b',context)||1):(reviewRefPage('b',context)||1),
+    };
+    const loads=Object.entries(refs).map(([pane,ref])=>{
+        if(!ref){
+            reviewPaneSetMessage(pane,pane==='n'?'N 文档信息缺失':'B 对比文档信息缺失','var(--danger)');
+            console.warn('[review preview] missing pane ref',{pane,kind,context});
+            return Promise.resolve(false);
+        }
+        return loadReviewPane(pane,ref,pages[pane],context,viewToken).catch(err=>{
+            console.warn('[review preview] pane load rejected',{pane,ref,error:err});
+            return false;
+        });
+    });
+    const results=await Promise.all(loads);
+    return isReviewPreviewViewCurrent(viewToken)&&results.every(Boolean);
+}
+
 async function compareShowTab(side){
+const viewToken=nextReviewPreviewViewToken();
 const items=document.querySelectorAll('.conflict-item,.suspect-item');
 const gi=Number(window.__conflictGroupIdx),ci=Number(window.__conflictIdx),si=Number(window.__suspectIdx);
 const idx=Array.from(items).findIndex(el=>el.classList.contains('selected'));
@@ -1784,7 +2430,7 @@ if(side==='a'){
     infoUrl=`/api/documents/info?name=${encodedName}`;
 }
 
-const compareToken=`${Date.now()}-${side}-${gi}-${ci}`;
+const compareToken=`${viewToken}-${side}-${gi}-${ci}`;
 body.dataset.compareToken=compareToken;
 // 构建可滚动的预览区域：文字差异固定，PDF 页面连续排列
 const navBar=`<div style="padding:6px 10px;background:var(--card);border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px;font-size:11px;color:var(--text3);">
@@ -1801,7 +2447,10 @@ body.dataset.pageCount='0';
 body.dataset.imgBase=imgBase;
 body.dataset.highlight=hl;
 body.dataset.showAll='0';
-try{
+await showReviewComparePreview(side,page,'conflict',viewToken);
+if(!isReviewPreviewViewCurrent(viewToken)||body.dataset.compareToken!==compareToken)return;
+return;
+    /* hidden legacy image preview disabled; right-side N/B panes are authoritative
     let infoPromise=reviewPageInfoCache.get(infoUrl);
     if(!infoPromise){
         infoPromise=fetch(infoUrl).then(res=>{
@@ -1819,6 +2468,7 @@ try{
     body.dataset.pageCount='1';
 }
 renderCmpPages();
+    */
 }
 
 function renderCmpPages(){
@@ -1872,11 +2522,13 @@ function cmpSetPage(p){
 }
 
 function closeCompare(){
+    nextReviewPreviewViewToken();
     document.getElementById('comparePanel').classList.remove('show');
     document.getElementById('conflictList').classList.remove('collapsed');
     document.querySelectorAll('.conflict-item').forEach(el=>el.classList.remove('selected'));
 }
 function closeVersionCompare(){
+    nextReviewPreviewViewToken();
     const panel=document.getElementById('versionComparePanel');
     if(panel){
         panel.classList.remove('show');
@@ -2069,27 +2721,27 @@ async function loadQaSession(sessionId){
             if(msg.role==='user'){
                 appendMsg('user',esc(msg.content));
             }else{
+                // idx 是单条回答内的引用身份。即使多个证据来自同一文档和位置，
+                // 也必须全部保留，否则正文 [n] 会失去对应的来源项。
+                const allSources=(msg.sources||[]).map((s,i)=>({...s,idx:s.idx||i+1}));
+                const sourceIdxs=new Set(allSources.map(s=>String(s.idx)));
                 const cleanContent=stripOldSourceLines(msg.content||'');
                 let html=renderMd(cleanContent);
                 html=html.replace(
                     /\[(\d+)\](?![\w\s]*<\/a>)/g,
-                    (m, p1) => `<a href="#ref-${p1}" class="ref-link" data-ref="${p1}" onclick="event.preventDefault();scrollToRef(${p1});return false;">[${p1}]</a>`
+                    (m, p1) => sourceIdxs.has(String(p1))
+                        ? `<a href="#ref-${p1}" class="ref-link" data-ref="${p1}" onclick="event.preventDefault();scrollToRef(${p1});return false;">[${p1}]</a>`
+                        : m
                 );
-                if(msg.sources&&msg.sources.length){
-                    // 去重
-                    const seen=new Map();
-                    for(const s of msg.sources){
-                        const key=s.source_file+'|'+(s.location||'');
-                        if(!seen.has(key)) seen.set(key,s);
-                    }
-                    const uniqueSources=[...seen.values()].slice(0,8);
+                if(allSources.length){
+                    const uniqueSources=allSources;
                     const fileIds={};let fileIdx=1;
                     let srcHtml=`<div class="sources"><div class="src-title">📎 来源（${uniqueSources.length} 条）</div>`;
                     for(const s of uniqueSources){
                         const id=s.idx?('B'+s.idx):'B'+(fileIdx++);
                         if(!s.idx&&!fileIds[s.source_file]) fileIds[s.source_file]=id;
                         const displayId=s.idx?('B'+s.idx):fileIds[s.source_file];
-                        srcHtml+=`<div class="src-item" id="ref-${displayId.replace('B','')}" data-file="${escA(s.source_file||'')}" data-loc="${escA(s.location||'')}">`;
+                        srcHtml+=`<div class="src-item" id="ref-${displayId.replace('B','')}" data-idx="${escA(String(s.idx))}" data-file="${escA(s.source_file||'')}" data-loc="${escA(s.location||'')}">`;
                         srcHtml+=`<div><span class="src-id">${displayId}</span><span class="src-file">${fileColoredHtml(s.source_file)}</span></div>`;
                         srcHtml+=`<div class="src-loc">${esc(s.location||'')}</div>`;
                         srcHtml+=`<div class="src-text">${esc((s.text||'').slice(0,120))}</div></div>`;
@@ -2102,10 +2754,7 @@ async function loadQaSession(sessionId){
                 // 绑定来源点击
                 el.querySelectorAll('.src-item').forEach(item=>{
                     item.addEventListener('click',function(){
-                        const srcData=(msg.sources||[]).find(s=>
-                            s.source_file===this.dataset.file &&
-                            s.location===this.dataset.loc
-                        );
+                        const srcData=allSources.find(s=>String(s.idx)===this.dataset.idx);
                         const hlText=srcData?srcData.text:'';
                         openQaPreview(this.dataset.file,this.dataset.loc,hlText,this.dataset.title);
                     });
@@ -2144,18 +2793,14 @@ async function sendQuestion(){
         const cleanAnswer=stripOldSourceLines(data.answer||'');
         let answerHtml=renderMd(cleanAnswer);
         let allSources=[];  // 提到外层作用域，供点击事件访问
+        let sourceIdxs=new Set();  // 仅有真实来源的 [n] 才渲染为可点击链接
         let idxToDoc={};    // 引用编号 idx → 文档级编号（B1/B2...），正文 [n] 后附 Bn
         let docIds={}, docOrder=[];  // 文档级编号映射（外层声明，legend 渲染共用）
         if(data.sources&&data.sources.length){
-            // 去重：同一文档+同一位置只保留一条（取分数最高的）
-            const seen=new Map();
-            for(const s of data.sources){
-                const key=(s.doc_id||s.source_file)+'|'+(s.location||'');
-                if(!seen.has(key)||(s.score||0)>seen.get(key).score){
-                    seen.set(key,s);
-                }
-            }
-            allSources=[...seen.values()];
+            // idx 是 LLM 上下文和 sources 共同使用的引用身份。不能按文档+位置
+            // 去重：同一表格的整表块和多个行级块可能共享 location，但分别对应 [n]。
+            allSources=data.sources.map((s,i)=>({...s,idx:s.idx||i+1}));
+            sourceIdxs=new Set(allSources.map(s=>String(s.idx)));
             // hash 文件名（底层存储名，如 fcc13f4b....pdf）→ 友好文件名
             const friendlyName=(did)=>{
                 const m=(did||'').match(/^([0-9a-fA-F]{64})\.pdf(#.*)?$/);
@@ -2180,6 +2825,7 @@ async function sendQuestion(){
         answerHtml=answerHtml.replace(
             /\[(\d+)\](?![\w\s]*<\/a>)/g,
             (m, p1) => {
+                if(!sourceIdxs.has(String(p1)))return m;
                 const bn=idxToDoc[p1]||'';
                 const docTag=bn?('<span class="ref-doc">'+bn+'</span>'):'';
                 return '<a href="#ref-'+p1+'" class="ref-link" data-ref="'+p1+'" onclick="event.preventDefault();scrollToRef('+p1+');return false;">['+p1+']'+docTag+'</a>';
@@ -2192,7 +2838,7 @@ async function sendQuestion(){
         );
         let html=answerHtml;
         if(data.sources&&data.sources.length){
-            // （去重与文档编号构建已前移到 answerHtml 渲染之前）
+            // （来源归一化与文档编号构建已前移到 answerHtml 渲染之前）
             // 底部 legend：按文档分组，块标题=Bn+文件名[hash]+tag，块内列出 [idx] 引用项
             let srcHtml=`<div class="sources"><div class="src-title">📎 引用来源</div>`;
             for(const did of docOrder){
@@ -2213,7 +2859,7 @@ async function sendQuestion(){
                 if(firstSrc&&firstSrc.is_primary)srcHtml+=` <span class="doc-status-tag primary">当前版本</span>`;
                 srcHtml+=`</div>`;
                 for(const s of docSources){
-                    srcHtml+=`<div class="src-item" id="ref-${s.idx}" data-file="${escA(s.source_file||'')}" data-loc="${escA(s.location||'')}" data-title="${escA(s.filename||did)}">`;
+                    srcHtml+=`<div class="src-item" id="ref-${s.idx}" data-idx="${escA(String(s.idx))}" data-file="${escA(s.source_file||'')}" data-loc="${escA(s.location||'')}" data-title="${escA(s.filename||did)}">`;
                     srcHtml+=`<div><span class="src-ref">[${s.idx}]</span><span class="src-loc">${esc(s.location||'')}</span></div>`;
                     srcHtml+=`<div class="src-text">${esc((s.text||'').slice(0,120))}${(s.text||'').length>120?'…':''}</div>`;
                     srcHtml+=`</div>`;
@@ -2228,10 +2874,7 @@ async function sendQuestion(){
             // 绑定点击事件
             last.querySelectorAll('.src-item').forEach(item=>{
                 item.addEventListener('click',function(){
-                    const srcData=allSources.find(s=>
-                        s.source_file===this.dataset.file &&
-                        s.location===this.dataset.loc
-                    );
+                    const srcData=allSources.find(s=>String(s.idx)===this.dataset.idx);
                     const hlText=srcData?srcData.text:'';
                     openQaPreview(this.dataset.file,this.dataset.loc,hlText,this.dataset.title);
                 });
@@ -2351,13 +2994,18 @@ panel.scrollTop=panel.scrollHeight;
 // ============================================================
 // 初始化
 // ============================================================
+loadReviewPanelWidth();
+loadReviewStackHeight();
+loadReviewPreviewVisibility();
+initReviewResize();
+reviewLayoutReady=loadReviewLayoutFromServer();
 refreshDocList();
 newQaSession();
 refreshQaSessionList();
 // 恢复活跃任务
 (async function(){
     try{
-        const res=await fetch('/api/documents/review/active');
+        const res=await fetch('/api/documents/review/active',{cache:'no-store'});
         const d=await res.json();
         if(!d.task_id)return;
         newDocFile=d.filename;activeFileName=d.filename;reviewTaskId=d.task_id;newDocHash=d.file_hash||'';newDocLabel=d.label||d.result?.new_doc_label||'';
@@ -2472,6 +3120,8 @@ function renderSettingsForm(){
   document.getElementById('ret-threshold').value=ret.similarity_threshold||0.5;
   // Pre-review
   const pr=_settingsConfig.pre_review||{};
+  applyReviewLayout(_settingsConfig.review_layout);
+  document.getElementById('review-layout').value=reviewLayout;
   document.getElementById('pr-threshold').value=pr.similarity_threshold||0.8;
   document.getElementById('pr-batch').value=pr.batch_size||0;
   document.getElementById('pr-parse_backend').value=pr.parse_backend||'auto';
@@ -2650,8 +3300,10 @@ async function saveSettings(){
     );
     if(!ok) return; // 用户取消，不保存
   }
+  const layout=normalizeReviewLayout(document.getElementById('review-layout').value);
   // 构造更新
   const updates={
+    review_layout:layout,
     embedding:{
       model:embNewModel,
       device:document.getElementById('emb-device').value,
@@ -2701,6 +3353,8 @@ async function saveSettings(){
     if(data.reset_knowledge_base_required){
       notes.push('Embedding 配置已变化；重启后请重置知识库并重新入库。');
     }
+    applyReviewLayout(layout);
+    notes.push('预审核布局已立即应用。');
     st.textContent=(data.restart_required?'⚠️ ':'✅ ')+notes.join(' ');
     _settingsConfig=null; // 下次进入页面时重新加载
   }catch(e){

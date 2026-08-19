@@ -139,31 +139,77 @@ class DocStore:
         return compute_sha256(filepath)
 
     @staticmethod
-    def _tables_to_paragraphs(tables: list) -> list:
-        """把表格转成可检索的 Paragraph 列表（表格内容参与 RAG 向量检索）。
+    def _normalize_table_cell(value: object) -> str:
+        """归一化 PDF 表格单元格中的空白噪声，不改变原始 Table。"""
+        text = re.sub(r"\s+", " ", "" if value is None else str(value)).strip()
+        # PDF 表格抽取常把中文词、连字符两侧拆出空格，例如“负载均衡 器-主”。
+        text = re.sub(r"(?<=[\u4e00-\u9fff])\s+(?=[\u4e00-\u9fff])", "", text)
+        text = re.sub(r"(?<=[\u4e00-\u9fff])\s+(?=[-–—])", "", text)
+        text = re.sub(r"(?<=[-–—])\s+(?=[\u4e00-\u9fff])", "", text)
+        return text
 
-        每个表格转成一段结构化文本（markdown 行拼接），location 标
-        "表格: 章节"，source_file 复用表格的（后续 add_document 统一覆盖为 doc_id）。
+    @classmethod
+    def _tables_to_paragraphs(cls, tables: list) -> list:
+        """把表格转成整表块和行级块，供 RAG 向量检索。
+
+        整表 Markdown 块保留完整证据；行级块重复列名并使用“列名=值”格式，
+        避免大表中目标设备被无关行稀释，也让“某设备是什么型号”直接命中目标行。
         """
         from doc_parser import Paragraph
 
         out = []
-        for t in tables:
-            md = t.to_markdown() if hasattr(t, "to_markdown") else ""
+        for table in tables:
+            md = table.to_markdown() if hasattr(table, "to_markdown") else ""
             if not md:
                 continue
+
+            table_kwargs = {
+                "page": table.page,
+                "page_end": getattr(table, "page_end", 0),
+                "chapter": getattr(table, "chapter", ""),
+                "chapter_title": getattr(table, "chapter_title", ""),
+                "source_file": getattr(table, "source_file", ""),
+                "order": getattr(table, "order", 0),
+            }
             out.append(
                 Paragraph(
                     text=md,
-                    page=t.page,
-                    page_end=getattr(t, "page_end", 0),
-                    chapter=getattr(t, "chapter", ""),
-                    chapter_title=getattr(t, "chapter_title", ""),
-                    source_file=getattr(t, "source_file", ""),
                     index=len(out) + 1,
-                    order=getattr(t, "order", 0),
+                    block_type="table",
+                    **table_kwargs,
                 )
             )
+
+            raw_headers = list(getattr(table, "headers", []) or [])
+            raw_rows = list(getattr(table, "rows", []) or [])
+            headers = raw_headers or (raw_rows[0] if raw_rows else [])
+            data_rows = raw_rows if raw_headers else raw_rows[1:]
+            headers = [cls._normalize_table_cell(cell) for cell in headers]
+            headers = [header or f"列{i + 1}" for i, header in enumerate(headers)]
+            if not headers:
+                continue
+
+            table_name = cls._normalize_table_cell(
+                getattr(table, "chapter_title", "") or getattr(table, "chapter", "") or "表格"
+            )
+            for row in data_rows:
+                cells = list(row or [])
+                cells.extend([""] * max(0, len(headers) - len(cells)))
+                cells = [cls._normalize_table_cell(cell) for cell in cells[: len(headers)]]
+                if not any(cells):
+                    continue
+                pairs = [f"{header}={value}" for header, value in zip(headers, cells) if value]
+                if not pairs:
+                    continue
+                row_text = f"表格：{table_name}；" + "；".join(pairs)
+                out.append(
+                    Paragraph(
+                        text=row_text,
+                        index=len(out) + 1,
+                        block_type="table_row",
+                        **table_kwargs,
+                    )
+                )
         return out
 
     def _get_model(self):

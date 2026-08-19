@@ -6,7 +6,7 @@
     <title>RAG 文档问答系统</title>
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
-    <link rel="stylesheet" href="/static/style.css?v=13">
+    <link rel="stylesheet" href="/static/style.css?v=16">
 </head>
 <body>
 <div class="topbar">
@@ -44,7 +44,7 @@
         </div>
         <div class="kb-toggle" id="kbToggle" onclick="toggleKbSidebar()">◀</div>
         <!-- 右侧 -->
-        <div class="kb-right">
+        <div class="kb-right" id="kbRight">
             <div class="kb-tabs" id="kbTabs">
                 <button class="kb-tab active" onclick="switchKbTab('preview')">📄 文档预览</button>
                 <button class="kb-tab" id="reviewTabBtn" onclick="switchKbTab('review')" style="display:none">⚠️ 预审核</button>
@@ -64,6 +64,44 @@
                     </div>
                     <div class="preview-body" id="kbPdfContainer"></div>
                 </div>
+                <!-- 预审核专用双文档预览；普通文档预览仍使用上面的 previewContent。 -->
+                <div class="review-preview-content" id="reviewPreviewContent" style="display:none">
+                    <div class="review-preview-toolbar">
+                        <span class="review-preview-caption">预审核文档预览</span>
+                        <span class="review-preview-hint">N 新文档与 B 对比文档独立加载、翻页和滚动</span>
+                        <button type="button" class="review-preview-toggle" id="reviewPreviewCloseBtn" onclick="setReviewPreviewVisible(false)">关闭预览</button>
+                        <div class="review-focus-actions" id="reviewFocusActions">
+                            <button type="button" class="review-focus-btn active" data-focus-side="n" onclick="setReviewPreviewFocus('n')">N</button>
+                            <button type="button" class="review-focus-btn" data-focus-side="b" onclick="setReviewPreviewFocus('b')">B</button>
+                        </div>
+                    </div>
+                    <div class="review-preview-grid" id="reviewPreviewGrid">
+                        <section class="review-preview-pane" id="reviewPreviewN" data-review-side="n">
+                            <div class="review-pane-header">
+                                <span class="review-pane-title" id="reviewPaneTitleN">N 新文档</span>
+                                <div class="review-pane-pager" id="reviewPanePagerN">
+                                    <button type="button" class="nav-btn" onclick="reviewPrevPage('n')">◀</button>
+                                    <input type="number" id="reviewPanePageN" value="1" min="1" onchange="reviewGoToPage('n')" onkeydown="if(event.key==='Enter')reviewGoToPage('n')">
+                                    <span>/ <span id="reviewPaneTotalN">?</span></span>
+                                    <button type="button" class="nav-btn" onclick="reviewNextPage('n')">▶</button>
+                                </div>
+                            </div>
+                            <div class="review-pane-body" id="reviewPaneBodyN"><div class="review-pane-placeholder">选择一条审核结果后加载 N 文档</div></div>
+                        </section>
+                        <section class="review-preview-pane" id="reviewPreviewB" data-review-side="b">
+                            <div class="review-pane-header">
+                                <span class="review-pane-title" id="reviewPaneTitleB">B 对比文档</span>
+                                <div class="review-pane-pager" id="reviewPanePagerB">
+                                    <button type="button" class="nav-btn" onclick="reviewPrevPage('b')">◀</button>
+                                    <input type="number" id="reviewPanePageB" value="1" min="1" onchange="reviewGoToPage('b')" onkeydown="if(event.key==='Enter')reviewGoToPage('b')">
+                                    <span>/ <span id="reviewPaneTotalB">?</span></span>
+                                    <button type="button" class="nav-btn" onclick="reviewNextPage('b')">▶</button>
+                                </div>
+                            </div>
+                            <div class="review-pane-body" id="reviewPaneBodyB"><div class="review-pane-placeholder">选择一条审核结果后加载 B 对比文档</div></div>
+                        </section>
+                    </div>
+                </div>
             </div>
             <!-- 预审核结果 -->
             <div class="review-panel" id="reviewPanel">
@@ -71,6 +109,7 @@
 <span class="info" id="reviewInfo">⚠️ 发现矛盾</span>
 <button id="reviewRerunBtn" class="btn btn-rerun" onclick="forceReReview()" style="display:none">↻ 重新执行预审核</button>
 <button id="reviewExportBtn" class="btn btn-export" onclick="exportReviewReport()" disabled>导出 HTML 报告</button>
+<button id="reviewPreviewRestoreBtn" class="btn review-preview-restore" onclick="setReviewPreviewVisible(true)" style="display:none">显示预览</button>
 <button id="reviewConfirmBtn" class="btn btn-ok" onclick="confirmIngest()" disabled>确认入库</button>
 <button id="reviewRejectBtn" class="btn btn-no" onclick="rejectIngest()" disabled>取消入库</button>
 </div>
@@ -86,6 +125,9 @@
                 <!-- 版本差异预览浮层 -->
                 <div class="version-compare-panel" id="versionComparePanel"></div>
             </div>
+            <!-- side-by-side 模式下可拖动的审核结果/文档预览分隔栏 -->
+            <div class="review-resize-handle" id="reviewResizeHandle" role="separator" aria-label="调整审核结果与文档预览宽度" title="拖动调整审核结果栏宽度"></div>
+            <div class="review-stack-resize-handle" id="reviewStackResizeHandle" role="separator" aria-label="调整审核结果与文档预览高度" title="拖动调整审核结果与文档预览高度"></div>
         </div>
     </div>
 
@@ -176,6 +218,11 @@
                 <div class="setting-row"><label>top_k</label><input type="number" id="ret-top_k" style="width:80px"></div>
                 <div class="setting-row"><label>相似度阈值</label><input type="number" step="0.05" id="ret-threshold" style="width:80px"></div>
                 <div class="setting-section-title">预审核</div>
+                <div class="setting-row"><label>页面布局</label><select id="review-layout" title="保存后当前页面立即应用">
+                    <option value="side-by-side">左右并排（审核结果 | N/B 双预览）</option>
+                    <option value="stacked">上下排列（审核结果 / N/B 双预览）</option>
+                    <option value="single">单窗格预览（N 或 B）</option>
+                </select><span class="hint">保存后立即应用；其他配置仍需重启</span></div>
                 <div class="setting-row"><label>PDF 解析后端</label><select id="pr-parse_backend">
                     <option value="auto">auto（智能路由）</option>
                     <option value="pymupdf">pymupdf（快）</option>
@@ -233,6 +280,6 @@
     </div>
 </div>
 
-<script src="/static/app.js?v=21"></script>
+<script src="/static/app.js?v=26"></script>
 </body>
 </html>

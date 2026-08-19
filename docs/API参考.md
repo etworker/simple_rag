@@ -31,13 +31,25 @@
 ```json
 请求：{ "question": "备份频率是多少？", "session_id": "default" }
 响应：{
-  "answer": "...",
-  "sources": [ {"file": "...", "location": "...", "text": "..."} ],
+  "answer": "备份保留期限为 30 天 [1]。",
+  "sources": [
+    {
+      "idx": 1,
+      "text": "...",
+      "source_file": "规范.pdf#HASH8",
+      "doc_id": "规范.pdf#HASH8",
+      "filename": "规范.pdf",
+      "location": "第 3 页 / §2.1",
+      "score": 0.82,
+      "status": "active",
+      "is_primary": true
+    }
+  ],
   "conflicts": [ {"point": "...", "doc_a_file": "...", "doc_a_says": "...", "doc_others": [...]} ],
   "has_conflicts": false
 }
 ```
-错误：问题为空 → 400；LLM 不可用 → 503；其他 → 500。
+其中 `answer` 中的 `[n]` 与 `sources[].idx` 一一对应；`idx` 标识单条回答中的检索证据块，同一文档可以包含多个 `idx`。`doc_id` 用于文档分组和精确预览，不替代 `idx`。错误：问题为空 → 400；LLM 不可用 → 503；其他 → 500。
 
 | 方法 | 路径 | 说明 |
 |------|------|------|

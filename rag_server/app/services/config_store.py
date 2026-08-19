@@ -69,6 +69,8 @@ DEFAULT_CONFIG = {
         "parse_backend": "auto",
         "batch_size": 0,  # 0=按 context_window 自动计算
     },
+    # 前端预审核页面布局偏好；不参与解析、审核或缓存配置计算
+    "review_layout": "side-by-side",
     "parse_qa": {
         "enabled": False,
         # 默认复用预审核 LLM 路由；也可配置为 llm_routing 中的其他 use case。
@@ -136,6 +138,7 @@ CONFIG_DESCRIPTIONS = {
     "pre_review.parse_backend": "PDF 解析后端。auto=智能路由（扫描件→mineru，无框线表格→docling，数字文本→pymupdf）；pymupdf=快路径；docling=深度学习版面+表格（最准，GPU 加速）；mineru=中文扫描件 OCR；pdfplumber=轻量兜底。",
     "pre_review.docling_device": "docling 推理设备。auto=自动探测（有 GPU 用 cuda）；cuda=强制 GPU；cpu=强制 CPU。仅 parse_backend=docling 时生效。",
     "pre_review.docling_batch_size": "docling 推理 batch（0=默认 4）。layout/table/ocr 多页一起推理可提升 GPU 利用率；T4 建议 16-32，显存小或报 OOM 时调回 4。",
+    "review_layout": "预审核页面布局。side-by-side=审核结果与文档预览左右并排；stacked=上下排列；single=仅显示单文档预览。该项保存后当前页面立即生效。",
     "judge.prompt_file": "跨文档 Judge Prompt 文件路径。设置后优先使用该文件；留空则使用下面的自定义模板或系统内置默认。",
     "judge.prompt_template": "跨文档一致性判断 Prompt 模板。必须保留 {count}（段落对数量）和 {items}（待判断内容）占位符；留空使用系统内置默认。该配置同时用于预审核跨文档矛盾检测和问答冲突检测。",
     "conflict_detection.min_score": "冲突检测最低置信度。LLM返回的冲突置信度低于此值时不报告为冲突。",
