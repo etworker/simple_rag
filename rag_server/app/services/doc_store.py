@@ -15,6 +15,7 @@ import re
 import time
 import unicodedata
 from dataclasses import asdict, dataclass
+from threading import Lock
 
 import numpy as np
 from doc_parser import Paragraph
@@ -80,6 +81,7 @@ class DocStore:
         from app.services.retriever import FaissRetriever
 
         self._retriever = FaissRetriever()
+        self._anchor_lock = Lock()
 
         # 缓存根目录：总配置 cache.base_dir > 默认 ~/.simple_rag
         _cache_base = resolve_cache_root((config or {}).get("cache", {}).get("base_dir"))
@@ -283,6 +285,15 @@ class DocStore:
         """
         # 解析（带缓存，使用配置的 parse_cache_dir 与解析后端，保证与预审核一致）
         doc = parse(filepath, config=self._parse_config, cache_dir=self._parse_cache_dir)
+        # 坐标锚点与 PageRenderer 均使用 PyMuPDF 的原始页面坐标系；
+        # 只在 PDF 中构建，无法匹配的段落也记录为空列表，后续不再误命中重复文本。
+        if filepath.lower().endswith(".pdf"):
+            try:
+                from app.services.pdf_anchors import build_pdf_anchors
+
+                build_pdf_anchors(filepath, doc.paragraphs)
+            except Exception as exc:
+                log.warning(f"PDF 坐标锚点构建失败，将使用文本高亮回退: {filepath}: {exc}")
         # 用原始文件名覆盖（parse 返回的是磁盘文件名，可能是 SHA-256 安全名）
         if original_filename:
             doc.filename = original_filename
@@ -639,6 +650,52 @@ class DocStore:
     # ============================================================
     # 段落查询公共接口
     # ============================================================
+
+    def _ensure_pdf_anchors(self, doc_id: str) -> None:
+        """为旧持久化数据按需补建 PDF 锚点。"""
+        meta = self.get_document(doc_id)
+        if not meta or not meta.filepath.lower().endswith(".pdf") or not os.path.exists(meta.filepath):
+            return
+        paragraphs = [p for p in self._paragraphs if p.source_file == meta.doc_id]
+        if not paragraphs or not any(p.pdf_spans is None for p in paragraphs):
+            return
+        with self._anchor_lock:
+            # 另一个并发请求可能已经完成构建。
+            if not any(p.pdf_spans is None for p in paragraphs):
+                return
+            try:
+                from app.services.pdf_anchors import build_pdf_anchors
+
+                build_pdf_anchors(meta.filepath, paragraphs)
+                self._save_to_disk()
+                log.info("已按需补建 PDF 坐标锚点: {}", meta.doc_id)
+            except Exception as exc:
+                log.warning("按需补建 PDF 坐标锚点失败: {}: {}", meta.doc_id, exc)
+
+    def get_pdf_page_rects(self, doc_id: str, paragraph_index: int, page: int) -> list[list[float]] | None:
+        """返回全局段落索引在指定 PDF 页上的矩形。
+
+        返回 None 表示没有可用锚点，调用方可以使用旧文本搜索；返回空列表
+        表示锚点已建立但该段落不在请求页，避免重复文本被错误高亮。
+        """
+        if not isinstance(paragraph_index, int) or not (0 <= paragraph_index < len(self._paragraphs)):
+            return None
+        paragraph = self._paragraphs[paragraph_index]
+        meta = self.get_document(doc_id)
+        if not meta or paragraph.source_file != meta.doc_id:
+            return None
+        self._ensure_pdf_anchors(meta.doc_id)
+        from app.services.pdf_anchors import page_rects_from_spans
+
+        return page_rects_from_spans(paragraph.pdf_spans, page)
+
+    def get_pdf_anchor(self, paragraph_index: int) -> list[dict] | None:
+        """返回段落锚点，供 QA 来源和历史兼容逻辑使用。"""
+        if not isinstance(paragraph_index, int) or not (0 <= paragraph_index < len(self._paragraphs)):
+            return None
+        paragraph = self._paragraphs[paragraph_index]
+        self._ensure_pdf_anchors(paragraph.source_file)
+        return paragraph.pdf_spans
 
     def get_paragraphs_by_file(self, doc_id: str) -> list:
         """获取指定文档的所有段落（按 doc_id 或 filename）"""

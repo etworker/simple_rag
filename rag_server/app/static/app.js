@@ -178,6 +178,9 @@ function stripOldSourceLines(s){
   // 则从首次出现处到文末整段移除；正文行不会以 "来源：[来源:" 或 "来源：...pdf#..." 开头，不会误伤
   return s.replace(/(?:\n|^)\s*(?:来源[：:]|\[来源:)\s*[\s\S]*$/,'').replace(/\n{3,}/g,'\n\n').trim();
 }
+function normalizeCitationBrackets(s){
+  return String(s||'').replace(/［\s*(\d+)\s*］/g,'[$1]');
+}
 function scrollToRef(n){const el=document.getElementById('ref-'+n);if(el){el.scrollIntoView({behavior:'smooth',block:'start'});el.classList.add('ref-flash');setTimeout(()=>el.classList.remove('ref-flash'),1500);}else{console.warn('[scrollToRef] ref-'+n+' not found');}}
 
 // ============================================================
@@ -2725,7 +2728,7 @@ async function loadQaSession(sessionId){
                 // 也必须全部保留，否则正文 [n] 会失去对应的来源项。
                 const allSources=(msg.sources||[]).map((s,i)=>({...s,idx:s.idx||i+1}));
                 const sourceIdxs=new Set(allSources.map(s=>String(s.idx)));
-                const cleanContent=stripOldSourceLines(msg.content||'');
+                const cleanContent=normalizeCitationBrackets(stripOldSourceLines(msg.content||''));
                 let html=renderMd(cleanContent);
                 html=html.replace(
                     /\[(\d+)\](?![\w\s]*<\/a>)/g,
@@ -2756,7 +2759,8 @@ async function loadQaSession(sessionId){
                     item.addEventListener('click',function(){
                         const srcData=allSources.find(s=>String(s.idx)===this.dataset.idx);
                         const hlText=srcData?srcData.text:'';
-                        openQaPreview(this.dataset.file,this.dataset.loc,hlText,this.dataset.title);
+                        const paragraphIndex=srcData?.paragraph_index==null?-1:Number(srcData.paragraph_index);
+                        openQaPreview(this.dataset.file,this.dataset.loc,hlText,this.dataset.title,paragraphIndex);
                     });
                 });
             }
@@ -2790,7 +2794,7 @@ async function sendQuestion(){
         const last=document.querySelector('.qa-messages .msg.bot:last-child');
         if(data.detail){if(last)last.innerHTML='<span style="color:var(--danger);">'+esc(data.detail)+'</span>';return;}
         // 后处理：将答案中 LLM 输出的 [1] [2] 编号转为可点击链接
-        const cleanAnswer=stripOldSourceLines(data.answer||'');
+        const cleanAnswer=normalizeCitationBrackets(stripOldSourceLines(data.answer||''));
         let answerHtml=renderMd(cleanAnswer);
         let allSources=[];  // 提到外层作用域，供点击事件访问
         let sourceIdxs=new Set();  // 仅有真实来源的 [n] 才渲染为可点击链接
@@ -2876,7 +2880,8 @@ async function sendQuestion(){
                 item.addEventListener('click',function(){
                     const srcData=allSources.find(s=>String(s.idx)===this.dataset.idx);
                     const hlText=srcData?srcData.text:'';
-                    openQaPreview(this.dataset.file,this.dataset.loc,hlText,this.dataset.title);
+                    const paragraphIndex=srcData?.paragraph_index==null?-1:Number(srcData.paragraph_index);
+                    openQaPreview(this.dataset.file,this.dataset.loc,hlText,this.dataset.title,paragraphIndex);
                 });
             });
         }
@@ -2889,41 +2894,42 @@ function appendMsg(role,html){
 }
 
 // QA 预览面板 — 服务端高亮渲染
-let qaCurrentFile='', qaCurrentPage=1, qaTotalPages=1, qaHighlightText='';
+let qaCurrentFile='', qaCurrentPage=1, qaTotalPages=1, qaHighlightText='', qaParagraphIndex=-1, qaPreviewToken=0;
 
-async function openQaPreview(file, location, highlightText, displayTitle=''){
+async function openQaPreview(file, location, highlightText, displayTitle='', paragraphIndex=-1){
+    const requestToken=++qaPreviewToken;
     const panel=document.getElementById('qaPreview');
     panel.classList.add('show');
     document.getElementById('qaPreviewTitle').textContent=displayTitle||file.split('#')[0];
     const container=document.getElementById('qaPdfContainer');
     const page=extractPage(location)||1;
 
-    // 记录当前状态
+    // 记录当前状态。paragraph_index 是全局段落索引，比截断文本更可靠。
     const isSameFile = qaCurrentFile===file;
     qaCurrentFile=file;
     qaCurrentPage=page;
     qaHighlightText=highlightText||'';
+    qaParagraphIndex=Number.isInteger(Number(paragraphIndex))?Number(paragraphIndex):-1;
 
-    // 清空容器，显示加载中
     container.innerHTML='<div style="color:#aaa;padding:20px;text-align:center;">加载中...</div>';
 
     try{
-        // 获取文档总页数（先请求第一页，从响应中无法获取，用 PDF.js 轻量获取）
         if(!isSameFile || !qaTotalPages){
             const pdfUrl=`/api/documents/pdf?name=${encodeURIComponent(file)}`;
             const doc=await pdfjsLib.getDocument(pdfUrl).promise;
             qaTotalPages=doc.numPages;
             doc.destroy();
         }
-
-        // 渲染页面图
-        await renderQaPage(container, page, qaHighlightText);
+        if(requestToken!==qaPreviewToken)return;
+        await renderQaPage(container, page, qaHighlightText, qaParagraphIndex, requestToken);
     }catch(e){
+        if(requestToken!==qaPreviewToken)return;
         container.innerHTML='<div style="color:var(--danger);padding:20px;text-align:center;">文档加载失败：'+esc(e.message||String(e))+'</div>';
     }
 }
 
-async function renderQaPage(container, page, highlight){
+async function renderQaPage(container, page, highlight, paragraphIndex=qaParagraphIndex, requestToken=qaPreviewToken){
+    if(requestToken!==qaPreviewToken)return;
     // 构建导航栏
     let navHtml=`<div class="qa-preview-nav">`;
     navHtml+=`<button onclick="qaGoPrev()" ${page<=1?'disabled':''}>← 上一页</button>`;
@@ -2931,15 +2937,19 @@ async function renderQaPage(container, page, highlight){
     navHtml+=`<button onclick="qaGoNext()" ${page>=qaTotalPages?'disabled':''}>下一页 →</button>`;
     navHtml+=`</div>`;
 
-    // 服务端渲染的页面图（带高亮）
+    // 有段落索引时传完整文本作为旧数据回退，不再截断锚点匹配文本。
     let imgUrl=`/api/documents/page?name=${encodeURIComponent(qaCurrentFile)}&page=${page}`;
-    if(highlight) imgUrl+=`&highlight=${encodeURIComponent(highlight.slice(0,50))}`;
+    if(Number.isInteger(Number(paragraphIndex))&&Number(paragraphIndex)>=0){
+        imgUrl+=`&paragraph_index=${encodeURIComponent(Number(paragraphIndex))}`;
+    }
+    if(highlight) imgUrl+=`&highlight=${encodeURIComponent(Number(paragraphIndex)>=0?highlight:highlight.slice(0,50))}`;
 
     container.innerHTML=navHtml;
     const img=document.createElement('img');
     img.src=imgUrl;
     img.style.cssText='max-width:100%;height:auto;border-radius:4px;box-shadow:0 2px 12px rgba(0,0,0,0.1);';
     img.onerror=function(){
+        if(requestToken!==qaPreviewToken)return;
         this.outerHTML='<div style="color:#aaa;padding:30px;text-align:center;background:#f9f9f9;border-radius:4px;">页面渲染失败</div>';
     };
     container.appendChild(img);
@@ -2949,19 +2959,19 @@ async function renderQaPage(container, page, highlight){
 function qaGoPrev(){
     if(qaCurrentPage<=1)return;
     qaCurrentPage--;
-    renderQaPage(document.getElementById('qaPdfContainer'), qaCurrentPage, qaHighlightText);
+    renderQaPage(document.getElementById('qaPdfContainer'), qaCurrentPage, qaHighlightText, qaParagraphIndex, qaPreviewToken);
 }
 
 function qaGoNext(){
     if(qaCurrentPage>=qaTotalPages)return;
     qaCurrentPage++;
-    renderQaPage(document.getElementById('qaPdfContainer'), qaCurrentPage, qaHighlightText);
+    renderQaPage(document.getElementById('qaPdfContainer'), qaCurrentPage, qaHighlightText, qaParagraphIndex, qaPreviewToken);
 }
 
 function closeQaPreview(){
     document.getElementById('qaPreview').classList.remove('show');
     document.getElementById('qaPdfContainer').innerHTML='';
-    qaCurrentFile='';qaCurrentPage=1;qaTotalPages=1;qaHighlightText='';
+    qaCurrentFile='';qaCurrentPage=1;qaTotalPages=1;qaHighlightText='';qaParagraphIndex=-1;qaPreviewToken++;
 }
 
 // ============================================================

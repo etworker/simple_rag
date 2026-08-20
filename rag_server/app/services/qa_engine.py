@@ -9,6 +9,7 @@
   5. 返回：答案 + 来源列表 + 冲突标记
 """
 
+import re
 from collections import OrderedDict
 from dataclasses import dataclass, field
 
@@ -25,6 +26,12 @@ from app.services.doc_store import DocStore, RetrievedChunk
 
 # 会话上限：超过后淘汰最久未使用的会话，避免长运行服务内存无限增长
 MAX_SESSIONS = 500
+_CITATION_BRACKET_RE = re.compile(r"［\s*(\d+)\s*］")
+
+
+def _normalize_citations(text: str) -> str:
+    """将模型输出的全角数字引用统一为前端/API 使用的半角格式。"""
+    return _CITATION_BRACKET_RE.sub(r"[\1]", text or "")
 
 
 @dataclass
@@ -99,7 +106,7 @@ class QAEngine:
         # 追问时：如果检索结果质量太低，不注入 context，依赖对话历史
         if is_followup and chunks and chunks[0].score < min_score:
             log.info(f"追问检索质量低 (top={chunks[0].score:.3f} < {min_score})，使用对话历史")
-            answer = session.ask(question, context="")
+            answer = _normalize_citations(session.ask(question, context=""))
             return QAResponse(answer=answer, sources=[], conflicts=[], has_conflicts=False)
 
         # 2. 冲突检测（仅对高质量检索结果）
@@ -108,7 +115,7 @@ class QAEngine:
         context = self._build_context(chunks, conflicts)
 
         # 5. LLM 生成答案
-        answer = session.ask(question, context=context)
+        answer = _normalize_citations(session.ask(question, context=context))
 
         # 6. 封装结果 —— sources 带编号
         # idx 是 chunk 序号（回答中的 [1][2] 引用编号）；
@@ -141,6 +148,8 @@ class QAEngine:
                     "version": getattr(meta, "version", "") if meta else "",
                     "label": _get_label(c.source_file),
                     "location": c.location,
+                    "paragraph_index": c.paragraph_index,
+                    "pdf_spans": self._doc_store.get_pdf_anchor(c.paragraph_index),
                     "score": round(c.score, 3),
                 }
             )
@@ -245,8 +254,8 @@ class QAEngine:
         # 编号引用指南
         ref_guide = (
             "## 引用指南\n"
-            "回答中提及时请使用 [1]、[2] 这种简短编号指明出处（扩在括号内的数字），"
-            "不要书写文件名或路径。示例：\n"
+            "回答中提及时必须使用 ASCII 半角格式 [1]、[2] 指明出处（方括号内的数字），"
+            "不得使用全角格式［1］、［2］；不要书写文件名或路径。示例：\n"
             "  ✅「备份频率为每天 [1]，保留 30 天 [3]」\n"
             "  ❌「备份频率为每天 [来源: xxx.pdf 第 6 页]」\n\n"
         )

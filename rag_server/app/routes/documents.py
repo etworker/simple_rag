@@ -137,8 +137,18 @@ async def get_document_info(doc_id: str = "", name: str = ""):
 
 
 @router.get("/page")
-async def get_document_page(doc_id: str = "", name: str = "", page: int = 1, highlight: str = ""):
-    """获取指定文档页面；doc_id 保证同名历史版本不会串页。"""
+async def get_document_page(
+    doc_id: str = "",
+    name: str = "",
+    page: int = 1,
+    highlight: str = "",
+    paragraph_index: int = -1,
+):
+    """获取指定文档页面；doc_id 保证同名历史版本不会串页。
+
+    paragraph_index 存在时优先使用解析阶段保存的 PDF 坐标锚点；旧数据
+    没有锚点时由 PageRenderer 自动回退到文本搜索。
+    """
     from urllib.parse import unquote
 
     from app.services.page_renderer import PageRenderer
@@ -150,7 +160,21 @@ async def get_document_page(doc_id: str = "", name: str = "", page: int = 1, hig
     if not os.path.exists(meta.filepath):
         raise HTTPException(status_code=404, detail="文件不存在")
     renderer = PageRenderer(cache_dir=os.path.join(s.cache_dir, "page_cache"))
-    png_path = await asyncio.to_thread(renderer.get_page, meta.filepath, page, unquote(highlight))
+    anchor_rects = None
+    if paragraph_index >= 0:
+        anchor_rects = await asyncio.to_thread(
+            s.doc_store.get_pdf_page_rects,
+            meta.doc_id,
+            paragraph_index,
+            page,
+        )
+    png_path = await asyncio.to_thread(
+        renderer.get_page,
+        meta.filepath,
+        page,
+        unquote(highlight),
+        anchor_rects,
+    )
     return FileResponse(
         png_path,
         media_type="image/png",

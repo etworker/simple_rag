@@ -7,6 +7,7 @@ PDF 页面渲染缓存服务
 """
 
 import hashlib
+import json
 import os
 from threading import Lock
 
@@ -93,7 +94,13 @@ class PageRenderer:
         self._dpi = dpi
         os.makedirs(cache_dir, exist_ok=True)
 
-    def get_page(self, pdf_path: str, page: int = 1, highlight: str = "") -> str:
+    def get_page(
+        self,
+        pdf_path: str,
+        page: int = 1,
+        highlight: str = "",
+        anchor_rects: list[list[float]] | None = None,
+    ) -> str:
         """
         获取指定页的 PNG 图片路径（自动缓存）
 
@@ -101,6 +108,8 @@ class PageRenderer:
             pdf_path: PDF 文件路径
             page: 页码（从 1 开始）
             highlight: 需要高亮的文字（可选）
+            anchor_rects: 解析阶段保存的本页 PDF 坐标矩形；提供后优先使用，
+                None 才会回退到 search_for/容错文本搜索。
 
         Returns:
             PNG 图片的绝对路径
@@ -109,9 +118,14 @@ class PageRenderer:
         cache_subdir = os.path.join(self._cache_dir, file_hash)
         os.makedirs(cache_subdir, exist_ok=True)
 
-        # 有高亮时用不同的缓存文件名
-        if highlight:
-            hl_hash = hashlib.sha256(highlight.encode()).hexdigest()[-8:].upper()
+        # 有高亮或坐标锚点时用不同的缓存文件名。坐标必须参与 hash，
+        # 否则同页不同来源会复用错误的高亮图片。
+        if highlight or anchor_rects is not None:
+            cache_key = {
+                "highlight": highlight,
+                "anchor_rects": anchor_rects,
+            }
+            hl_hash = hashlib.sha256(json.dumps(cache_key, ensure_ascii=False, sort_keys=True).encode()).hexdigest()[-8:].upper()
             png_path = os.path.join(cache_subdir, f"page_{page:03d}_hl_{hl_hash}.png")
         else:
             png_path = os.path.join(cache_subdir, f"page_{page:03d}.png")
@@ -126,7 +140,7 @@ class PageRenderer:
                 log.debug("页面缓存命中（并发等待后）: {} 第{}页 highlight={}", os.path.basename(pdf_path), page, bool(highlight))
                 return png_path
             log.debug("页面缓存未命中，开始渲染: {} 第{}页 highlight={}", os.path.basename(pdf_path), page, bool(highlight))
-            self._render_page(pdf_path, page, png_path, highlight)
+            self._render_page(pdf_path, page, png_path, highlight, anchor_rects)
         return png_path
 
     def get_page_count(self, pdf_path: str) -> int:
@@ -135,8 +149,15 @@ class PageRenderer:
 
         return get_pdf_page_count(pdf_path)
 
-    def _render_page(self, pdf_path: str, page: int, output_path: str, highlight: str = ""):
-        """渲染单页为 PNG，可选高亮文字"""
+    def _render_page(
+        self,
+        pdf_path: str,
+        page: int,
+        output_path: str,
+        highlight: str = "",
+        anchor_rects: list[list[float]] | None = None,
+    ):
+        """渲染单页为 PNG，可选使用精确坐标或文本回退高亮。"""
         import fitz
 
         doc = fitz.open(pdf_path)
@@ -146,8 +167,15 @@ class PageRenderer:
 
         pg = doc[page - 1]  # fitz 从 0 开始
 
-        # 高亮文字（search_for 未命中时用容错搜索，容忍空格/换行差异）
-        if highlight:
+        # anchor_rects 即使为空也代表“已建立锚点但本页没有该段落”，
+        # 此时不能回退到重复文本的首个命中。
+        if anchor_rects is not None:
+            for values in anchor_rects:
+                if len(values) != 4:
+                    continue
+                pg.add_highlight_annot(fitz.Rect(*[float(value) for value in values]))
+        elif highlight:
+            # 旧数据/无坐标文档：search_for 未命中时用容错搜索。
             rects = pg.search_for(highlight)
             if not rects:
                 rects = _tolerant_search_rects(pg, highlight)

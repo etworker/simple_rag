@@ -18,6 +18,9 @@ class Paragraph:
     order: int = 0
     # 块类型：paragraph / table / heading / list_item 等
     block_type: str = "paragraph"
+    # PDF 字符坐标锚点：[{"page": 1, "rects": [[x0, y0, x1, y1], ...]}]
+    # None 表示尚未生成（兼容旧缓存）；[] 表示已尝试但未匹配到文本。
+    pdf_spans: list[dict] | None = None
 
     @property
     def location(self) -> str:
@@ -45,6 +48,7 @@ class Paragraph:
             "index": self.index,
             "order": self.order,
             "block_type": self.block_type,
+            "pdf_spans": self.pdf_spans,
         }
 
     @classmethod
@@ -59,6 +63,7 @@ class Paragraph:
             index=d.get("index", 0),
             order=d.get("order", 0),
             block_type=d.get("block_type", "paragraph"),
+            pdf_spans=d.get("pdf_spans"),
         )
 
     def to_markdown(self) -> str:
